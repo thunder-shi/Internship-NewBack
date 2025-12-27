@@ -14,6 +14,7 @@ public interface ICommonService {
 
     Object getOneRecordById(String tblName, Object id);
     Object getOneRecordById(String tblName, Object id, Boolean delFlag);
+    Object getOneRecordByCode(String tblName, String code, Boolean delFlag);
     Object getRecordsByIds(String tblName, Set<Integer> ids);
     Object getRecordsByIds(String tblName, Set<Integer> ids, Boolean delFlag);
 

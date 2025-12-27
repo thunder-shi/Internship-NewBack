@@ -66,6 +66,32 @@ public class CommonServiceImpl extends Base implements ICommonService {
     }
     //endregion
 
+    //region getOneRecordByCode
+    /**
+     * 根据code获取一条记录
+     * @param tblName 操作表名
+     * @param code    编码
+     * @param delFlag 是否考虑伪删除
+     * @return
+     */
+    @Override
+    @SuppressWarnings("null")
+    public Object getOneRecordByCode(String tblName, String code, Boolean delFlag) {
+        try {
+            Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
+            Object beanDao = applicationContext.getBean(tblName.substring(0, 1).toLowerCase() + tblName.substring(1) + "Dao", clazzDao);
+            if (delFlag) {
+                return clazzDao.getMethod("getByCode", String.class).invoke(beanDao, code);
+            } else {
+                return clazzDao.getMethod("getByCodeAndIsDeletedFalse", String.class).invoke(beanDao, code);
+            }
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
+            LogUtil.error(logger, ex);
+            throw BaseResponse.moreInfoError.error("reflection processing failed");
+        }
+    }
+    //endregion
+
     //region getRecordsByIds
     /**
      * 根据一组主键Id获得对应的多条记录

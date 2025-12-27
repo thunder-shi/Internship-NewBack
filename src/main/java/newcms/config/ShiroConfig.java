@@ -1,5 +1,8 @@
 package newcms.config;
 
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import newcms.entity.db.BaseUser;
 import newcms.repository.db.BaseUserDao;
 import newcms.utils.EncodeUtil;
@@ -10,11 +13,13 @@ import org.apache.shiro.realm.AuthorizingRealm;
 import org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor;
 import org.apache.shiro.spring.web.ShiroFilterFactoryBean;
 import org.apache.shiro.subject.PrincipalCollection;
+import org.apache.shiro.web.filter.authc.FormAuthenticationFilter;
 import org.apache.shiro.web.mgt.DefaultWebSecurityManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import jakarta.annotation.Resource;
+import java.io.PrintWriter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -90,6 +95,25 @@ public class ShiroConfig {
     }
 
     /**
+     * 自定义认证过滤器 - 前后端分离返回JSON而非重定向
+     */
+    private FormAuthenticationFilter jsonAuthcFilter() {
+        return new FormAuthenticationFilter() {
+            @Override
+            protected boolean onAccessDenied(ServletRequest request, ServletResponse response) throws Exception {
+                HttpServletResponse httpResponse = (HttpServletResponse) response;
+                httpResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                httpResponse.setContentType("application/json;charset=UTF-8");
+                try (PrintWriter writer = httpResponse.getWriter()) {
+                    writer.write("{\"code\":401,\"msg\":\"未登录或登录已过期，请重新登录\"}");
+                    writer.flush();
+                }
+                return false;
+            }
+        };
+    }
+
+    /**
      * ShiroFilterFactoryBean
      */
     @Bean
@@ -97,15 +121,22 @@ public class ShiroConfig {
         ShiroFilterFactoryBean shiroFilterFactoryBean = new ShiroFilterFactoryBean();
         shiroFilterFactoryBean.setSecurityManager(securityManager());
 
+        // 添加自定义过滤器，返回JSON而非重定向到login.jsp
+        Map<String, jakarta.servlet.Filter> filters = new LinkedHashMap<>();
+        filters.put("authc", jsonAuthcFilter());
+        shiroFilterFactoryBean.setFilters(filters);
+
         // 配置拦截规则
         Map<String, String> filterChainDefinitionMap = new LinkedHashMap<>();
-        
+
         // 允许匿名访问的路径
         filterChainDefinitionMap.put("/sign/login", "anon");  // 登录接口
         filterChainDefinitionMap.put("/sign/logout", "anon"); // 登出接口
         filterChainDefinitionMap.put("/common/**", "anon");   // 公共接口
-        filterChainDefinitionMap.put("/hello", "anon");        // 测试接口
-        
+        filterChainDefinitionMap.put("/hello", "anon");       // 测试接口
+        filterChainDefinitionMap.put("/swagger-ui/**", "anon");  // Swagger UI
+        filterChainDefinitionMap.put("/v3/api-docs/**", "anon"); // OpenAPI 文档
+
         // 其他路径需要认证
         filterChainDefinitionMap.put("/**", "authc");
 
