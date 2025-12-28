@@ -1,118 +1,173 @@
 package newcms.service.impl;
 
 import newcms.base.Base;
+import newcms.base.Constant;
 import newcms.entity.db.RelRoleMenu;
-import newcms.repository.db.RelRoleMenuDao;
+import newcms.entity.db.SysMenu;
 import newcms.service.ICommonService;
 import newcms.service.IRoleService;
+import newcms.utils.FastJsonUtil;
+import newcms.utils.TreeUtil;
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.ObjectUtils;
-
 import jakarta.annotation.Resource;
 import java.util.*;
-import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 
-/**
- * 角色服务实现类
- * @author hongzhangming
- */
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class RoleServiceImpl extends Base implements IRoleService {
-    @Resource
-    private RelRoleMenuDao relRoleMenuDao;
+
     @Resource
     protected ICommonService iCommonService;
 
     @Override
+    @SuppressWarnings("unchecked")
     public Object editPermission(String roleId, JSONObject permissions) {
-        Integer roleIdInt = Integer.parseInt(roleId);
-        
-        // 先删除该角色的所有旧权限
-        JSONObject searchKeys = new JSONObject();
-        searchKeys.put("roleId", roleIdInt);
-        Object oldPermissions = iCommonService.getSomeRecords("RelRoleMenu", searchKeys);
-        
-        List<Integer> oldPermissionIds = new ArrayList<>();
-        if (oldPermissions instanceof Page) {
-            @SuppressWarnings("unchecked")
-            Page<Object> oldPermissionPage = (Page<Object>) oldPermissions;
-            for (Object obj : oldPermissionPage.getContent()) {
-                JSONObject jsonObj = com.alibaba.fastjson.JSONObject.parseObject(
-                    com.alibaba.fastjson.JSONObject.toJSONString(obj));
-                oldPermissionIds.add(jsonObj.getIntValue("id"));
-            }
-        }
-        
-        // 删除旧权限（逻辑删除）
-        if (!oldPermissionIds.isEmpty()) {
-            relRoleMenuDao.deleteByIdIn(oldPermissionIds);
-        }
-        
-        // 保存新权限
-        List<RelRoleMenu> newPermissions = new ArrayList<>();
-        if (permissions != null) {
-            for (String menuIdStr : permissions.keySet()) {
-                Integer menuId = Integer.parseInt(menuIdStr);
-                JSONObject permissionData = permissions.getJSONObject(menuIdStr);
-                
-                RelRoleMenu relRoleMenu = new RelRoleMenu();
-                relRoleMenu.setRoleId(roleIdInt);
-                relRoleMenu.setMenuId(menuId);
-                relRoleMenu.setVisibleFlag(permissionData.getBoolean("visibleFlag"));
-                relRoleMenu.setAddFlag(permissionData.getBoolean("addFlag"));
-                relRoleMenu.setDeleteFlag(permissionData.getBoolean("deleteFlag"));
-                relRoleMenu.setModifyFlag(permissionData.getBoolean("modifyFlag"));
-                
-                newPermissions.add(relRoleMenu);
-            }
-        }
-        
-        if (!newPermissions.isEmpty()) {
-            return relRoleMenuDao.saveAll(newPermissions);
-        }
-        
-        return new ArrayList<>();
+        //保存权限，一次只可能是一个role
+        //先删除所有权限
+        JSONObject jsSearch = new JSONObject();
+        jsSearch.put("roleId", roleId);
+        List<RelRoleMenu> listRelRoleMenus = ((Page<RelRoleMenu>)iCommonService.getSomeRecords("RelRoleMenu", jsSearch)).getContent();
+        List<Integer> roleMenuIds = listRelRoleMenus.stream().map(RelRoleMenu::getId).collect(Collectors.toList());
+        iCommonService.deleteSomeRecords("RelRoleMenu", roleMenuIds);
+        //由树结构转化为列表，并处理了一些数据
+        ArrayList<RelRoleMenu> authorizationList = new ArrayList<>();
+        authorizationList = tranTreeToList(permissions.getJSONArray("children"), authorizationList);
+        authorizationList.forEach(sysRole -> sysRole.setRoleId(Integer.parseInt(roleId)));
+        //再全部重新保存
+        iCommonService.saveSomeRecords("RelRoleMenu", authorizationList);
+        return true;
     }
+
+    /**
+     * 获取用户或角色权限
+     * @param roleIds
+     * @return
+     */
 
     @Override
+    @SuppressWarnings("unchecked")
     public Object getRolePermissions(String roleIds) {
-        if (ObjectUtils.isEmpty(roleIds)) {
-            return new ArrayList<>();
-        }
-        
-        // 解析角色ID（支持逗号分隔的多个ID）
-        Set<Integer> roleIdSet = new HashSet<>();
-        String[] roleIdArray = roleIds.split(",");
-        for (String roleIdStr : roleIdArray) {
-            try {
-                roleIdSet.add(Integer.parseInt(roleIdStr.trim()));
-            } catch (NumberFormatException e) {
-                // 忽略无效的角色ID
+        //逻辑：查出authorizationInfoList中对应的menuList。然后根据allMenuList构建完整树结构，有authorizationInfo的节点填入，没有的构造tblAuthorizationInfoDefalut，即值CRUD全为false。
+        //对于没有任何权限的角色，也返回完整树结构，每个节点都使用tblAuthorizationInfoDefalut
+        JSONObject jsSearch = new JSONObject();
+        jsSearch.put("roleId", roleIds);
+        Map<String, String> regMap = new HashMap<>(1);
+        regMap.put("roleId", Constant.IN);
+        List<RelRoleMenu> authorizationList = ((Page<RelRoleMenu>)iCommonService.getSomeRecords("RelRoleMenu", jsSearch, regMap)).getContent();
+
+        JSONArray resList = new JSONArray();
+        Set<Integer> roleMenuIds =authorizationList.stream().map(RelRoleMenu::getMenuId).collect(Collectors.toSet());
+        List<SysMenu> menuList = TreeUtil.sortTree((List<SysMenu>)iCommonService.getRecordsByIds("SysMenu",roleMenuIds));
+        Map<Integer, RelRoleMenu> map = new HashMap<>(16);
+        RelRoleMenu flag;
+        // 下面思路，把每一条权限都加入到map中。遍历时存在同一权限多次出现情况（来自不同角色），则要把细的增删改查权限或后加入
+        for (RelRoleMenu relRoleMenu : authorizationList) {
+            flag = map.get(relRoleMenu.getMenuId());
+            if (flag == null) {
+                map.put(relRoleMenu.getMenuId(), relRoleMenu);
+            } else {
+                flag.setVisibleFlag(flag.getVisibleFlag() || relRoleMenu.getVisibleFlag());
+                flag.setAddFlag(flag.getAddFlag() || relRoleMenu.getAddFlag());
+                flag.setModifyFlag(flag.getModifyFlag() || relRoleMenu.getModifyFlag());
+                flag.setDeleteFlag(flag.getDeleteFlag() || relRoleMenu.getDeleteFlag());
+                map.put(relRoleMenu.getMenuId(), flag);
             }
         }
-        
-        if (roleIdSet.isEmpty()) {
-            return new ArrayList<>();
+        //虚节点-所有节点的四个权限，当所有子节点都有授权时，才为true
+        Boolean rootAddFlag = true;
+        Boolean rootDeleteFlag = true;
+        Boolean rootModifyFlag = true;
+        Boolean rootVisibleFlag = true;
+        List<SysMenu> allMenuList = ((Page<SysMenu>)iCommonService.getSomeRecords("SysMenu")).getContent();
+        for(SysMenu tblMenuInfo : allMenuList){
+            JSONObject jsonObject;
+            jsonObject = FastJsonUtil.toJson(tblMenuInfo);
+            boolean flagGetAuthorization = true;
+            for (SysMenu authorizationMenu : menuList) {
+                if(authorizationMenu.getId().equals(tblMenuInfo.getId()) && flagGetAuthorization) {
+                    RelRoleMenu tblObject = map.get(authorizationMenu.getId());
+                    jsonObject.put("authorizationAllFlag",(tblObject.getAddFlag() && tblObject.getDeleteFlag() && tblObject.getModifyFlag() && tblObject.getVisibleFlag()));
+                    jsonObject.put("authorizationInfo", map.get(authorizationMenu.getId()));
+                    flagGetAuthorization = false;
+                    //对于虚节点root判断，只要有一个节点不为true,就赋值false
+                    rootAddFlag = rootAddFlag && tblObject.getAddFlag();
+                    rootDeleteFlag = rootDeleteFlag && tblObject.getDeleteFlag();
+                    rootModifyFlag = rootModifyFlag && tblObject.getModifyFlag();
+                    rootVisibleFlag = rootVisibleFlag && tblObject.getVisibleFlag();
+                }
+            }
+            if (flagGetAuthorization) {
+                RelRoleMenu tblAuthorizationInfoDefalut = new RelRoleMenu();
+                tblAuthorizationInfoDefalut.setAddFlag(false);
+                tblAuthorizationInfoDefalut.setDeleteFlag(false);
+                tblAuthorizationInfoDefalut.setModifyFlag(false);
+                tblAuthorizationInfoDefalut.setVisibleFlag(false);
+                tblAuthorizationInfoDefalut.setMenuId(tblMenuInfo.getId());
+                jsonObject.put("authorizationInfo", tblAuthorizationInfoDefalut);
+                jsonObject.put("authorizationAllFlag",false);
+                //对于虚节点root,只要进入此分支，全都置false
+                rootAddFlag = false;
+                rootDeleteFlag = false;
+                rootModifyFlag = false;
+                rootVisibleFlag = false;
+            }
+            resList.add(jsonObject);
         }
-        
-        // 查询角色权限
-        List<RelRoleMenu> permissions = relRoleMenuDao.findByRoleIdInAndIsDeletedFalse(roleIdSet);
-        
-        // 如果查询结果为空，直接返回空 Map
-        if (permissions.isEmpty()) {
-            return new HashMap<>();
-        }
-        
-        // 按角色ID分组返回
-        Map<Integer, List<RelRoleMenu>> permissionsByRole = permissions.stream()
-            .collect(Collectors.groupingBy(RelRoleMenu::getRoleId));
-        
-        return permissionsByRole;
-    }
-}
+        //封装一个虚拟根节点
+        JSONObject root = new JSONObject();
+        root.put("children", getSubNodes(resList,-1));
+        root.put("id", -1);
+        root.put("name", "全部");
 
+        RelRoleMenu tblAuthorizationInfoRoot = new RelRoleMenu();
+        tblAuthorizationInfoRoot.setAddFlag(rootAddFlag);
+        tblAuthorizationInfoRoot.setDeleteFlag(rootDeleteFlag);
+        tblAuthorizationInfoRoot.setModifyFlag(rootModifyFlag);
+        tblAuthorizationInfoRoot.setVisibleFlag(rootVisibleFlag);
+        tblAuthorizationInfoRoot.setMenuId(-1);
+        root.put("authorizationInfo",tblAuthorizationInfoRoot);
+        ArrayList<Object> tree = new ArrayList<>();
+        tree.add(root);
+        return tree;
+    }
+
+    /**
+    *代码参考DataTreeServiceImpl中的getSubNodes
+    */
+    private ArrayList<JSONObject> getSubNodes(JSONArray wholeObj, Integer ParentId) {
+        ArrayList<JSONObject> tree = new ArrayList<>();
+        for (int i = 0; i < wholeObj.size(); i++) {
+            JSONObject nowObj = (JSONObject)wholeObj.get(i);
+            if (ParentId.equals(nowObj.getInteger("parentId"))) {
+                if (nowObj.getBoolean("isLeaf").equals(false)) {
+                    nowObj.put("children", getSubNodes(wholeObj, nowObj.getInteger("id")));
+                }
+                tree.add(nowObj);
+            }
+        }
+        return tree;
+    }
+
+    private ArrayList<RelRoleMenu> tranTreeToList(JSONArray objectArray, ArrayList<RelRoleMenu> list) {
+        for(int i=0;i<objectArray.size();i++ ){
+            JSONObject jsonObject = (JSONObject) objectArray.get(i);
+            JSONObject  authorizationInfo = jsonObject.getJSONObject("authorizationInfo");
+            //增删改查任意一个有权限，就存起来
+            if(authorizationInfo.getBoolean("visibleFlag")||authorizationInfo.getBoolean("modifyFlag")||authorizationInfo.getBoolean("deleteFlag")||authorizationInfo.getBoolean("addFlag")){
+                authorizationInfo.put("id", null);
+                list.add(JSONObject.toJavaObject(authorizationInfo, RelRoleMenu.class));
+            }
+            if(jsonObject.get("children") != null) {
+                tranTreeToList(jsonObject.getJSONArray("children"), list);
+            }
+        }
+        return list;
+    }
+
+
+}
