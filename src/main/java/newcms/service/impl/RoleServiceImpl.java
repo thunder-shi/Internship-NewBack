@@ -36,7 +36,9 @@ public class RoleServiceImpl extends Base implements IRoleService {
         iCommonService.deleteSomeRecords("RelRoleMenu", roleMenuIds);
         //由树结构转化为列表，并处理了一些数据
         ArrayList<RelRoleMenu> authorizationList = new ArrayList<>();
-        authorizationList = tranTreeToList(permissions.getJSONArray("children"), authorizationList);
+        Object childrenObj = permissions.get("children");
+        JSONArray childrenArray = toJSONArray(childrenObj);
+        authorizationList = tranTreeToList(childrenArray, authorizationList);
         authorizationList.forEach(sysRole -> sysRole.setRoleId(Integer.parseInt(roleId)));
         //再全部重新保存
         iCommonService.saveSomeRecords("RelRoleMenu", authorizationList);
@@ -142,7 +144,8 @@ public class RoleServiceImpl extends Base implements IRoleService {
     private ArrayList<JSONObject> getSubNodes(JSONArray wholeObj, Integer ParentId) {
         ArrayList<JSONObject> tree = new ArrayList<>();
         for (int i = 0; i < wholeObj.size(); i++) {
-            JSONObject nowObj = (JSONObject)wholeObj.get(i);
+            Object obj = wholeObj.get(i);
+            JSONObject nowObj = toJSONObject(obj);
             if (ParentId.equals(nowObj.getInteger("parentId"))) {
                 if (nowObj.getBoolean("isLeaf").equals(false)) {
                     nowObj.put("children", getSubNodes(wholeObj, nowObj.getInteger("id")));
@@ -155,18 +158,54 @@ public class RoleServiceImpl extends Base implements IRoleService {
 
     private ArrayList<RelRoleMenu> tranTreeToList(JSONArray objectArray, ArrayList<RelRoleMenu> list) {
         for(int i=0;i<objectArray.size();i++ ){
-            JSONObject jsonObject = (JSONObject) objectArray.get(i);
-            JSONObject  authorizationInfo = jsonObject.getJSONObject("authorizationInfo");
+            Object obj = objectArray.get(i);
+            JSONObject jsonObject = toJSONObject(obj);
+            Object authorizationInfoObj = jsonObject.get("authorizationInfo");
+            // 处理 LinkedHashMap 转换为 JSONObject 的情况
+            JSONObject authorizationInfo = toJSONObject(authorizationInfoObj);
             //增删改查任意一个有权限，就存起来
             if(authorizationInfo.getBoolean("visibleFlag")||authorizationInfo.getBoolean("modifyFlag")||authorizationInfo.getBoolean("deleteFlag")||authorizationInfo.getBoolean("addFlag")){
                 authorizationInfo.put("id", null);
                 list.add(JSONObject.toJavaObject(authorizationInfo, RelRoleMenu.class));
             }
-            if(jsonObject.get("children") != null) {
-                tranTreeToList(jsonObject.getJSONArray("children"), list);
+            Object childrenObj = jsonObject.get("children");
+            if(childrenObj != null) {
+                JSONArray childrenArray = toJSONArray(childrenObj);
+                tranTreeToList(childrenArray, list);
             }
         }
         return list;
+    }
+
+    /**
+     * 安全地将对象转换为 JSONObject
+     */
+    private JSONObject toJSONObject(Object obj) {
+        if (obj == null) {
+            return new JSONObject();
+        }
+        if (obj instanceof JSONObject) {
+            return (JSONObject) obj;
+        }
+        // 如果是 LinkedHashMap 或其他类型，转换为 JSONObject
+        return FastJsonUtil.toJson(obj);
+    }
+
+    /**
+     * 安全地将对象转换为 JSONArray
+     */
+    private JSONArray toJSONArray(Object obj) {
+        if (obj == null) {
+            return new JSONArray();
+        }
+        if (obj instanceof JSONArray) {
+            return (JSONArray) obj;
+        }
+        // 如果是 ArrayList 或其他类型，转换为 JSONArray
+        if (obj instanceof List) {
+            return JSONArray.parseArray(FastJsonUtil.toString(obj));
+        }
+        return JSONArray.parseArray(FastJsonUtil.toString(obj));
     }
 
 
