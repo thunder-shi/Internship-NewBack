@@ -16,8 +16,8 @@ import jakarta.persistence.Entity;
 public class BaseInternshipType extends NameRemarkInfo {
     @Column(columnDefinition = "integer unsigned not null")
     private Integer universityId;
-    @Column(nullable = false, columnDefinition = "bit(1) default b'1' comment'实习类型'")
-    private Boolean type=true;
+    @Column(columnDefinition = "integer unsigned not null")
+    private Integer intTypeId;
 
 
 }
