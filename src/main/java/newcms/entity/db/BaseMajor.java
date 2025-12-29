@@ -12,6 +12,6 @@ import newcms.entity.base.BaseTreeInfo;
 @Getter
 @Setter
 @Entity
-public class BaseMajor extends BaseTreeInfo {
+public class BaseMajor extends BaseTreeInfo<BaseMajor> {
 
 }
