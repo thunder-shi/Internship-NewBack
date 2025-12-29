@@ -18,6 +18,9 @@ public class DaoClassUtil {
      * @throws ClassNotFoundException 如果找不到对应的DAO类
      */
     public static Class<?> getDaoClass(String tblName) throws ClassNotFoundException {
+//        if (tblName == null || tblName.trim().isEmpty()) {
+//            throw new IllegalArgumentException("表名(tblName) 不能为空");
+//        }
         return Class.forName(Base.repositoryPackage + tblName + "Dao");
     }
 }
