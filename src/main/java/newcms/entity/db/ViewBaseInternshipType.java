@@ -8,7 +8,7 @@ import lombok.EqualsAndHashCode;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Entity
-public class ViewInternshipType extends NameRemarkInfo {
+public class ViewBaseInternshipType extends NameRemarkInfo {
 
     private String universityName;
 
