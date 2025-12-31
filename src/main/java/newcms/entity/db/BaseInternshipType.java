@@ -18,6 +18,4 @@ public class BaseInternshipType extends NameRemarkInfo {
     private Integer universityId;
     @Column(columnDefinition = "integer unsigned not null")
     private Integer intTypeId;
-
-
 }

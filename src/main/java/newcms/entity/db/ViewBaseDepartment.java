@@ -9,7 +9,7 @@ import newcms.entity.base.BaseTreeInfo;
 @Getter
 @Setter
 @Entity
-public class ViewBaseDepartment extends BaseTreeInfo {
+public class ViewBaseDepartment extends BaseTreeInfo<ViewBaseDepartment> {
     @Column(columnDefinition = "varchar(255) comment '详细地址'")
     private String departmentAdd;
 
