@@ -9,9 +9,8 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 @Entity
 public class ViewBaseInternshipType extends NameRemarkInfo {
-
+    private Integer universityId;
+    private Integer intTypeId;
     private String universityName;
-
     private String typeName;
-
 }
