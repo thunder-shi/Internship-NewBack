@@ -7,11 +7,12 @@ import lombok.Setter;
 import jakarta.persistence.Entity;
 
 /**
- * 验证类型表
+ * 单位部门类型表
  */
 @Getter
 @Setter
 @Entity
-public class BaseVerifyType extends NameRemarkOrderInfo {
+public class BaseDepartType extends NameRemarkOrderInfo {
 
 }
+

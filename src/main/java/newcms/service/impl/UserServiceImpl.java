@@ -86,13 +86,6 @@ public Object getLoginUser(Date date, String userAgent) {
         ViewBaseUser viewBaseUser = ((ViewBaseUser) iCommonService.getOneRecordById("ViewBaseUser", userInfo.getId()));
         JSONObject userInfoJSON = FastJsonUtil.toJson(userInfo);
         userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
-        Object school = iDataTreeService.getFirstParent("BaseDepartment",userInfo.getDepartmentId(),2);
-        try {
-            userInfoJSON.put("schoolId", (int) FastJsonUtil.toJson(school).get("id"));
-        } catch(Exception ex) {
-
-        }
-        userInfoJSON.put("schoolName", FastJsonUtil.toJson(school).get("name"));
         userInfoJSON.put("jobName", viewBaseUser.getJobName());
         jsReturnKey.put("userInfo", userInfoJSON);
         //下面创建role、contestType和menuList的键值信息
