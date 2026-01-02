@@ -26,6 +26,7 @@ public class DataTreeController extends CommonController {
     public Object readAllTreeNodes(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("readAllTreeNodes", requestJson);
         String key = encryptUtil.getKeyWord(requestJson.getString("keyWords"));
+        System.out.println(key);
 //        String key = requestJson.getString("keyWords");
         String preName = requestJson.getString("preName");
         Boolean virtualRootFlag = true;

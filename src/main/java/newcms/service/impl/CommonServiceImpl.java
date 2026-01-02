@@ -197,16 +197,24 @@ public class CommonServiceImpl extends Base implements ICommonService {
         try {
             Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
             Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);
+
+            // 注意：这里保留了你原来的 Bean 获取逻辑，虽然可能有大小写隐患，但先不动它
             Object beanDao = applicationContext.getBean(tblName.substring(0, 1).toLowerCase() + tblName.substring(1) + "Dao", clazzDao);
+
             if (page == null || size == null || size == -1) {
                 ret = clazzDao.getMethod("findAll", Specification.class, Pageable.class).invoke(beanDao, super.getSpecification(searchKeys, repMap, andor, clazzInfo), PageRequest.of(0, 10000, sort));
             } else {
                 ret = clazzDao.getMethod("findAll", Specification.class, Pageable.class).invoke(beanDao, super.getSpecification(searchKeys, repMap, andor, clazzInfo), PageRequest.of(page - 1, size, sort));
             }
             return ret;
-        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
+        } catch (Exception ex) {
+            // 【关键修改】改为捕获所有 Exception，这样能抓到 ClassCastException
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+
+            // 【关键修改】将具体的异常类型和错误信息抛出给前端/调用方
+            // ex.getClass().getSimpleName() 会告诉你是什么错误（如 NoSuchMethodException, ClassCastException）
+            // ex.getMessage() 会告诉你具体细节
+            throw BaseResponse.moreInfoError.error("查询出错[" + tblName + "]: " + ex.getClass().getSimpleName() + " - " + ex.getMessage());
         }
     }
     //endregion
