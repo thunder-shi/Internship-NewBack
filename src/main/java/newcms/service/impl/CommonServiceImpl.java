@@ -208,13 +208,26 @@ public class CommonServiceImpl extends Base implements ICommonService {
             }
             return ret;
         } catch (Exception ex) {
-            // 【关键修改】改为捕获所有 Exception，这样能抓到 ClassCastException
             LogUtil.error(logger, ex);
-
-            // 【关键修改】将具体的异常类型和错误信息抛出给前端/调用方
-            // ex.getClass().getSimpleName() 会告诉你是什么错误（如 NoSuchMethodException, ClassCastException）
-            // ex.getMessage() 会告诉你具体细节
-            throw BaseResponse.moreInfoError.error("查询出错[" + tblName + "]: " + ex.getClass().getSimpleName() + " - " + ex.getMessage());
+            
+            // 获取详细的错误信息
+            String errorMsg = ex.getMessage();
+            String errorType = ex.getClass().getSimpleName();
+            
+            // 如果是 InvocationTargetException，获取底层异常的原因
+            if (ex instanceof java.lang.reflect.InvocationTargetException) {
+                Throwable cause = ((java.lang.reflect.InvocationTargetException) ex).getTargetException();
+                if (cause != null) {
+                    errorType = cause.getClass().getSimpleName();
+                    errorMsg = cause.getMessage();
+                    // 如果底层异常还有原因，也加上
+                    if (cause.getCause() != null) {
+                        errorMsg += " (原因: " + cause.getCause().getMessage() + ")";
+                    }
+                }
+            }
+            
+            throw BaseResponse.moreInfoError.error("查询出错[" + tblName + "]: " + errorType + " - " + (errorMsg != null ? errorMsg : "未知错误"));
         }
     }
     //endregion

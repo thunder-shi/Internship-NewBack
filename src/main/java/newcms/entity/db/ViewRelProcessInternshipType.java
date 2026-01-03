@@ -18,5 +18,6 @@ public class ViewRelProcessInternshipType extends BaseInfo {
     private String universityName;
     private String typeName;
     private String internshipTypeName;
+    private Integer theOrder;
 }
 
