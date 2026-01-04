@@ -253,7 +253,7 @@ public Object getLoginUser(Date date, String userAgent) {
         userInfo.put("id", userEntity.getId());
         userInfo.put("password",EncodeUtil.pwdShiro(password.trim(), userEntity.getId()));
         //再保存
-        logger.info("<INFO> 用户注册 phone:{} account:{} password:{}", phone, userInfo.getString("account"), userInfo.getString("password"));
+        logger.info("用户注册 phone:{} account:{}", phone, userInfo.getString("account"));
         return iCommonService.saveOneRecord("BaseUser",userInfo);
     }
 

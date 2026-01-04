@@ -398,14 +398,14 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
         Workbook workbook = null;
         try {
             if (file.getPath().endsWith("xls")) {
-                logger.info("这是2003版本");
+                logger.debug("读取 Excel 2003 版本文件");
                 workbook = new HSSFWorkbook(new FileInputStream(file));
             } else if (file.getPath().endsWith("xlsx")) {
                 workbook = new XSSFWorkbook(new FileInputStream(file));
-                logger.info("这是2007版本");
+                logger.debug("读取 Excel 2007 版本文件");
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("读取 Excel 文件异常, file={}", file.getPath(), e);
         }
 
         return workbook;
@@ -430,7 +430,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             outputStream.close();
             return true;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("写入浏览器异常, name={}", name, e);
             return false;
         }
     }
@@ -452,7 +452,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             writer.close();
             return true;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("写入浏览器异常, name={}", name, e);
             return false;
         }
     }

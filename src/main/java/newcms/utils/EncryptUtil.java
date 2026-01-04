@@ -168,7 +168,7 @@ public class EncryptUtil {
 
                 return decryptData;
             } catch (Exception ex) {
-                logger.error("解密失败: keyWord={}, value={}, error={}", keyWord, value, ex.getMessage());
+                logger.error("解密失败: keyWord={}, value={}", keyWord, value, ex);
                 throw BaseResponse.moreInfoError.error("解密失败: " + ex.getMessage());
             }
         } finally {
