@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkOrderInfo;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -27,8 +28,11 @@ public class MainInternship extends NameRemarkOrderInfo {
     private Integer creatorId;
     @Column(columnDefinition = "varchar(20) comment '实习报告周期'")
     private String cron;
-    @Column(columnDefinition = "datetime comment '实习上报开始时间'")
-    private LocalDateTime reportStartTime;
-    @Column(columnDefinition = "datetime comment '实习上报结束时间'")
-    private LocalDateTime reportEndTime;
+    @Column(columnDefinition = "date comment '实习上报开始日期'")
+    private LocalDate reportStartDate;
+    @Column(columnDefinition = "date comment '实习上报结束日期'")
+    private LocalDate reportEndDate;
+    @Column(columnDefinition = "int unsigned comment '学生人数'")
+    private Integer studentNum;
+
 }
