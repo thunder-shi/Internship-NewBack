@@ -2,12 +2,11 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.AuditInfo;
+import newcms.entity.base.NameRemarkOrderInfo;
 
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * 实习项目表
@@ -17,11 +16,11 @@ import java.time.LocalDate;
 @Entity
 @Getter
 @Setter
-public class MainInternship extends AuditInfo {
+public class MainInternship extends NameRemarkOrderInfo {
     @Column(nullable = false, columnDefinition = "datetime comment '实习开始时间'")
-    private LocalDate startDate;
+    private LocalDateTime startTime;
     @Column(nullable = false, columnDefinition = "datetime comment '实习结束时间'")
-    private LocalDate endDate;
+    private LocalDateTime endTime;
     @Column(columnDefinition = "int unsigned comment '实习类型'")
     private Integer internshipTypeId;
     @Column(columnDefinition = "int unsigned comment '创建人id'")
@@ -29,7 +28,7 @@ public class MainInternship extends AuditInfo {
     @Column(columnDefinition = "varchar(20) comment '实习报告周期'")
     private String cron;
     @Column(columnDefinition = "datetime comment '实习上报开始时间'")
-    private LocalDate reportStartDate;
+    private LocalDateTime reportStartTime;
     @Column(columnDefinition = "datetime comment '实习上报结束时间'")
-    private LocalDate reportEndDate;
+    private LocalDateTime reportEndTime;
 }
