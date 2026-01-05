@@ -1,8 +1,14 @@
 package newcms.entity.db;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import lombok.Getter;
+import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
+@Getter
+@Setter
+@Entity
 public class RelProcessInternship extends BaseInfo {
     @Column(columnDefinition = "integer unsigned comment '实习项目id，外键，关联表BaseInternship'")
     private Integer internshipId;
