@@ -5,15 +5,21 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.spec.SecretKeySpec;
 
 import com.alibaba.fastjson.JSONObject;
+import newcms.base.BaseResponse;
 import org.apache.commons.codec.binary.Base64;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 @Component
 public class EncryptUtil {
+
+    private static final Logger logger = LoggerFactory.getLogger(EncryptUtil.class);
 
     @Resource
     protected RedisUtil redis;
@@ -22,11 +28,18 @@ public class EncryptUtil {
     private final String KEY = "abcdefgabcdefg12";
     private final String ALGORITHMSTR = "AES/ECB/PKCS5Padding";
 
+    // Key 过期时间（毫秒）
+    private static final long KEY_EXPIRE_TIME = 300000;
+
+    // 添加读写锁防止并发问题
+    private static final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
     public static List<String> allKeys = new ArrayList<>();
     public static List<Boolean> haveKeys = new ArrayList<>();
     public static List<Instant> KeysDate = new ArrayList<>();
 
     private Integer getSuitablePos() {
+        // 此方法应在持有写锁时调用
         Integer ret = -1;
         boolean flag = false;
         int i=0;
@@ -34,7 +47,7 @@ public class EncryptUtil {
         while (i<haveKeys.size() && !flag) {
             Instant keyDate = KeysDate.get(i);
             long ll = nowDate.toEpochMilli() - keyDate.toEpochMilli();
-            if (ll > 300000 || !haveKeys.get(i)) {
+            if (ll > KEY_EXPIRE_TIME || !haveKeys.get(i)) {
                 ret  = i;
                 flag = true;
             } else {
@@ -46,22 +59,28 @@ public class EncryptUtil {
 
 
     public JSONObject setAllKeys(String key) {
-        Integer pos = getSuitablePos();
-        if (pos == -1) {
-            allKeys.add(key);
-            haveKeys.add(true);
-            KeysDate.add(Instant.now());
-            JSONObject val = new JSONObject();
-            val.put("key", key);
-            val.put("value", allKeys.size()-1);
-            return val;
-        } else {
-            haveKeys.set(pos, true);
-            KeysDate.set(pos, Instant.now());
-            JSONObject val = new JSONObject();
-            val.put("key", allKeys.get(pos));
-            val.put("value", pos);
-            return val;
+        lock.writeLock().lock();
+        try {
+            Integer pos = getSuitablePos();
+            if (pos == -1) {
+                allKeys.add(key);
+                haveKeys.add(true);
+                KeysDate.add(Instant.now());
+                JSONObject val = new JSONObject();
+                val.put("key", key);
+                val.put("value", allKeys.size()-1);
+                return val;
+            } else {
+                allKeys.set(pos, key);  // 更新 key
+                haveKeys.set(pos, true);
+                KeysDate.set(pos, Instant.now());
+                JSONObject val = new JSONObject();
+                val.put("key", key);
+                val.put("value", pos);
+                return val;
+            }
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
@@ -98,27 +117,63 @@ public class EncryptUtil {
     }
 
     public String getKeyWord(String keyWord) {
-        String decryptData = "";
-        int value = Integer.parseInt(keyWord.substring(keyWord.length()-2,keyWord.length()));
-        Instant nowDate = Instant.now();
-        Instant keyDate = KeysDate.get(value);
-        long ll = nowDate.toEpochMilli() - keyDate.toEpochMilli();
-        if (haveKeys.get(value) && (ll<300000)) {
+        if (keyWord == null || keyWord.length() < 2) {
+            logger.error("keyWord 为空或长度不足: {}", keyWord);
+            throw BaseResponse.moreInfoError.error("keyWord 无效");
+        }
+
+        int value;
+        try {
+            value = Integer.parseInt(keyWord.substring(keyWord.length() - 2));
+        } catch (NumberFormatException e) {
+            logger.error("keyWord 后缀解析失败: {}", keyWord);
+            throw BaseResponse.moreInfoError.error("keyWord 格式错误");
+        }
+
+        lock.writeLock().lock();
+        try {
+            // 检查索引是否有效
+            if (value < 0 || value >= allKeys.size()) {
+                logger.error("keyWord 索引越界: value={}, allKeys.size={}", value, allKeys.size());
+                throw BaseResponse.moreInfoError.error("密钥索引无效，请刷新页面重新获取");
+            }
+
+            Instant nowDate = Instant.now();
+            Instant keyDate = KeysDate.get(value);
+            long elapsed = nowDate.toEpochMilli() - keyDate.toEpochMilli();
+
+            // 检查 key 是否已被使用
+            if (!haveKeys.get(value)) {
+                logger.warn("keyWord 对应的密钥已被使用: value={}", value);
+                throw BaseResponse.moreInfoError.error("密钥已被使用，请刷新页面重新获取");
+            }
+
+            // 检查 key 是否已过期
+            if (elapsed >= KEY_EXPIRE_TIME) {
+                logger.warn("keyWord 对应的密钥已过期: value={}, elapsed={}ms", value, elapsed);
+                throw BaseResponse.moreInfoError.error("密钥已过期，请刷新页面重新获取");
+            }
+
             try {
-                String key = "";
+                String key;
                 if (value < 10) {
                     key = allKeys.get(value) + "0" + value + (new StringBuilder(allKeys.get(value)).reverse().toString());
                 } else {
                     key = allKeys.get(value) + value + (new StringBuilder(allKeys.get(value)).reverse().toString());
                 }
-                decryptData = aesDecrypt(keyWord.substring(0, keyWord.length() - 2), key);
-                //用后即焚
-                haveKeys.set(value, false);
-            } catch (Exception ex) {
+                String decryptData = aesDecrypt(keyWord.substring(0, keyWord.length() - 2), key);
 
+                // 用后即焚
+                haveKeys.set(value, false);
+
+                return decryptData;
+            } catch (Exception ex) {
+                logger.error("解密失败: keyWord={}, value={}", keyWord, value, ex);
+                throw BaseResponse.moreInfoError.error("解密失败: " + ex.getMessage());
             }
+        } finally {
+            lock.writeLock().unlock();
         }
-        return decryptData;
     }
 
 

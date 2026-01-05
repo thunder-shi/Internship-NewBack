@@ -40,12 +40,12 @@ public class DataListController extends CommonController {
         try{
             searchKeys = FastJsonUtil.toJson(encryptUtil.getKeyWord(requestJson.getString("searchKey")));
         } catch (Exception e) {
-
+            logger.warn("搜索条件解密失败", e);
         }
         try {
             regJson = FastJsonUtil.toJson(encryptUtil.getKeyWord(requestJson.getString("reg")));
         } catch (Exception e) {
-
+            logger.warn("查询条件解密失败", e);
         }
         JSONObject andorJson = requestJson.getJSONObject("andor");
         Map<String,String> regMap =  new HashMap<>();

@@ -1,5 +1,7 @@
 package newcms.utils;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -11,6 +13,7 @@ import java.util.Objects;
 
 @Component
 public final class RedisUtil {
+    private static final Logger logger = LoggerFactory.getLogger(RedisUtil.class);
     @Resource
     private RedisTemplate<String, Object> redisTemplate;
 
@@ -27,7 +30,7 @@ public final class RedisUtil {
                 return redisTemplate.expire(key, timeoutSecond, TimeUnit.SECONDS);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis expire 操作异常, key={}", key, e);
         }
         return false;
     }
@@ -55,7 +58,7 @@ public final class RedisUtil {
                 return redisTemplate.hasKey(key);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis hasKey 操作异常, key={}", key, e);
         }
         return false;
     }
@@ -85,7 +88,7 @@ public final class RedisUtil {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis delete 操作异常", e);
         }
         return false;
     }
@@ -100,7 +103,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForValue().get(Objects.requireNonNull(key));
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis get 操作异常, key={}", key, e);
         }
         return null;
     }
@@ -117,7 +120,7 @@ public final class RedisUtil {
                 redisTemplate.opsForValue().set(key, value);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis set 操作异常, key={}", key, e);
             return false;
         }
         return true;
@@ -141,7 +144,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis set 操作异常, key={}, timeout={}", key, timeoutSecond, e);
         }
         return false;
     }
@@ -212,7 +215,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis hSet 操作异常, key={}", key, e);
         }
         return false;
     }
@@ -234,7 +237,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis hSet 操作异常, key={}, time={}", key, time, e);
         }
         return false;
     }
@@ -253,7 +256,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis hvSet 操作异常, key={}, hashKey={}", key, hashKey, e);
         }
         return false;
     }
@@ -276,7 +279,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis hvSet 操作异常, key={}, hashKey={}, timeout={}", key, hashKey, timeoutSecond, e);
         }
         return false;
     }
@@ -362,7 +365,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForSet().add(key, values);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis sSetAndTime 操作异常, key={}", key, e);
         }
         return 0L;
     }
@@ -378,7 +381,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForSet().size(key);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis sGetSize 操作异常, key={}", key, e);
         }
         return 0L;
     }
@@ -395,7 +398,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForSet().remove(key, values);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis setRemove 操作异常, key={}", key, e);
         }
         return 0L;
     }
@@ -414,7 +417,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForList().range(key, start, end);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lGet 操作异常, key={}, start={}, end={}", key, start, end, e);
         }
         return null;
     }
@@ -430,7 +433,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForList().size(key);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lGetSize 操作异常, key={}", key, e);
         }
         return 0L;
     }
@@ -447,7 +450,7 @@ public final class RedisUtil {
                 return redisTemplate.opsForList().index(key, index);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lGetIndex 操作异常, key={}, index={}", key, index, e);
         }
         return null;
     }
@@ -465,7 +468,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lSet 操作异常, key={}", key, e);
         }
         return false;
     }
@@ -487,7 +490,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lSet 操作异常, key={}, timeout={}", key, timeout, e);
         }
         return false;
     }
@@ -505,7 +508,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lSet(collection) 操作异常, key={}", key, e);
         }
         return false;
     }
@@ -527,7 +530,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lSet(collection) 操作异常, key={}, timeout={}", key, timeout, e);
         }
         return false;
     }
@@ -546,7 +549,7 @@ public final class RedisUtil {
                 return true;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lUpdateIndex 操作异常, key={}, index={}", key, index, e);
         }
         return false;
     }
@@ -565,7 +568,7 @@ public final class RedisUtil {
                 return result != null ? result : 0;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Redis lRemove 操作异常, key={}, count={}", key, count, e);
         }
         return 0;
     }

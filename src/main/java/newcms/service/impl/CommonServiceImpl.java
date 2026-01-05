@@ -197,16 +197,37 @@ public class CommonServiceImpl extends Base implements ICommonService {
         try {
             Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
             Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);
+
+            // 注意：这里保留了你原来的 Bean 获取逻辑，虽然可能有大小写隐患，但先不动它
             Object beanDao = applicationContext.getBean(tblName.substring(0, 1).toLowerCase() + tblName.substring(1) + "Dao", clazzDao);
+
             if (page == null || size == null || size == -1) {
                 ret = clazzDao.getMethod("findAll", Specification.class, Pageable.class).invoke(beanDao, super.getSpecification(searchKeys, repMap, andor, clazzInfo), PageRequest.of(0, 10000, sort));
             } else {
                 ret = clazzDao.getMethod("findAll", Specification.class, Pageable.class).invoke(beanDao, super.getSpecification(searchKeys, repMap, andor, clazzInfo), PageRequest.of(page - 1, size, sort));
             }
             return ret;
-        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
+        } catch (Exception ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            
+            // 获取详细的错误信息
+            String errorMsg = ex.getMessage();
+            String errorType = ex.getClass().getSimpleName();
+            
+            // 如果是 InvocationTargetException，获取底层异常的原因
+            if (ex instanceof java.lang.reflect.InvocationTargetException) {
+                Throwable cause = ((java.lang.reflect.InvocationTargetException) ex).getTargetException();
+                if (cause != null) {
+                    errorType = cause.getClass().getSimpleName();
+                    errorMsg = cause.getMessage();
+                    // 如果底层异常还有原因，也加上
+                    if (cause.getCause() != null) {
+                        errorMsg += " (原因: " + cause.getCause().getMessage() + ")";
+                    }
+                }
+            }
+            
+            throw BaseResponse.moreInfoError.error("查询出错[" + tblName + "]: " + errorType + " - " + (errorMsg != null ? errorMsg : "未知错误"));
         }
     }
     //endregion

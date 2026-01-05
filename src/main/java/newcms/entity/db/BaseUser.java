@@ -34,8 +34,6 @@ public class BaseUser extends NameRemarkInfo {
     private String postalCode;
     @Column(columnDefinition = "varchar(50) comment'电子邮件'")
     private String email;
-//    @Column(columnDefinition = "datetime comment '注册时间'")
-//    private Date registerTime;
     @Column(columnDefinition = "varchar(50) CHARACTER SET utf8 COLLATE utf8_bin COMMENT '昵称'")
     private String nickName;
     @Column(columnDefinition = "integer unsigned comment '部门ID'")

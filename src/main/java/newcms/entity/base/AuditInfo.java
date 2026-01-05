@@ -10,7 +10,7 @@ import java.util.Date;
 @MappedSuperclass
 @Getter
 @Setter
-public class AuditInfo extends BaseInfo {
+public class AuditInfo extends NameRemarkOrderInfo {
     @Column(nullable = false,columnDefinition = "smallint default '1' comment '是否审核'")
     private Integer isAudit;
     @Column(columnDefinition = "varchar(50) comment '审核理由'")
