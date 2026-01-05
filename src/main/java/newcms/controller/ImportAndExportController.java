@@ -62,6 +62,8 @@ public class ImportAndExportController {
         switch (keyWord) {
             case "BaseMajor":
                 return BaseResponse.ok(iImportAndExportService.importBaseMajor(multipartFileToFile(file)));
+            case "BaseUser":
+                return BaseResponse.ok(iImportAndExportService.importBaseUser(multipartFileToFile(file)));
             default:
                 throw BaseResponse.moreInfoError.error("keyWord异常");
         }

@@ -12,4 +12,5 @@ public interface IImportAndExportService {
     Object exportInfo(String key, JSONArray nodes, JSONArray allTableColumns, JSONObject searchWords);
     void downTemplate(String keyWords);
     Object importBaseMajor(File file);
+    Object importBaseUser(File file);
 }

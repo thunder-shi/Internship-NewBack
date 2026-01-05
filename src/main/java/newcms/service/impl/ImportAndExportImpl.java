@@ -12,6 +12,7 @@ import newcms.entity.base.BaseTreeInfo;
 import newcms.entity.db.BaseMajor;
 import newcms.repository.db.BaseMajorDao;
 import newcms.service.ICommonService;
+import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.service.IImportAndExportService;
 import newcms.utils.FastJsonUtil;
@@ -21,6 +22,8 @@ import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
@@ -53,6 +56,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     private IDataTreeService iDataTreeService;
     @Resource
     private ICommonService iCommonService;
+    @Resource
+    private IDataListService iDataListService;
 
     //region 一些private
     private HSSFCellStyle getCellStype( HSSFWorkbook workbook, int type) {
@@ -591,6 +596,57 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 data.put("parentId", parentId);
                 result = iDataTreeService.editOneNode("BaseMajor", data);
 
+            }
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return result;
+    }
+
+    @Override
+    public Object importBaseUser(File file) {
+        Object result = new Object();
+        try (FileInputStream fileInputStream = new FileInputStream(file)) {
+            //通过流的方式读取文件，支持xls和xlsx
+            Workbook workbook = judgeVersion(file);
+            if (workbook == null) {
+                throw new RuntimeException("不支持的文件格式");
+            }
+            //通过sheet的名字来获取数据
+            Sheet sheet = workbook.getSheetAt(0);
+            //通过下标来获取数据
+            //获取第一行的下标
+            int firstRowNum = 1;
+            //获取最后一行下标
+            int lastRowNum = sheet.getLastRowNum();
+            for (int i = firstRowNum; i <= lastRowNum; i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+                String account = getCellStringValue(row.getCell(0));
+                String password = getCellStringValue(row.getCell(1));
+                String idCard = getCellStringValue(row.getCell(2));
+                String name = getCellStringValue(row.getCell(3));
+                String sex = getCellStringValue(row.getCell(4));
+                Integer departmentId = Integer.parseInt(getCellStringValue(row.getCell(5)));
+                Integer jobId = Integer.parseInt(getCellStringValue(row.getCell(6)));
+                Integer workId = Integer.parseInt(getCellStringValue(row.getCell(7)));
+                String phone = getCellStringValue(row.getCell(8));
+                String remarks = getCellStringValue(row.getCell(9));
+                // 跳过空行
+                if (account.isEmpty() || departmentId== 0 || jobId== 0) continue;
+                JSONObject data = new JSONObject();
+                data.put("account", account);
+                data.put("password", password);
+                data.put("idCard", idCard);
+                data.put("name", name);
+                data.put("sex", sex);
+                data.put("departmentId", departmentId);
+                data.put("jobId", jobId);
+                data.put("workId", workId);
+                data.put("phone", phone);
+                data.put("remarks", remarks);
+                result = iDataListService.editOneNode("BaseUser", data);
             }
 
         } catch (IOException e) {
