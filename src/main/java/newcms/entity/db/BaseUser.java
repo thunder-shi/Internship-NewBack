@@ -40,6 +40,8 @@ public class BaseUser extends NameRemarkInfo {
     private Integer departmentId;
     @Column(columnDefinition = "integer unsigned comment '身份ID'")
     private Integer jobId;
+    @Column(columnDefinition = "integer unsigned comment '专业ID'")
+    private Integer majorId;
     @Column(columnDefinition = "varchar(50) comment '工号'")
     private String workId;
     @Column(columnDefinition = "varchar(50) CHARACTER SET utf8 COLLATE utf8_bin COMMENT '主题色'")

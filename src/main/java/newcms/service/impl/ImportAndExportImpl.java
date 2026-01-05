@@ -9,6 +9,8 @@ import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import newcms.base.Base;
 import newcms.entity.base.BaseTreeInfo;
+import newcms.entity.db.BaseDepartment;
+import newcms.entity.db.BaseJobPosition;
 import newcms.entity.db.BaseMajor;
 import newcms.repository.db.BaseMajorDao;
 import newcms.service.ICommonService;
@@ -478,6 +480,13 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 rowsData = CollUtil.newArrayList(row2, row3);
                 dataRow = CollUtil.newArrayList("", "", "");
                 break;
+            case "BaseUser":
+                //表头
+                row2 = CollUtil.newArrayList("姓名", "性别", "联系电话", "邮箱", "账号", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码", "岗位编码", "工号", "专业编码", "入学年份", "毕业年份");
+                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                rowsData = CollUtil.newArrayList(row2, row3);
+                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                break;
         }
         //给除表头外 50行单元格非必填项设置默认值（空字符串）
         for (int i = 0; i < 50; i++) {
@@ -600,140 +609,170 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
         return result;
     }
 
-    /**
-     * 根据表头自动匹配并提取指定字段的数据
-     * @param file Excel文件
-     * @return 包含指定字段数据的JSONObject列表
-     */
+
     @Override
-    public List<JSONObject> importBaseUser(File file) {
-        List<JSONObject> result = new ArrayList<>();
-        boolean skipRow = false;
+    public Object importBaseUser(File file) {
+        Object result = new Object();
         try (FileInputStream fileInputStream = new FileInputStream(file)) {
+            //通过流的方式读取文件，支持xls和xlsx
             Workbook workbook = judgeVersion(file);
             if (workbook == null) {
                 throw new RuntimeException("不支持的文件格式");
             }
-
+            //通过sheet的名字来获取数据
             Sheet sheet = workbook.getSheetAt(0);
-            if (sheet.getLastRowNum() < 1) return result;
-
-            Row headerRow = sheet.getRow(0);
-            if (headerRow == null) return result;
-
-            // 定义字段映射
-            Map<String, Integer> fieldIndexMap = new HashMap<>();
-            String[] fieldNames = {"phone", "account", "password", "sex", "name", "code",
-                    "idCard", "birth", "address", "postalCode", "nickName",
-                    "departmentId", "jobId", "workId", "majorId", "StartYear", "EndYear"};
-
-            for (int i = 0; i < headerRow.getLastCellNum(); i++) {
-                String headerValue = getCellStringValue(headerRow.getCell(i));
-                for (String fieldName : fieldNames) {
-                    if (isHeaderMatch(fieldName, headerValue)) {
-                        fieldIndexMap.put(fieldName, i);
-                        break;
-                    }
-                }
-            }
-
-            // 从第二行开始读取数据
-            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            //通过下标来获取数据
+            //获取第一行的下标（跳过表头）
+            int firstRowNum = 1;
+            //获取最后一行下标
+            int lastRowNum = sheet.getLastRowNum();
+            for (int i = firstRowNum; i <= lastRowNum; i++) {
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
-
-                JSONObject userData = new JSONObject();
-
-                // 提取字段值
-                for (Map.Entry<String, Integer> entry : fieldIndexMap.entrySet()) {
-                    String fieldName = entry.getKey();
-                    int index = entry.getValue();
-                    String cellValue = getCellStringValue(row.getCell(index));
-
-                    // 根据字段类型进行转换
-                    switch (fieldName) {
-                        case "jobId":
-                        case "workId":
-                        case "majorId":
-                        case "StartYear":
-                        case "EndYear":
-                        case "departmentId":
-                            try {
-                                int value = Integer.parseInt(cellValue);
-                                // 检查关键字段是否为空（0或负数）
-                                if (("departmentId".equals(fieldName) || "majorId".equals(fieldName) || "jobId".equals(fieldName)) && value <= 0) {
-                                    // 如果关键字段为空，跳过该行
-                                    skipRow = true;
-                                    break;
-                                }
-                                userData.put(fieldName, value);
-                            } catch (NumberFormatException e) {
-                                // 如果关键字段无法解析，跳过该行
-                                if ("departmentId".equals(fieldName) || "majorId".equals(fieldName) || "jobId".equals(fieldName)) {
-                                    skipRow = true;
-                                    break;
-                                }
-                                userData.put(fieldName, 0);
-                            }
-                            break;
-                        case "birth":
-                            try {
-                                userData.put(fieldName, new SimpleDateFormat("yyyy-MM-dd").parse(cellValue));
-                            } catch (Exception e) {
-                                userData.put(fieldName, null);
-                            }
-                            break;
-                        default:
-                            userData.put(fieldName, cellValue);
+                
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 岗位编码, 工号, 专业编码, 入学年份, 毕业年份
+                String name = getCellStringValue(row.getCell(0));
+                String sex = getCellStringValue(row.getCell(1));
+                String phone = getCellStringValue(row.getCell(2));
+                String email = getCellStringValue(row.getCell(3));
+                String account = getCellStringValue(row.getCell(4));
+                String password = getCellStringValue(row.getCell(5));
+                String idCard = getCellStringValue(row.getCell(6));
+                String birthStr = getCellStringValue(row.getCell(7));
+                String address = getCellStringValue(row.getCell(8));
+                String postalCode = getCellStringValue(row.getCell(9));
+                String nickName = getCellStringValue(row.getCell(10));
+                String departmentCode = getCellStringValue(row.getCell(11));
+                String jobCode = getCellStringValue(row.getCell(12));
+                String workId = getCellStringValue(row.getCell(13));
+                String majorCode = getCellStringValue(row.getCell(14));
+                // 入学年份和毕业年份（BaseUser实体中暂无这些字段，保留读取以保持与模板一致）
+                @SuppressWarnings("unused")
+                String startYearStr = getCellStringValue(row.getCell(15));
+                @SuppressWarnings("unused")
+                String endYearStr = getCellStringValue(row.getCell(16));
+                
+                // 跳过空行（姓名为空则跳过）
+                if (name.isEmpty()) continue;
+                
+                // 验证必填字段：departmentId、majorId、jobId 不能为空
+                // 检查部门编码是否为空
+                if (departmentCode.isEmpty()) continue;
+                // 检查岗位编码是否为空
+                if (jobCode.isEmpty()) continue;
+                // 检查专业编码是否为空
+                if (majorCode.isEmpty()) continue;
+                
+                JSONObject data = new JSONObject();
+                data.put("name", name);
+                if (!sex.isEmpty()) data.put("sex", sex);
+                if (!phone.isEmpty()) data.put("phone", phone);
+                if (!email.isEmpty()) data.put("email", email);
+                if (!account.isEmpty()) data.put("account", account);
+                // 如果密码为空，默认设为000000
+                data.put("password", password.isEmpty() ? "000000" : password);
+                if (!idCard.isEmpty()) data.put("idCard", idCard);
+                // 处理出生日期
+                if (!birthStr.isEmpty()) {
+                    try {
+                        data.put("birth", new SimpleDateFormat("yyyy-MM-dd").parse(birthStr));
+                    } catch (Exception e) {
+                        // 日期解析失败，跳过该字段
                     }
-
-                    if (skipRow) break;
                 }
-                // 如果不需要跳过该行，则添加到结果中
-                if (!skipRow) {
-                    iDataListService.editOneNode("BaseUser", userData);
-                    result.add(userData);
+                if (!address.isEmpty()) data.put("address", address);
+                if (!postalCode.isEmpty()) data.put("postalCode", postalCode);
+                if (!nickName.isEmpty()) data.put("nickName", nickName);
+                if (!workId.isEmpty()) data.put("workId", workId);
+                
+                // 通过编码查找部门ID（必填）
+                Integer departmentId = null;
+                try {
+                    Object department = iCommonService.getOneRecordByCode("BaseDepartment", departmentCode, false);
+                    if (department != null) {
+                        BaseDepartment dept = (BaseDepartment) department;
+                        departmentId = dept.getId();
+                    } else {
+                        logger.warn("未找到部门编码为 {} 的记录，跳过该行数据", departmentCode);
+                        continue;
+                    }
+                } catch (Exception e) {
+                    logger.error("查找部门编码 {} 时发生异常，跳过该行数据", departmentCode);
+                    continue;
                 }
+                if (departmentId == null) {
+                    logger.warn("部门编码 {} 对应的ID为空，跳过该行数据", departmentCode);
+                    continue;
+                }
+                data.put("departmentId", departmentId);
+                
+                // 通过编码查找岗位ID（必填）
+                Integer jobId = null;
+                try {
+                    Object job = iCommonService.getOneRecordByCode("BaseJobPosition", jobCode, false);
+                    if (job != null) {
+                        BaseJobPosition jobPosition = (BaseJobPosition) job;
+                        jobId = jobPosition.getId();
+                    } else {
+                        logger.warn("未找到岗位编码为 {} 的记录，跳过该行数据", jobCode);
+                        continue;
+                    }
+                } catch (Exception e) {
+                    logger.error("查找岗位编码 {} 时发生异常，跳过该行数据", jobCode);
+                    continue;
+                }
+                if (jobId == null) {
+                    logger.warn("岗位编码 {} 对应的ID为空，跳过该行数据", jobCode);
+                    continue;
+                }
+                data.put("jobId", jobId);
+                
+                // 通过编码查找专业ID（必填）
+                Integer majorId = null;
+                try {
+                    Object major = iCommonService.getOneRecordByCode("BaseMajor", majorCode, false);
+                    if (major != null) {
+                        BaseMajor majorObj = (BaseMajor) major;
+                        majorId = majorObj.getId();
+                    } else {
+                        logger.warn("未找到专业编码为 {} 的记录，跳过该行数据", majorCode);
+                        continue;
+                    }
+                } catch (Exception e) {
+                    logger.error("查找专业编码 {} 时发生异常，跳过该行数据", majorCode);
+                    continue;
+                }
+                if (majorId == null) {
+                    logger.warn("专业编码 {} 对应的ID为空，跳过该行数据", majorCode);
+                    continue;
+                }
+                data.put("majorId", majorId);
+                
+                // 处理入学年份和毕业年份（BaseUser实体中没有这些字段，可能需要根据实际需求处理）
+                // 如果BaseUser实体中有这些字段，可以添加：
+                // if (!startYearStr.isEmpty()) {
+                //     try {
+                //         data.put("startYear", Integer.parseInt(startYearStr));
+                //     } catch (NumberFormatException e) {
+                //         // 解析失败，跳过
+                //     }
+                // }
+                // if (!endYearStr.isEmpty()) {
+                //     try {
+                //         data.put("endYear", Integer.parseInt(endYearStr));
+                //     } catch (NumberFormatException e) {
+                //         // 解析失败，跳过
+                //     }
+                // }
+                
+                // BaseUser不是树形结构，使用iDataListService
+                result = iDataListService.editOneNode("BaseUser", data);
             }
 
         } catch (IOException e) {
-            logger.error("读取Excel文件异常", e);
-            throw new RuntimeException("读取Excel文件失败", e);
+            throw new RuntimeException(e);
         }
         return result;
-    }
-
-    /**
-     * 判断表头是否匹配字段
-     */
-    private boolean isHeaderMatch(String fieldName, String headerValue) {
-        if (headerValue == null) return false;
-        String lowerHeader = headerValue.toLowerCase().trim();
-
-        switch (fieldName) {
-            case "phone": return lowerHeader.contains("phone") || lowerHeader.contains("手机号") ||
-                    lowerHeader.contains("电话") || lowerHeader.contains("联系电话");
-            case "account": return lowerHeader.contains("account") || lowerHeader.contains("账号");
-            case "password": return lowerHeader.contains("password") || lowerHeader.contains("密码");
-            case "sex": return lowerHeader.contains("sex") || lowerHeader.contains("性别");
-            case "name": return lowerHeader.contains("name") || lowerHeader.contains("姓名");
-            case "code": return lowerHeader.contains("code") || lowerHeader.contains("编码") ||
-                    lowerHeader.contains("编号");
-            case "idCard": return lowerHeader.contains("idcard") || lowerHeader.contains("身份证") ||
-                    lowerHeader.contains("身份证号");
-            case "birth": return lowerHeader.contains("birth") || lowerHeader.contains("生日") ||
-                    lowerHeader.contains("出生日期");
-            case "address": return lowerHeader.contains("address") || lowerHeader.contains("地址");
-            case "postalCode": return lowerHeader.contains("postalcode") || lowerHeader.contains("邮编");
-            case "nickName": return lowerHeader.contains("nickname") || lowerHeader.contains("昵称");
-            case "departmentId": return lowerHeader.contains("departmentid");
-            case "jobId": return lowerHeader.contains("jobid");
-            case "workId": return lowerHeader.contains("workid");
-            case "majorId": return lowerHeader.contains("majorid");
-            case "StartYear": return lowerHeader.contains("startyear");
-            case "EndYear": return lowerHeader.contains("endyear");
-            default: return false;
-        }
     }
 }
 
