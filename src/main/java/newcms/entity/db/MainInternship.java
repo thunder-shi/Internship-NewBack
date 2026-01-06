@@ -32,7 +32,7 @@ public class MainInternship extends NameRemarkOrderInfo {
     private LocalDate reportStartDate;
     @Column(columnDefinition = "date comment '实习上报结束日期'")
     private LocalDate reportEndDate;
-    @Column(columnDefinition = "int unsigned comment '学生人数'")
+    @Column(columnDefinition = "int unsigned comment '已选学生人数'")
     private Integer studentNum;
 
 }
