@@ -4,6 +4,7 @@ import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
+import newcms.service.IInternshipService;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.LogUtil;
 import com.alibaba.fastjson.JSONObject;
@@ -25,6 +26,9 @@ import java.util.Map;
 public class DataListServiceImpl extends Base implements IDataListService {
     @Resource
     protected ICommonService iCommonService;
+
+    @Resource
+    protected IInternshipService iInternshipService;
 
     /**
      * 条件查询/模糊查询
@@ -93,8 +97,11 @@ public class DataListServiceImpl extends Base implements IDataListService {
     }
     @Override
     public Object editOneNode(String tblName, JSONObject node) {
+        // 判断是否为新增操作
+        boolean isNew = node.getInteger("id") == null || node.getInteger("id") == 0;
+
         //新增
-        if (node.getInteger("id") == null || node.getInteger("id") == 0) {
+        if (isNew) {
             try {
                 Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);
                 if (clazzInfo.getSuperclass().getName().contains("OrderInfo") && (node.getString("theOrder")==null) ) {
@@ -125,7 +132,18 @@ public class DataListServiceImpl extends Base implements IDataListService {
                 node.put("channelCTime",null);
             }
         }
-        return iCommonService.saveOneRecord(tblName, node);
+
+        Object result = iCommonService.saveOneRecord(tblName, node);
+
+        // 新建实习项目时，根据实习类型模板复制流程配置
+        if (isNew && "MainInternship".equals(tblName)) {
+            JSONObject savedNode = FastJsonUtil.toJson(result);
+            Integer internshipId = savedNode.getInteger("id");
+            Integer internshipTypeId = savedNode.getInteger("internshipTypeId");
+            iInternshipService.copyProcessFromTemplate(internshipId, internshipTypeId);
+        }
+
+        return result;
     }
 
     /**

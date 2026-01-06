@@ -1,15 +1,16 @@
 package newcms.entity.db;
 
-import newcms.entity.base.BaseInfo;
+import jakarta.persistence.Entity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import newcms.entity.base.BaseInfo;
 
-import jakarta.persistence.Entity;
+import java.time.LocalDateTime;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Entity
-public class ViewRelProcessInternshipType extends BaseInfo {
+public class ViewRelProcessInternship extends BaseInfo {
     private Integer internshipTypeId;
     private Integer processTypeId;
     private Integer verifyTypeId;
@@ -29,5 +30,6 @@ public class ViewRelProcessInternshipType extends BaseInfo {
     private String verifyThirdRoleName;
     private String verifyFourthRoleName;
     private String verifyFifthRoleName;
+    private LocalDateTime startTime;
+    private LocalDateTime endTime;
 }
-
