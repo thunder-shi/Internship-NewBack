@@ -100,6 +100,15 @@ public class DataListServiceImpl extends Base implements IDataListService {
         // 判断是否为新增操作
         boolean isNew = node.getInteger("id") == null || node.getInteger("id") == 0;
 
+        // 编辑MainInternship时，记录旧的internshipTypeId用于比较
+        Integer oldInternshipTypeId = null;
+        if (!isNew && "MainInternship".equals(tblName)) {
+            JSONObject oldRecord = FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, node.getInteger("id")));
+            if (oldRecord != null) {
+                oldInternshipTypeId = oldRecord.getInteger("internshipTypeId");
+            }
+        }
+
         //新增
         if (isNew) {
             try {
@@ -135,12 +144,23 @@ public class DataListServiceImpl extends Base implements IDataListService {
 
         Object result = iCommonService.saveOneRecord(tblName, node);
 
-        // 新建实习项目时，根据实习类型模板复制流程配置
-        if (isNew && "MainInternship".equals(tblName)) {
+        // 处理MainInternship的流程配置
+        if ("MainInternship".equals(tblName)) {
             JSONObject savedNode = FastJsonUtil.toJson(result);
             Integer internshipId = savedNode.getInteger("id");
-            Integer internshipTypeId = savedNode.getInteger("internshipTypeId");
-            iInternshipService.copyProcessFromTemplate(internshipId, internshipTypeId);
+            Integer newInternshipTypeId = savedNode.getInteger("internshipTypeId");
+
+            if (isNew) {
+                // 新建时，复制模板流程配置
+                iInternshipService.copyProcessFromTemplate(internshipId, newInternshipTypeId);
+            } else {
+                // 编辑时，检测模板类型是否变化
+                boolean typeChanged = !java.util.Objects.equals(oldInternshipTypeId, newInternshipTypeId);
+                if (typeChanged) {
+                    // 模板类型变化，更新流程配置
+                    iInternshipService.updateProcessFromTemplate(internshipId, newInternshipTypeId);
+                }
+            }
         }
 
         return result;

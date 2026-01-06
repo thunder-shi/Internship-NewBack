@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Entity
 public class ViewRelProcessInternship extends BaseInfo {
-    private Integer internshipTypeId;
+    private Integer internshipId;
     private Integer processTypeId;
     private Integer verifyTypeId;
     private String processTypeName;
@@ -32,4 +32,6 @@ public class ViewRelProcessInternship extends BaseInfo {
     private String verifyFifthRoleName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private LocalDateTime internshipStartTime;
+    private LocalDateTime internshipEndTime;
 }

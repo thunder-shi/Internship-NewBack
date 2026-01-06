@@ -46,4 +46,19 @@ public class InternshipServiceImpl implements IInternshipService {
             relProcessInternshipDao.save(processInternship);
         }
     }
+
+    @Override
+    public void updateProcessFromTemplate(Integer internshipId, Integer newInternshipTypeId) {
+        if (internshipId == null) {
+            return;
+        }
+
+        // 1. 删除该实习项目的旧流程配置（逻辑删除）
+        relProcessInternshipDao.deleteByInternshipId(internshipId);
+
+        // 2. 如果有新模板，复制新模板的流程配置
+        if (newInternshipTypeId != null) {
+            copyProcessFromTemplate(internshipId, newInternshipTypeId);
+        }
+    }
 }
