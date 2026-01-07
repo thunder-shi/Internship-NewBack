@@ -24,14 +24,11 @@ import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -194,10 +191,15 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     public boolean checkRow(Row row, int index){
         int num = 0;
         for (int i = 0;i < index; i++) {
-            if (!StringUtils.isEmpty(row.getCell(i))){
-                row.getCell(i).setCellType(CellType.STRING);
-            }
-            if ("".equals(row.getCell(i) == null ? "" : row.getCell(i).getStringCellValue().trim())){
+            Cell cell = row.getCell(i);
+            if (cell != null){
+                // 使用 DataFormatter 安全地获取字符串值，避免使用已弃用的 setCellType
+                DataFormatter formatter = new DataFormatter();
+                String cellValue = formatter.formatCellValue(cell).trim();
+                if ("".equals(cellValue)){
+                    num++;
+                }
+            } else {
                 num++;
             }
         }
@@ -315,12 +317,15 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             // 转换JSONObject为Map类型
             Map<String, String> regKey = regKeyJson != null ? regKeyJson.toJavaObject(new com.alibaba.fastjson.TypeReference<Map<String, String>>(){}) : null;
             Map<String, Boolean> andor = andorJson != null ? andorJson.toJavaObject(new com.alibaba.fastjson.TypeReference<Map<String, Boolean>>(){}) : null;
-            Object resAll = ((Page<Object>)iCommonService.getSomeRecords(keyWords, searchKey, regKey, Sort.by(Sort.Direction.DESC, "id"),null,null,false, andor)).getContent();
+            @SuppressWarnings("unchecked")
+            Page<Object> pageResult = (Page<Object>) iCommonService.getSomeRecords(keyWords, searchKey, regKey, Sort.by(Sort.Direction.DESC, "id"),null,null,false, andor);
+            Object resAll = pageResult.getContent();
             nodes = JSONObject.parseArray(FastJsonUtil.toJSONString(resAll));
             //判断下是否为树形结构
             if (nodes.size()>0) {
                 Set<String> keys = nodes.getJSONObject(0).keySet();
                 if (keys.contains("parentId")) {
+                    @SuppressWarnings("unchecked")
                     ArrayList<Object> trees = (ArrayList<Object>) iDataTreeService.getTreeArrayList(keyWords, searchKey);
                     nodes.clear();
                     nodes = JSONObject.parseArray(FastJsonUtil.toJSONString(trees));
@@ -366,10 +371,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
      * @param curTreeInfo
      * @param allTreeInfo
      */
-    public void setLevelInfo(HSSFRow row , BaseTreeInfo curTreeInfo, List<BaseTreeInfo> allTreeInfo){
+    public void setLevelInfo(HSSFRow row , BaseTreeInfo<?> curTreeInfo, List<BaseTreeInfo<?>> allTreeInfo){
         for(int i = curTreeInfo.getTheLevel(); i > 0; i--){
             row.createCell(i-1).setCellValue(curTreeInfo.getName());
-            for(BaseTreeInfo baseTreeInfo : allTreeInfo){
+            for(BaseTreeInfo<?> baseTreeInfo : allTreeInfo){
                 if(baseTreeInfo.getId().equals(curTreeInfo.getParentId())){
                     curTreeInfo = baseTreeInfo;
                     break;
@@ -468,13 +473,11 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     public void downTemplate(String keyWords) {
         List<List<Object>> rowsData = new ArrayList<>();
         List<Object> dataRow = new ArrayList<>();
-        List<Object> row1 = new ArrayList<>();
         List<Object> row2 = new ArrayList<>();
         List<Object> row3 = new ArrayList<>();
         switch (keyWords) {
             case "BaseMajor":
                 //表头
-//                row1 = CollUtil.newArrayList("填写示例：**********");
                 row2 = CollUtil.newArrayList("专业代码", "专业名称", "备注");
                 row3 = CollUtil.newArrayList("", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
@@ -496,9 +499,12 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
         ExcelWriter writer = ExcelUtil.getWriter();
         //往sheet0中写入数据
         writer.write(rowsData, false);
-        //设置样式
+        //设置样式（当前未使用，保留以备将来扩展）
+        @SuppressWarnings("unused")
         CellStyle cellStyle1 = createCellStyleAndCellFont(writer, true, Font.COLOR_RED, (short) 11, HorizontalAlignment.LEFT);
+        @SuppressWarnings("unused")
         CellStyle cellStyle2 = createCellStyleAndCellFont(writer, true, Font.COLOR_NORMAL, (short) 11, HorizontalAlignment.LEFT);
+        @SuppressWarnings("unused")
         CellStyle cellStyle3 = createCellStyleAndCellFont(writer, false, Font.COLOR_NORMAL, (short) 11, HorizontalAlignment.LEFT);
         writeBrowser(writer, "test");
     }
@@ -561,9 +567,9 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     @Override
     public Object importBaseMajor(File file) {
         Object result = new Object();
-        try (FileInputStream fileInputStream = new FileInputStream(file)) {
-            //通过流的方式读取文件，支持xls和xlsx
-            Workbook workbook = judgeVersion(file);
+        //通过流的方式读取文件，支持xls和xlsx
+        Workbook workbook = judgeVersion(file);
+        try {
             if (workbook == null) {
                 throw new RuntimeException("不支持的文件格式");
             }
@@ -603,8 +609,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
 
             }
 
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            throw new RuntimeException("导入数据时发生错误", e);
         }
         return result;
     }
@@ -613,9 +619,9 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     @Override
     public Object importBaseUser(File file) {
         Object result = new Object();
-        try (FileInputStream fileInputStream = new FileInputStream(file)) {
-            //通过流的方式读取文件，支持xls和xlsx
-            Workbook workbook = judgeVersion(file);
+        //通过流的方式读取文件，支持xls和xlsx
+        Workbook workbook = judgeVersion(file);
+        try {
             if (workbook == null) {
                 throw new RuntimeException("不支持的文件格式");
             }
@@ -769,8 +775,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 result = iDataListService.editOneNode("BaseUser", data);
             }
 
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            throw new RuntimeException("导入数据时发生错误", e);
         }
         return result;
     }
