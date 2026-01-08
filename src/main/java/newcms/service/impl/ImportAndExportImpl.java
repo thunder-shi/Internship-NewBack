@@ -12,6 +12,7 @@ import newcms.entity.base.BaseTreeInfo;
 import newcms.entity.db.BaseDepartment;
 import newcms.entity.db.BaseJobPosition;
 import newcms.entity.db.BaseMajor;
+import newcms.repository.db.BaseJobPositionDao;
 import newcms.repository.db.BaseMajorDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
@@ -482,7 +483,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名", "性别", "联系电话", "邮箱", "账号", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码", "岗位编码", "工号", "专业编码", "入学年份", "毕业年份");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份");
                 row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
                 dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
@@ -525,6 +526,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
         return cellStyle;
     }
 
+    @Resource
+    BaseJobPositionDao baseJobPositionDao;
     @Resource
     BaseMajorDao baseMajorDao;
     /**
@@ -630,7 +633,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
                 
-                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 岗位编码, 工号, 专业编码, 入学年份, 毕业年份
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业名称, 入学年份, 毕业年份
                 String name = getCellStringValue(row.getCell(0));
                 String sex = getCellStringValue(row.getCell(1));
                 String phone = getCellStringValue(row.getCell(2));
@@ -643,9 +646,9 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 String postalCode = getCellStringValue(row.getCell(9));
                 String nickName = getCellStringValue(row.getCell(10));
                 String departmentCode = getCellStringValue(row.getCell(11));
-                String jobCode = getCellStringValue(row.getCell(12));
+                String jobName = getCellStringValue(row.getCell(12));
                 String workId = getCellStringValue(row.getCell(13));
-                String majorCode = getCellStringValue(row.getCell(14));
+                String majorName = getCellStringValue(row.getCell(14));
                 // 入学年份和毕业年份（BaseUser实体中暂无这些字段，保留读取以保持与模板一致）
                 @SuppressWarnings("unused")
                 String startYearStr = getCellStringValue(row.getCell(15));
@@ -658,10 +661,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 // 验证必填字段：departmentId、majorId、jobId 不能为空
                 // 检查部门编码是否为空
                 if (departmentCode.isEmpty()) continue;
-                // 检查岗位编码是否为空
-                if (jobCode.isEmpty()) continue;
-                // 检查专业编码是否为空
-                if (majorCode.isEmpty()) continue;
+                // 检查身份类别是否为空
+                if (jobName.isEmpty()) continue;
+                // 检查专业名称是否为空
+                if (majorName.isEmpty()) continue;
                 
                 JSONObject data = new JSONObject();
                 data.put("name", name);
@@ -706,44 +709,49 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 }
                 data.put("departmentId", departmentId);
                 
-                // 通过编码查找岗位ID（必填）
+                // 通过名称查找身份类别ID（必填）
                 Integer jobId = null;
                 try {
-                    Object job = iCommonService.getOneRecordByCode("BaseJobPosition", jobCode, false);
-                    if (job != null) {
-                        BaseJobPosition jobPosition = (BaseJobPosition) job;
+                    BaseJobPosition jobPosition = baseJobPositionDao.findByNameAndIsDeletedFalse(jobName);
+                    if (jobPosition != null) {
                         jobId = jobPosition.getId();
                     } else {
-                        logger.warn("未找到岗位编码为 {} 的记录，跳过该行数据", jobCode);
+                        logger.warn("未找到身份类别为 {} 的记录，跳过该行数据", jobName);
                         continue;
                     }
                 } catch (Exception e) {
-                    logger.error("查找岗位编码 {} 时发生异常，跳过该行数据", jobCode);
+                    logger.error("查找身份类别 {} 时发生异常，跳过该行数据", jobName);
                     continue;
                 }
                 if (jobId == null) {
-                    logger.warn("岗位编码 {} 对应的ID为空，跳过该行数据", jobCode);
+                    logger.warn("身份类别 {} 对应的ID为空，跳过该行数据", jobName);
                     continue;
                 }
                 data.put("jobId", jobId);
                 
-                // 通过编码查找专业ID（必填）
+                // 通过名称查找专业ID（必填）
+                // 如果专业名称有重复，选择专业编码最长的那个
                 Integer majorId = null;
                 try {
-                    Object major = iCommonService.getOneRecordByCode("BaseMajor", majorCode, false);
-                    if (major != null) {
-                        BaseMajor majorObj = (BaseMajor) major;
-                        majorId = majorObj.getId();
+                    List<BaseMajor> majorList = baseMajorDao.findByNameAndIsDeletedFalse(majorName);
+                    if (majorList != null && !majorList.isEmpty()) {
+                        // 如果有多条记录，按专业编码长度排序，选择编码最长的
+                        BaseMajor majorObj = majorList.stream()
+                                .max(Comparator.comparing(m -> m.getCode() != null ? m.getCode().length() : 0))
+                                .orElse(null);
+                        if (majorObj != null) {
+                            majorId = majorObj.getId();
+                        }
                     } else {
-                        logger.warn("未找到专业编码为 {} 的记录，跳过该行数据", majorCode);
+                        logger.warn("未找到专业名称为 {} 的记录，跳过该行数据", majorName);
                         continue;
                     }
                 } catch (Exception e) {
-                    logger.error("查找专业编码 {} 时发生异常，跳过该行数据", majorCode);
+                    logger.error("查找专业名称 {} 时发生异常，跳过该行数据", majorName);
                     continue;
                 }
                 if (majorId == null) {
-                    logger.warn("专业编码 {} 对应的ID为空，跳过该行数据", majorCode);
+                    logger.warn("专业名称 {} 对应的ID为空，跳过该行数据", majorName);
                     continue;
                 }
                 data.put("majorId", majorId);

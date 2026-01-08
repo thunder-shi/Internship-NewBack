@@ -9,5 +9,11 @@ import org.springframework.stereotype.Repository;
 public interface BaseJobPositionDao extends BaseDao<BaseJobPosition, Integer> {
     Object getByCode(String code);
     Object getByCodeAndIsDeletedFalse(String code);
+    
+    @Query("select t from BaseJobPosition t where t.name = ?1")
+    BaseJobPosition findByName(String name);
+    
+    @Query("select t from BaseJobPosition t where t.name = ?1 and t.isDeleted = false")
+    BaseJobPosition findByNameAndIsDeletedFalse(String name);
 }
 
