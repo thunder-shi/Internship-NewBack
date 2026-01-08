@@ -13,12 +13,9 @@ import java.time.LocalDate;
 public class ViewMainInternship extends NameRemarkOrderInfo {
     private Integer internshipTypeId;
     private String internshipTypeName;
+    private String typeName;
     private Integer creatorId;
     private String creatorName;
     private String cron;
-    private LocalDate reportStartDate;
-    private LocalDate reportEndDate;
     private Integer studentNum;
-    private String universityName;
-    private String typeName;
 }

@@ -5,11 +5,12 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import jakarta.persistence.Entity;
+import newcms.entity.base.NameRemarkOrderInfo;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Entity
-public class ViewRelProcessInternshipType extends BaseInfo {
+public class ViewRelProcessInternshipType extends NameRemarkOrderInfo {
     private Integer internshipTypeId;
     private Integer processTypeId;
     private Integer verifyTypeId;
@@ -18,7 +19,6 @@ public class ViewRelProcessInternshipType extends BaseInfo {
     private String universityName;
     private String typeName;
     private String internshipTypeName;
-    private Integer theOrder;
     private Integer verifyFirstRoleId;
     private Integer verifySecondRoleId;
     private Integer verifyThirdRoleId;
