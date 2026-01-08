@@ -21,7 +21,7 @@ public class ViewBaseUser extends NameRemarkInfo {
     private Date birth;
     private String address;
     private String postalCode;
-    private String JobId;
+    private String jobId;
     private String email;
     //private Date registerTime;
     private String nickName;
