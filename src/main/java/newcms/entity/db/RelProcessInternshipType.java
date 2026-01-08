@@ -7,7 +7,6 @@ import lombok.Setter;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 
-import java.time.LocalDateTime;
 
 /**
  * 流程实习类型关联表

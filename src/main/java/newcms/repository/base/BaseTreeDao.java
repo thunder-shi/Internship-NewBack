@@ -1,6 +1,5 @@
 package newcms.repository.base;
 
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.repository.NoRepositoryBean;
 
 import java.util.List;

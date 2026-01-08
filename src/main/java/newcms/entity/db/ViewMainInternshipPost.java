@@ -10,12 +10,11 @@ import newcms.entity.base.NameRemarkOrderInfo;
 @Setter
 @Entity
 public class ViewMainInternshipPost extends NameRemarkOrderInfo {
-    private Integer postTypeId;
+    private Integer basePostTypeId;
     private Integer allPersonNum;
     private Integer nowPersonNum;
     private Integer mainInternshipId;
 
-    private Integer basePostTypeId;
     private String basePostTypeName;
     private String mainInternshipName;
 
