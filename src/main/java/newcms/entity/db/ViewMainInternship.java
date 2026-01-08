@@ -18,4 +18,5 @@ public class ViewMainInternship extends NameRemarkOrderInfo {
     private String creatorName;
     private String cron;
     private Integer studentNum;
+    private String universityName;
 }
