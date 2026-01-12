@@ -6,6 +6,7 @@ import lombok.Setter;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import newcms.entity.base.NameRemarkOrderInfo;
 
 
 /**
@@ -14,7 +15,7 @@ import jakarta.persistence.Entity;
 @Getter
 @Setter
 @Entity
-public class RelProcessInternshipType extends BaseInfo {
+public class RelProcessInternshipType extends NameRemarkOrderInfo {
     @Column(columnDefinition = "integer unsigned comment '实习类型id，外键，关联表BaseInternshipType'")
     private Integer internshipTypeId;
     

@@ -61,7 +61,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             }
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
     //endregion
@@ -87,7 +87,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             }
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
     //endregion
@@ -125,7 +125,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             }
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
     //endregion
@@ -244,10 +244,10 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("save", Object.class).invoke(beanDao, FastJsonUtil.toJavaObject(json, Class.forName(Base.entityPackage + tblName)));
         } catch (ClassNotFoundException e) {
             LogUtil.error(logger, e);
-            throw BaseResponse.moreInfoError.error("tblName 异常");
+            throw BaseResponse.moreInfoError.error("tblName 异常[" + tblName + "]: " + e.getMessage());
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 
@@ -267,7 +267,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("saveAll", Iterable.class).invoke(beanDao, list);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 
@@ -286,7 +286,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("deleteById", Object.class).invoke(beanDao, id);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 
@@ -300,7 +300,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("deleteByIsDeleted", Object.class).invoke(beanDao, id);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 
@@ -318,7 +318,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("deleteByIsDeleted").invoke(beanDao);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 
@@ -338,7 +338,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("deleteByIdIn", Iterable.class).invoke(beanDao, ids);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("reflection processing failed");
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
 }
