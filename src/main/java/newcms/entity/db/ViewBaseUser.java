@@ -29,7 +29,7 @@ public class ViewBaseUser extends NameRemarkInfo {
     private Integer schoolId;
     private String workId;
     private String themeColor;
-    private String DepartmentName;
-    private String JobName;
+    private String departmentName;
+    private String jobName;
     private String majorId;
 }

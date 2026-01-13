@@ -12,13 +12,16 @@ import newcms.entity.base.BaseTreeInfo;
 import newcms.entity.db.BaseDepartment;
 import newcms.entity.db.BaseJobPosition;
 import newcms.entity.db.BaseMajor;
+import newcms.entity.db.SysRole;
 import newcms.repository.db.BaseDepartmentDao;
 import newcms.repository.db.BaseJobPositionDao;
 import newcms.repository.db.BaseMajorDao;
+import newcms.repository.db.SysRoleDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.service.IImportAndExportService;
+import newcms.service.IUserService;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.LogUtil;
 import org.apache.poi.hssf.usermodel.*;
@@ -55,6 +58,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     private ICommonService iCommonService;
     @Resource
     private IDataListService iDataListService;
+    @Resource
+    private IUserService iUserService;
+    @Resource
+    private SysRoleDao sysRoleDao;
 
     //region 一些private
     private HSSFCellStyle getCellStype( HSSFWorkbook workbook, int type) {
@@ -814,7 +821,33 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 // }
                 
                 // BaseUser不是树形结构，使用iDataListService
-                result = iDataListService.editOneNode("BaseUser", data);
+                Object editResult = iDataListService.editOneNode("BaseUser", data);
+                
+                // 从editOneNode返回的结果中提取新增的id
+                JSONObject editResultJson = FastJsonUtil.toJson(editResult);
+                Integer userId = null;
+                // editOneNode返回的是保存后的实体对象，直接提取id
+                if (editResultJson != null) {
+                    userId = editResultJson.getInteger("id");
+                }
+                
+                // 如果成功获取到userId，则调用saveUserRoles方法
+                if (userId != null) {
+                    try {
+                        // 查找SysRole表中name值为"学生"的实体的id
+                        SysRole studentRole = sysRoleDao.findByNameAndIsDeletedFalse("学生");
+                        if (studentRole != null && studentRole.getId() != null) {
+                            Integer[] roleIds = new Integer[]{studentRole.getId()};
+                            // 调用saveUserRoles方法，userId转为String类型
+                            iUserService.saveUserRoles(String.valueOf(userId), roleIds);
+                        } else {
+                            logger.warn("未找到名称为'学生'的角色，跳过用户角色设置，userId: {}", userId);
+                        }
+                    } catch (Exception e) {
+                        logger.error("设置用户角色时发生异常，userId: {}", userId, e);
+                        // 不抛出异常，继续处理下一行数据
+                    }
+                }
             }
 
         } catch (Exception e) {

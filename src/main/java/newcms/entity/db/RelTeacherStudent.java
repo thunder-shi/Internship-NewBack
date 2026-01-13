@@ -1,0 +1,25 @@
+package newcms.entity.db;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import lombok.Getter;
+import lombok.Setter;
+import newcms.entity.base.NameRemarkInfo;
+
+/**
+ * 教师与学生实习关联表
+ */
+@Getter
+@Setter
+@Entity
+public class RelTeacherStudent extends NameRemarkInfo {
+
+    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（教师）'")
+    private Integer teacherId;
+
+    @Column(columnDefinition = "int unsigned not null comment '外键，关联表16（实习）'")
+    private Integer internshipId;
+
+    // @Column(columnDefinition = "int unsigned not null default 0 comment '外键，关联表11（实习批次），默认0'")
+    // private Integer relInternshipId;
+}
