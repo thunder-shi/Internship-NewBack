@@ -22,6 +22,7 @@ import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.service.IImportAndExportService;
 import newcms.service.IUserService;
+import newcms.utils.EncodeUtil;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.LogUtil;
 import org.apache.poi.hssf.usermodel.*;
@@ -691,8 +692,9 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (!phone.isEmpty()) data.put("phone", phone);
                 if (!email.isEmpty()) data.put("email", email);
                 if (!account.isEmpty()) data.put("account", account);
-                // 如果密码为空，默认设为000000
-                data.put("password", password.isEmpty() ? "000000" : password);
+                // 保存原始密码（稍后在获取userId后加密）
+                String rawPassword = password.isEmpty() ? "000000" : password;
+                // 先不设置密码，等获取到userId后再加密并更新
                 if (!idCard.isEmpty()) data.put("idCard", idCard);
                 // 处理出生日期
                 if (!birthStr.isEmpty()) {
@@ -829,6 +831,22 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 // editOneNode返回的是保存后的实体对象，直接提取id
                 if (editResultJson != null) {
                     userId = editResultJson.getInteger("id");
+                }
+                
+                // 如果成功获取到userId，则加密密码并更新
+                if (userId != null) {
+                    try {
+                        // 使用userId作为salt加密密码
+                        String encryptedPassword = EncodeUtil.pwdShiro(rawPassword, userId);
+                        JSONObject updateData = new JSONObject();
+                        updateData.put("id", userId);
+                        updateData.put("password", encryptedPassword);
+                        // 更新密码
+                        iDataListService.editOneNode("BaseUser", updateData);
+                    } catch (Exception e) {
+                        logger.error("加密并更新密码时发生异常，userId: {}", userId, e);
+                        // 不抛出异常，继续处理下一行数据
+                    }
                 }
                 
                 // 如果成功获取到userId，则调用saveUserRoles方法
