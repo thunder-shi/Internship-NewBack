@@ -5,8 +5,6 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkOrderInfo;
 
-import java.time.LocalDate;
-
 @Getter
 @Setter
 @Entity
