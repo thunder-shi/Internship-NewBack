@@ -42,6 +42,8 @@ public class InternshipServiceImpl implements IInternshipService {
             processInternship.setVerifyThirdRoleId(processType.getVerifyThirdRoleId());
             processInternship.setVerifyFourthRoleId(processType.getVerifyFourthRoleId());
             processInternship.setVerifyFifthRoleId(processType.getVerifyFifthRoleId());
+            // 复制流程排序号
+            processInternship.setTheOrder(processType.getTheOrder());
 
             relProcessInternshipDao.save(processInternship);
         }
