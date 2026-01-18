@@ -23,7 +23,7 @@ public class ViewInternshipVerifyProcess extends NameRemarkOrderInfo {
     private String verifyUserId;
 
     // 来自 base_user
-    private String createUserName;
+    private String createProcessUser;
 
     // 来自 view_rel_process_internship
     private Integer internshipId;
@@ -48,4 +48,5 @@ public class ViewInternshipVerifyProcess extends NameRemarkOrderInfo {
     private String internshipTypeName;
     private String universityName;
     private String typeName;
+    private String creatorName;
 }

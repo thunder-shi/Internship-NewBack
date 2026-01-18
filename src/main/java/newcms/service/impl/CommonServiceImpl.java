@@ -232,16 +232,64 @@ public class CommonServiceImpl extends Base implements ICommonService {
     }
     //endregion
 
+    /**
+     * 读取现有记录并合并更新字段
+     * @param clazzDao Dao类
+     * @param beanDao Dao实例
+     * @param clazzInfo 实体类
+     * @param json 更新的JSONObject
+     * @return 合并后的实体对象
+     * @throws NoSuchMethodException
+     * @throws IllegalAccessException
+     * @throws InvocationTargetException
+     */
+    private Object mergeExistingRecord(Class<?> clazzDao, Object beanDao, Class<?> clazzInfo, JSONObject json) 
+            throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+        // 查询现有记录
+        Object existingEntity = clazzDao.getMethod("findById", Object.class).invoke(beanDao, json.get("id"));
+        if (existingEntity == null) {
+            throw BaseResponse.moreInfoError.error("记录不存在[id=" + json.get("id") + "]");
+        }
+        
+        // 将现有实体转换为 JSONObject
+        JSONObject existingJson = FastJsonUtil.toJson(existingEntity);
+        
+        // 只更新 JSONObject 中存在的字段（排除 null 值和空字符串）
+        for (String key : json.keySet()) {
+            Object value = json.get(key);
+            // 如果值为 null 或空字符串，跳过（不更新该字段）
+            // 如果需要将字段设置为 null，可以显式传递 null
+            if (value != null && !(value instanceof String && ((String) value).isEmpty())) {
+                existingJson.put(key, value);
+            }
+        }
+        
+        // 设置更新时间
+        existingJson.put("updateTime", DateUtil.format(Date.from(Instant.now()), "yyyy-MM-dd HH:mm:ss"));
+        
+        // 转换回实体对象（使用合并后的 existingJson）
+        return existingJson.toJavaObject(clazzInfo);
+    }
+
     @Override
     @SuppressWarnings("null")
     public Object saveOneRecord(String tblName, JSONObject json) {
         try {
             Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
+            Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);
             Object beanDao = applicationContext.getBean(tblName.substring(0, 1).toLowerCase() + tblName.substring(1) + "Dao", clazzDao);
-            if ( json.keySet().contains("id") && json.get("id")!=null && !json.get("id").equals(0)) {
-                json.put("updateTime", DateUtil.format(Date.from(Instant.now()), "yyyy-MM-dd HH:mm:ss"));
+            
+            Object entity;
+            // 判断是新增还是更新
+            if (json.containsKey("id") && json.get("id") != null && !json.get("id").equals(0)) {
+                // 更新操作：读取现有记录并合并字段
+                entity = mergeExistingRecord(clazzDao, beanDao, clazzInfo, json);
+            } else {
+                // 新增操作：直接转换
+                entity = json.toJavaObject(clazzInfo);
             }
-            return clazzDao.getMethod("save", Object.class).invoke(beanDao, FastJsonUtil.toJavaObject(json, Class.forName(Base.entityPackage + tblName)));
+            
+            return clazzDao.getMethod("save", Object.class).invoke(beanDao, entity);
         } catch (ClassNotFoundException e) {
             LogUtil.error(logger, e);
             throw BaseResponse.moreInfoError.error("tblName 异常[" + tblName + "]: " + e.getMessage());
