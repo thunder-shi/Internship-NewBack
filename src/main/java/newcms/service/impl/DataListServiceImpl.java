@@ -153,6 +153,14 @@ public class DataListServiceImpl extends Base implements IDataListService {
             if (isNew) {
                 // 新建时，复制模板流程配置
                 iInternshipService.copyProcessFromTemplate(internshipId, newInternshipTypeId);
+
+                // 如果前端传递了 isAudit，创建审核记录
+                Integer isAudit = node.getInteger("isAudit");
+                if (isAudit != null) {
+                    Integer createUserId = savedNode.getInteger("creatorId");
+                    iInternshipService.createVerifyProcessIfNeeded(internshipId, newInternshipTypeId,
+                            createUserId, isAudit);
+                }
             } else {
                 // 编辑时，检测模板类型是否变化
                 boolean typeChanged = !java.util.Objects.equals(oldInternshipTypeId, newInternshipTypeId);

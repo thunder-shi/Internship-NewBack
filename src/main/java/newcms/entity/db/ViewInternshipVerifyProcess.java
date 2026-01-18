@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 实习项目审核情况视图
+ * 用于展示实习项目的审核进度历史
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -22,8 +23,6 @@ public class ViewInternshipVerifyProcess extends NameRemarkOrderInfo {
     private String tableName;
     private String verifyUserId;
 
-    // 来自 base_user
-    private String createProcessUser;
 
     // 来自 view_rel_process_internship
     private Integer internshipId;
@@ -48,5 +47,9 @@ public class ViewInternshipVerifyProcess extends NameRemarkOrderInfo {
     private String internshipTypeName;
     private String universityName;
     private String typeName;
+
+    // 来自 view_main_internship
+    private String cron;
+    private Integer studentNum;
     private String creatorName;
 }
