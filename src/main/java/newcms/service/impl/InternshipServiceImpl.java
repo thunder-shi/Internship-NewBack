@@ -44,6 +44,9 @@ public class InternshipServiceImpl implements IInternshipService {
 
     private static final String PROCESS_TYPE_NAME_PLAN = "实习计划制定";
 
+    // 默认占位角色ID，表示该级审核未配置（角色name='--'）
+    private static final Integer DEFAULT_PLACEHOLDER_ROLE_ID = 17;
+
     @Override
     public void copyProcessFromTemplate(Integer internshipId, Integer internshipTypeId) {
         if (internshipId == null || internshipTypeId == null) {
@@ -105,10 +108,10 @@ public class InternshipServiceImpl implements IInternshipService {
 
         ViewRelProcessInternship process = processOpt.get();
 
-        // 2. 检查是否需要审核（一级审核角色不为空）
+        // 2. 检查是否需要审核（一级审核角色有效）
         Integer verifyFirstRoleId = process.getVerifyFirstRoleId();
-        if (verifyFirstRoleId == null || verifyFirstRoleId == 0) {
-            // 不需要审核
+        if (!isValidRoleId(verifyFirstRoleId)) {
+            // 不需要审核（角色无效或为默认占位角色）
             return;
         }
 
@@ -235,7 +238,7 @@ public class InternshipServiceImpl implements IInternshipService {
         int currentStep = determineCurrentStep(record.getRelationId());
         Integer currentRoleId = getRoleIdByStep(relProcess, currentStep);
 
-        if (currentRoleId == null || currentRoleId == 0) {
+        if (!isValidRoleId(currentRoleId)) {
             throw BaseResponse.moreInfoError.error("无法确定当前审核角色");
         }
 
@@ -444,8 +447,9 @@ public class InternshipServiceImpl implements IInternshipService {
         mainVerifyProcessDao.save(currentRecord);
 
         // 检查是否有下一级审核
+        // 排除无效的角色ID：null、0、或默认占位角色ID(17)
         Integer nextRoleId = getNextRoleId(relProcess, currentStep);
-        if (nextRoleId != null && nextRoleId != 0) {
+        if (isValidRoleId(nextRoleId)) {
             // 获取实习类型的所属院系
             Integer universityId = getUniversityIdByInternshipTypeId(relProcess.getInternshipTypeId());
 
@@ -562,5 +566,14 @@ public class InternshipServiceImpl implements IInternshipService {
                 .filter(s -> !s.isEmpty())
                 .map(Integer::parseInt)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 判断角色ID是否有效（非空、非0、非默认占位角色）
+     * @param roleId 角色ID
+     * @return true-有效, false-无效
+     */
+    private boolean isValidRoleId(Integer roleId) {
+        return roleId != null && roleId != 0 && !roleId.equals(DEFAULT_PLACEHOLDER_ROLE_ID);
     }
 }
