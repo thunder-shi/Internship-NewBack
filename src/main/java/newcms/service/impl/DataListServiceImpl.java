@@ -142,6 +142,22 @@ public class DataListServiceImpl extends Base implements IDataListService {
             }
         }
 
+        // 特殊处理 MainVerifyProcess 表的审核操作
+        if ("MainVerifyProcess".equals(tblName) && !isNew) {
+            Integer recordId = node.getInteger("id");
+            Integer newIsAudit = node.getInteger("isAudit");
+            Integer operatorId = node.getInteger("verifyUserId");
+            String reason = node.getString("reason");
+
+            // 如果是审核操作（isAudit = 1/2/3），调用 doVerify 方法处理
+            if (newIsAudit != null && (newIsAudit == 1 || newIsAudit == 2 || newIsAudit == 3)) {
+                // action: 1-通过, 2-不通过, 3-退回
+                iInternshipService.doVerify(recordId, newIsAudit, operatorId, reason);
+                // doVerify 已经处理了记录更新，直接返回更新后的记录
+                return iCommonService.getOneRecordById(tblName, recordId);
+            }
+        }
+
         Object result = iCommonService.saveOneRecord(tblName, node);
 
         // 处理MainInternship的流程配置
@@ -167,6 +183,14 @@ public class DataListServiceImpl extends Base implements IDataListService {
                 if (typeChanged) {
                     // 模板类型变化，更新流程配置
                     iInternshipService.updateProcessFromTemplate(internshipId, newInternshipTypeId);
+                }
+
+                // 处理审核状态变化（从暂存变为提交，或从退回重新提交）
+                Integer newIsAudit = node.getInteger("isAudit");
+                if (newIsAudit != null && (newIsAudit == 0 || newIsAudit == 1)) {
+                    Integer createUserId = savedNode.getInteger("creatorId");
+                    iInternshipService.updateVerifyStatus(internshipId, newInternshipTypeId,
+                            createUserId, newIsAudit);
                 }
             }
         }

@@ -385,6 +385,51 @@ public class InternshipServiceImpl implements IInternshipService {
         return false;
     }
 
+    @Override
+    public void updateVerifyStatus(Integer internshipId, Integer internshipTypeId,
+                                    Integer createUserId, Integer newIsAudit) {
+        if (internshipId == null || newIsAudit == null) {
+            return;
+        }
+
+        // 1. 查找该实习项目的"实习计划制定"流程
+        Optional<ViewRelProcessInternship> processOpt = viewRelProcessInternshipDao
+                .findByInternshipIdAndProcessTypeNameAndIsDeletedFalse(internshipId, PROCESS_TYPE_NAME_PLAN);
+
+        if (processOpt.isEmpty()) {
+            // 没有"实习计划制定"流程
+            return;
+        }
+
+        ViewRelProcessInternship process = processOpt.get();
+
+        // 2. 查询是否已有审核记录
+        Optional<MainVerifyProcess> existingRecordOpt = mainVerifyProcessDao
+                .findFirstByRelationIdAndIsDeletedFalseOrderByIdDesc(process.getId());
+
+        if (existingRecordOpt.isEmpty()) {
+            // 没有审核记录，如果 newIsAudit=0 则创建新记录
+            if (newIsAudit == 0) {
+                createVerifyProcessIfNeeded(internshipId, internshipTypeId, createUserId, newIsAudit);
+            }
+            return;
+        }
+
+        MainVerifyProcess existingRecord = existingRecordOpt.get();
+        Integer currentIsAudit = existingRecord.getIsAudit();
+
+        // 3. 根据当前状态和目标状态处理
+        if (currentIsAudit == -1 && newIsAudit == 0) {
+            // 从暂存变为提交：更新现有记录的状态
+            existingRecord.setIsAudit(0);
+            mainVerifyProcessDao.save(existingRecord);
+        } else if (currentIsAudit == 3 && newIsAudit == 0) {
+            // 从退回状态重新提交：调用 resubmit 方法
+            resubmit(existingRecord.getId(), createUserId);
+        }
+        // 其他情况不处理（如已经是0/1/2状态）
+    }
+
     // ==================== 私有辅助方法 ====================
 
     /**

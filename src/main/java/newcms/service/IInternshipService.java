@@ -62,4 +62,15 @@ public interface IInternshipService {
      * @return true-可以操作, false-不可操作
      */
     boolean canOperate(Integer mainVerifyProcessId, Integer userId);
+
+    /**
+     * 更新实习项目的审核状态（编辑时使用）
+     * 处理从暂存(-1)变为提交(0)，或从退回(3)重新提交的情况
+     * @param internshipId 实习项目ID
+     * @param internshipTypeId 实习类型ID
+     * @param createUserId 操作用户ID
+     * @param newIsAudit 新的审核状态
+     */
+    void updateVerifyStatus(Integer internshipId, Integer internshipTypeId,
+                            Integer createUserId, Integer newIsAudit);
 }

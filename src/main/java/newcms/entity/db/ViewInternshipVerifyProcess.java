@@ -23,6 +23,12 @@ public class ViewInternshipVerifyProcess extends NameRemarkOrderInfo {
     private String tableName;
     private String verifyUserId;
 
+    /** 审核记录创建人名称 */
+    private String createUserName;
+
+    /** 已审核时的审核人名称（isAudit为1/2/3时有值） */
+    private String verifyUserName;
+
 
     // 来自 view_rel_process_internship
     private Integer internshipId;
