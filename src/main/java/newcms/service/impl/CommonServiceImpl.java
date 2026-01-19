@@ -274,6 +274,9 @@ public class CommonServiceImpl extends Base implements ICommonService {
     @Override
     @SuppressWarnings("null")
     public Object saveOneRecord(String tblName, JSONObject json) {
+        if (json == null) {
+            throw BaseResponse.parameterInvalid.error("json 参数不能为空");
+        }
         try {
             Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
             Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);

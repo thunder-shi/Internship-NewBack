@@ -99,16 +99,6 @@ public class DataListServiceImpl extends Base implements IDataListService {
     public Object editOneNode(String tblName, JSONObject node) {
         // 判断是否为新增操作
         boolean isNew = node.getInteger("id") == null || node.getInteger("id") == 0;
-
-        // 编辑MainInternship时，记录旧的internshipTypeId用于比较
-        Integer oldInternshipTypeId = null;
-        if (!isNew && "MainInternship".equals(tblName)) {
-            JSONObject oldRecord = FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, node.getInteger("id")));
-            if (oldRecord != null) {
-                oldInternshipTypeId = oldRecord.getInteger("internshipTypeId");
-            }
-        }
-
         //新增
         if (isNew) {
             try {
@@ -132,70 +122,7 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
-        if(tblName.equals("MainChannelContent")){
-            if(ObjectUtils.isEmpty(node.getDate("channelCTime"))
-                    &&!ObjectUtils.isEmpty(node.getBoolean("publishStatus"))
-                    &&node.getBoolean("publishStatus")){
-                node.put("channelCTime", Date.from(Instant.now()));
-            }else if(!ObjectUtils.isEmpty(node.getBoolean("publishStatus"))&&!node.getBoolean("publishStatus")){
-                node.put("channelCTime",null);
-            }
-        }
-
-        // 特殊处理 MainVerifyProcess 表的审核操作
-        if ("MainVerifyProcess".equals(tblName) && !isNew) {
-            Integer recordId = node.getInteger("id");
-            Integer newIsAudit = node.getInteger("isAudit");
-            Integer operatorId = node.getInteger("verifyUserId");
-            String reason = node.getString("reason");
-
-            // 如果是审核操作（isAudit = 1/2/3），调用 doVerify 方法处理
-            if (newIsAudit != null && (newIsAudit == 1 || newIsAudit == 2 || newIsAudit == 3)) {
-                // action: 1-通过, 2-不通过, 3-退回
-                iInternshipService.doVerify(recordId, newIsAudit, operatorId, reason);
-                // doVerify 已经处理了记录更新，直接返回更新后的记录
-                return iCommonService.getOneRecordById(tblName, recordId);
-            }
-        }
-
-        Object result = iCommonService.saveOneRecord(tblName, node);
-
-        // 处理MainInternship的流程配置
-        if ("MainInternship".equals(tblName)) {
-            JSONObject savedNode = FastJsonUtil.toJson(result);
-            Integer internshipId = savedNode.getInteger("id");
-            Integer newInternshipTypeId = savedNode.getInteger("internshipTypeId");
-
-            if (isNew) {
-                // 新建时，复制模板流程配置
-                iInternshipService.copyProcessFromTemplate(internshipId, newInternshipTypeId);
-
-                // 如果前端传递了 isAudit，创建审核记录
-                Integer isAudit = node.getInteger("isAudit");
-                if (isAudit != null) {
-                    Integer createUserId = savedNode.getInteger("creatorId");
-                    iInternshipService.createVerifyProcessIfNeeded(internshipId, newInternshipTypeId,
-                            createUserId, isAudit);
-                }
-            } else {
-                // 编辑时，检测模板类型是否变化
-                boolean typeChanged = !java.util.Objects.equals(oldInternshipTypeId, newInternshipTypeId);
-                if (typeChanged) {
-                    // 模板类型变化，更新流程配置
-                    iInternshipService.updateProcessFromTemplate(internshipId, newInternshipTypeId);
-                }
-
-                // 处理审核状态变化（从暂存变为提交，或从退回重新提交）
-                Integer newIsAudit = node.getInteger("isAudit");
-                if (newIsAudit != null && (newIsAudit == 0 || newIsAudit == 1)) {
-                    Integer createUserId = savedNode.getInteger("creatorId");
-                    iInternshipService.updateVerifyStatus(internshipId, newInternshipTypeId,
-                            createUserId, newIsAudit);
-                }
-            }
-        }
-
-        return result;
+        return null;
     }
 
     /**

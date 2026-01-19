@@ -91,7 +91,7 @@ public class DataListController extends CommonController {
 
     @PostMapping(value = "/editOneNode", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object editOneNode(@RequestBody JSONObject requestJson) {
-        LogUtil.loggerRecord("editOneNode", requestJson);
+      LogUtil.loggerRecord("editOneNode", requestJson);
       String key = encryptUtil.getKeyWord(requestJson.getString("keyWords"));
       JSONObject node = requestJson.getJSONObject("node");
       return BaseResponse.ok(iDataListService.editOneNode(key, node));
