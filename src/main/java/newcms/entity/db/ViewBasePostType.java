@@ -17,4 +17,6 @@ public class ViewBasePostType extends NameRemarkOrderInfo {
 
     private String departmentName;
 
+    private Integer typeId;
+
 }
