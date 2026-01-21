@@ -33,4 +33,14 @@ public class InternshipProcessController {
         }
         return BaseResponse.ok(iInternshipService.addNewInternship(node));
     }
+
+        @Operation(summary = "提交新增实习项目", description = "保存并创建审核记录")
+        @PostMapping(value = "/submitNewInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
+        public Object submitNewInternship(@RequestBody JSONObject requestJson) {
+            LogUtil.loggerRecord("submitNewInternship", requestJson);
+            if (requestJson == null) {
+                throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+            }
+            return BaseResponse.ok(iInternshipService.submitNewInternship(requestJson));
+        }
 }
