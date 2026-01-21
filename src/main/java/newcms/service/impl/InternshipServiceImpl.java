@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.repository.db.RelProcessInternshipDao;
 import newcms.service.ICommonService;
 import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
@@ -25,6 +26,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+
+    @Resource
+    private RelProcessInternshipDao relProcessInternshipDao;
 
     @Override
     public Object addNewInternship(JSONObject node) {
@@ -119,5 +123,47 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
 
             return savedInternship;
+    }
+
+    @Override
+    public Object deleteNewInternship(List<Integer> internshipIds) {
+        if (internshipIds == null || internshipIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("实习项目ID列表不能为空");
+        }
+
+        // (1) 检查所有id是否在审核流程中
+        for (Integer internshipId : internshipIds) {
+            if (internshipId == null) {
+                continue;
+            }
+            JSONObject searchKeys = new JSONObject();
+            searchKeys.put("internshipId", internshipId);
+            // 查询时需要考虑 isDeleted，所以使用默认的 getSomeRecords（会自动过滤 isDeleted=false）
+            @SuppressWarnings("unchecked")
+            Page<Object> verifyProcessPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewMainVerifyProcess", searchKeys, null, Sort.unsorted());
+            List<Object> verifyProcessList = verifyProcessPage.getContent();
+
+            // 如果存在审核流程记录，返回错误信息
+            if (verifyProcessList != null && !verifyProcessList.isEmpty()) {
+                throw BaseResponse.parameterInvalid.error("当前项目已经进入审核流程，无法删除");
+            }
+        }
+
+        // (2) 批量删除 MainInternship 中对应的记录（伪删除）
+        // 过滤掉 null 值
+        List<Integer> validIds = internshipIds.stream()
+                .filter(id -> id != null)
+                .collect(java.util.stream.Collectors.toList());
+        if (!validIds.isEmpty()) {
+            iCommonService.deleteSomeRecords("MainInternship", validIds);
+        }
+
+        // (3) 批量删除 RelProcessInternship 中所有 internshipId 是对应 Id 的记录（伪删除）
+        for (Integer internshipId : validIds) {
+            relProcessInternshipDao.deleteByInternshipId(internshipId);
+        }
+
+        return "删除成功";
     }
 }

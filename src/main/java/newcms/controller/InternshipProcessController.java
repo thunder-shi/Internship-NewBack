@@ -13,6 +13,9 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
+import java.util.Arrays;
+import java.util.List;
+
 @Tag(name = "实习项目管理")
 @PathRestController("internshipProcess")
 public class InternshipProcessController {
@@ -43,4 +46,36 @@ public class InternshipProcessController {
             }
             return BaseResponse.ok(iInternshipService.submitNewInternship(requestJson));
         }
+
+    @Operation(summary = "删除实习项目", description = "删除实习项目及其关联的流程配置")
+    @PostMapping(value = "/deleteNewInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object deleteNewInternship(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("deleteNewInternship", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        String idsStr = requestJson.getString("ids");
+        if (idsStr == null || idsStr.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
+        }
+        // 去除首尾的方括号（如果存在）
+        idsStr = idsStr.trim();
+        if (idsStr.startsWith("[") && idsStr.endsWith("]")) {
+            idsStr = idsStr.substring(1, idsStr.length() - 1);
+        }
+        // 解析逗号分隔的id字符串
+        List<Integer> ids = Arrays.asList(idsStr.split(",")).stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(s -> {
+                    // 再次去除可能的方括号
+                    s = s.replaceAll("^\\[|\\]$", "");
+                    return Integer.parseInt(s.trim());
+                })
+                .collect(java.util.stream.Collectors.toList());
+        if (ids.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
+        }
+        return BaseResponse.ok(iInternshipService.deleteNewInternship(ids));
+    }
 }

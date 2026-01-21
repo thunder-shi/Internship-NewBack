@@ -3,6 +3,8 @@ package newcms.service;
 import com.alibaba.fastjson.JSONObject;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 public interface IInternshipService {
     /**
@@ -18,4 +20,11 @@ public interface IInternshipService {
      * @return 保存后的实习项目实体
      */
     Object submitNewInternship(JSONObject requestJson);
+
+    /**
+     * 删除实习项目
+     * @param internshipIds 实习项目ID列表
+     * @return 删除结果
+     */
+    Object deleteNewInternship(List<Integer> internshipIds);
 }
