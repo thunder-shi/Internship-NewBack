@@ -122,7 +122,7 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
-        return null;
+        return iCommonService.saveOneRecord(tblName, node);
     }
 
     /**
