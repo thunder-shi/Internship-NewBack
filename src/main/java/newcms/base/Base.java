@@ -230,6 +230,34 @@ public class Base extends Constant {
                             case "java.lang.Boolean":
                                 list.add(criteriaBuilder.equal((Expression<Boolean>) root.get(field.getName()).as(Boolean.class), searchKeys.getBoolean(field.getName())));
                                 break;
+                            case "java.time.LocalDateTime":
+                                String dateTimeStr = searchKeys.getString(field.getName());
+                                if (dateTimeStr != null && !dateTimeStr.isEmpty()) {
+                                    java.time.LocalDateTime dateTime = java.time.LocalDateTime.parse(
+                                            dateTimeStr.replace(" ", "T"));
+                                    if (regMap != null && regMap.containsKey(field.getName())) {
+                                        switch (regMap.get(field.getName())) {
+                                            case Constant.LT:
+                                                list.add(criteriaBuilder.lessThan(root.get(field.getName()), dateTime));
+                                                break;
+                                            case Constant.GT:
+                                                list.add(criteriaBuilder.greaterThan(root.get(field.getName()), dateTime));
+                                                break;
+                                            case Constant.LE:
+                                                list.add(criteriaBuilder.lessThanOrEqualTo(root.get(field.getName()), dateTime));
+                                                break;
+                                            case Constant.GE:
+                                                list.add(criteriaBuilder.greaterThanOrEqualTo(root.get(field.getName()), dateTime));
+                                                break;
+                                            default:
+                                                list.add(criteriaBuilder.equal(root.get(field.getName()), dateTime));
+                                                break;
+                                        }
+                                    } else {
+                                        list.add(criteriaBuilder.equal(root.get(field.getName()), dateTime));
+                                    }
+                                }
+                                break;
                             default:
                                 logger.warn("<WARN>  [{}] 类型未补全 fieldTypeName [{}],fieldName [{}],fieldValue [{}]", clazzInfo.getName(), field.getType().getName(), field.getName(), searchKeys.get(field.getName()));
                                 break;

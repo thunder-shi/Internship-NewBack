@@ -341,6 +341,8 @@ public Object getLoginUser(Date date, String userAgent) {
             RelUserRole userRoleRel = new RelUserRole();
             userRoleRel.setRoleId(integer);
             userRoleRel.setUserId(userId);
+            // 设置审核状态为通过，否则用户无法登录
+            userRoleRel.setIsAudit(AUDIT_STATUS.PASS);
             userRoleRels.add(userRoleRel);
         });
         return tblUserRoleRelDao.saveAll(userRoleRels);
@@ -414,7 +416,11 @@ public Object getLoginUser(Date date, String userAgent) {
 
         // 部门变更后，刷新相关的待审核记录
         if (departmentChanged) {
-            iVerifyProcessService.refreshPendingVerifyUsersByUser(userInfo.getId());
+            try {
+                iVerifyProcessService.refreshPendingVerifyUsersByUser(userInfo.getId());
+            } catch (Exception e) {
+                logger.warn("刷新待审核记录失败，不影响用户信息保存: {}", e.getMessage());
+            }
         }
 
         return userInfo;
@@ -593,8 +599,12 @@ public Object getLoginUser(Date date, String userAgent) {
             }
             Object res = iCommonService.saveSomeRecords("RelUserRole", userRoleRels);
 
-            // 用户角色变更后，刷新相关的待审核记录
-            iVerifyProcessService.refreshPendingVerifyUsersByUser(Integer.valueOf(userId));
+            // 用户角色变更后，刷新相关的待审核记录（异步执行，避免影响主流程）
+            try {
+                iVerifyProcessService.refreshPendingVerifyUsersByUser(Integer.valueOf(userId));
+            } catch (Exception e) {
+                logger.warn("刷新待审核记录失败，不影响角色保存: {}", e.getMessage());
+            }
 
             return res;
         } else {

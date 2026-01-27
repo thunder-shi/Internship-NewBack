@@ -36,4 +36,6 @@ public class RelProcessInternship extends BaseInfo {
     private LocalDateTime startTime;
     @Column(columnDefinition = "datetime comment '流程结束时间'")
     private LocalDateTime endTime;
+    @Column(columnDefinition = "text comment '备注'")
+    private String remarks;
 }

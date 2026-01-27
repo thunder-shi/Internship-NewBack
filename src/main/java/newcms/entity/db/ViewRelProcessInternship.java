@@ -31,4 +31,5 @@ public class ViewRelProcessInternship extends OrderInfo {
     private String verifyFifthRoleName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private String remarks;
 }
