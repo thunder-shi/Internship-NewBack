@@ -41,4 +41,12 @@ public interface MainVerifyProcessDao extends BaseDao<MainVerifyProcess, Integer
      */
     List<MainVerifyProcess> findByRelationIdAndTableNameAndIsDeletedFalseOrderByIdAsc(
             Integer relationId, String tableName);
+
+    /**
+     * 检查指定 relationId 和 tableName 是否已存在审核记录
+     * @param relationId 关联的流程实例ID
+     * @param tableName 表名
+     * @return 是否存在
+     */
+    boolean existsByRelationIdAndTableNameAndIsDeletedFalse(Integer relationId, String tableName);
 }

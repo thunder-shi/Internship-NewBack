@@ -30,6 +30,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Resource
     private RelProcessInternshipDao relProcessInternshipDao;
 
+    // ==================== 实习项目管理（无需审核） ====================
+
     @Override
     public Object addNewInternship(JSONObject node) {
         // (1) 在 MainInternship 实体增加一条记录（称为实体a）
@@ -80,49 +82,52 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return savedInternship;
     }
 
+    // ==================== 实习计划流程（需要审核） ====================
+
     @Override
-        public Object submitNewInternship(JSONObject requestJson) {
-            if (requestJson == null) {
-                throw BaseResponse.parameterInvalid.error("请求参数不能为空");
-            }
-            // 1. 保存 MainInternship
-            JSONObject node = requestJson.getJSONObject("node");
-            if (node == null) {
-                throw BaseResponse.parameterInvalid.error("node 参数不能为空");
-            }
-            Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
-            JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
-            Integer internshipId = savedInternshipJson.getInteger("id");
-            Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
-            if (internshipId == null || internshipTypeId == null) {
-                throw BaseResponse.moreInfoError.error("保存实习项目失败，缺少关键字段");
-            }
+    public Object submitInternshipPlan(JSONObject requestJson) {
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
 
-            // 2. 查找流程关联记录（取第一条）
-            Object foundProcess = iVerifyProcessService.GetInternshipFoundProcess(internshipId);
-            JSONObject relJson = FastJsonUtil.toJson(foundProcess);
-            Integer relationId = relJson.getInteger("id");
-            Integer verifyFirstRoleId = relJson.getInteger("verifyFirstRoleId");
+        // 1. 保存/更新 MainInternship
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node 参数不能为空");
+        }
+        Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
+        JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
+        Integer internshipId = savedInternshipJson.getInteger("id");
+        Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
+        if (internshipId == null || internshipTypeId == null) {
+            throw BaseResponse.moreInfoError.error("保存实习项目失败，缺少关键字段");
+        }
 
-            // 3. 创建审核记录 MainVerifyProcess
-            Integer createUserId = node.getInteger("creatorId");
-            if (createUserId == null) {
-                throw BaseResponse.parameterInvalid.error("createUserId 参数不能为空");
-            }
-            
-            // 获取审核用户ID字符串
-            String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
-            
-            JSONObject verifyJson = new JSONObject();
-            verifyJson.put("relationId", relationId);
-            verifyJson.put("createUserId", createUserId);
-            verifyJson.put("isAudit", 0); // 提交待审核
-            verifyJson.put("reason", "");
-            verifyJson.put("tableName", "RelProcessInternship");
-            verifyJson.put("verifyUserId", verifyUserId);
-            iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+        // 2. 查找流程关联记录（取第一条，对应计划制定流程）
+        Object foundProcess = iVerifyProcessService.GetInternshipFoundProcess(internshipId);
+        JSONObject relJson = FastJsonUtil.toJson(foundProcess);
+        Integer relationId = relJson.getInteger("id");
+        Integer verifyFirstRoleId = relJson.getInteger("verifyFirstRoleId");
 
-            return savedInternship;
+        // 3. 创建审核记录 MainVerifyProcess
+        Integer createUserId = node.getInteger("creatorId");
+        if (createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("creatorId 参数不能为空");
+        }
+
+        // 获取审核用户ID字符串
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("isAudit", 0); // 提交待审核
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", "RelProcessInternship");
+        verifyJson.put("verifyUserId", verifyUserId);
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+
+        return savedInternship;
     }
 
     @Override

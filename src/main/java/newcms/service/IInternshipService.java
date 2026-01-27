@@ -7,24 +7,36 @@ import java.util.List;
 
 @Service
 public interface IInternshipService {
+
+    // ==================== 实习项目管理（无需审核） ====================
+
     /**
      * 新增实习项目
-     * @param node 实习项目数据
+     * 创建实习项目并自动从实习类型模板复制流程配置到 RelProcessInternship
+     *
+     * @param node 实习项目数据，必须包含 internshipTypeId
      * @return 保存后的实习项目实体
      */
     Object addNewInternship(JSONObject node);
 
     /**
-     * 提交新增实习项目（保存并创建审核记录）
-     * @param requestJson 前端传入的 JSON，包含 node（MainInternship 数据）和 createUserId
-     * @return 保存后的实习项目实体
-     */
-    Object submitNewInternship(JSONObject requestJson);
-
-    /**
      * 删除实习项目
+     * 同时删除关联的 RelProcessInternship 记录
+     * 注意：已进入审核流程的项目无法删除
+     *
      * @param internshipIds 实习项目ID列表
      * @return 删除结果
      */
     Object deleteNewInternship(List<Integer> internshipIds);
+
+    // ==================== 实习计划流程（需要审核） ====================
+
+    /**
+     * 提交实习计划（创建审核记录）
+     * 用于计划制定流程的提交审核，会创建 MainVerifyProcess 审核记录
+     *
+     * @param requestJson 前端传入的 JSON，包含 node（实习项目数据）和 creatorId
+     * @return 保存后的实习项目实体
+     */
+    Object submitInternshipPlan(JSONObject requestJson);
 }

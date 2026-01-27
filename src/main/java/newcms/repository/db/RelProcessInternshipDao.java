@@ -6,6 +6,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 @Repository
 public interface RelProcessInternshipDao extends BaseDao<RelProcessInternship, Integer> {
     /**
@@ -15,4 +18,12 @@ public interface RelProcessInternshipDao extends BaseDao<RelProcessInternship, I
     @Modifying
     @Query("update RelProcessInternship set isDeleted = true, updateTime = current_timestamp where internshipId = ?1 and isDeleted = false")
     void deleteByInternshipId(Integer internshipId);
+
+    /**
+     * 查找已到开始时间的流程记录
+     * @param now 当前时间
+     * @return 已到开始时间且未删除的流程列表
+     */
+    @Query("SELECT r FROM RelProcessInternship r WHERE r.startTime IS NOT NULL AND r.startTime <= ?1 AND r.isDeleted = false")
+    List<RelProcessInternship> findStartedProcesses(LocalDateTime now);
 }

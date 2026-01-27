@@ -12,6 +12,7 @@ import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.service.IUserService;
+import newcms.service.IVerifyProcessService;
 import newcms.utils.*;
 import com.alibaba.fastjson.JSONObject;
 import org.apache.shiro.SecurityUtils;
@@ -47,6 +48,8 @@ public class UserServiceImpl extends Base implements IUserService {
     protected IDataTreeService iDataTreeService;
     @Resource
     private DataTreeServiceImpl dataTreeServiceImpl;
+    @Resource
+    private IVerifyProcessService iVerifyProcessService;
 
     private static Pattern pattern = Pattern.compile("-?[0-9]+(\\\\.[0-9]+)?");
 
@@ -383,6 +386,14 @@ public Object getLoginUser(Date date, String userAgent) {
     @Override
     public Object editUserInfo( JSONObject json, Integer userId){
         BaseUser userInfo = json.toJavaObject(BaseUser.class);
+
+        // 检查部门是否变更（部门变更可能影响 schoolId）
+        Integer newDepartmentId = userInfo.getDepartmentId();
+        BaseUser oldUserInfo = tblUserInfoDao.findById(userInfo.getId()).orElse(null);
+        Integer oldDepartmentId = oldUserInfo != null ? oldUserInfo.getDepartmentId() : null;
+        boolean departmentChanged = (newDepartmentId != null && !newDepartmentId.equals(oldDepartmentId))
+                || (oldDepartmentId != null && !oldDepartmentId.equals(newDepartmentId));
+
         // 更新redis缓存的用户信息
         String key = APPLICATION_NAME + ":userInfo:" + userInfo.getId();
         redis.delete(key);
@@ -400,6 +411,12 @@ public Object getLoginUser(Date date, String userAgent) {
             userInfo.setOssFileId(tblOssFileInfo.getId());
         }
         tblUserInfoDao.save(userInfo);
+
+        // 部门变更后，刷新相关的待审核记录
+        if (departmentChanged) {
+            iVerifyProcessService.refreshPendingVerifyUsersByUser(userInfo.getId());
+        }
+
         return userInfo;
     }
 
@@ -575,6 +592,10 @@ public Object getLoginUser(Date date, String userAgent) {
                 }
             }
             Object res = iCommonService.saveSomeRecords("RelUserRole", userRoleRels);
+
+            // 用户角色变更后，刷新相关的待审核记录
+            iVerifyProcessService.refreshPendingVerifyUsersByUser(Integer.valueOf(userId));
+
             return res;
         } else {
             return null;
