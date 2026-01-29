@@ -4,10 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.NameRemarkOrderInfo;
-
-import java.time.LocalDate;
-import java.time.LocalDateTime;
+import newcms.entity.base.NameRemarkInfo;
 
 /**
  * 实习项目表
@@ -17,7 +14,7 @@ import java.time.LocalDateTime;
 @Entity
 @Getter
 @Setter
-public class MainInternship extends NameRemarkOrderInfo {
+public class MainInternship extends NameRemarkInfo {
     @Column(columnDefinition = "int unsigned comment '实习类型'")
     private Integer internshipTypeId;
     @Column(columnDefinition = "int unsigned comment '创建人id'")

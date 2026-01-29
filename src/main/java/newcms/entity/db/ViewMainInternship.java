@@ -3,12 +3,12 @@ package newcms.entity.db;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.NameRemarkOrderInfo;
+import newcms.entity.base.NameRemarkInfo;
 
 @Getter
 @Setter
 @Entity
-public class ViewMainInternship extends NameRemarkOrderInfo {
+public class ViewMainInternship extends NameRemarkInfo {
     private Integer internshipTypeId;
     private String internshipTypeName;
     private String intTypeName;
