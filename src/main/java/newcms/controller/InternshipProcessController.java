@@ -6,7 +6,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
 import newcms.annotation.PathRestController;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.service.IInternshipService;
+import newcms.utils.EncryptUtil;
 import newcms.utils.LogUtil;
 
 import org.springframework.http.MediaType;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Tag(name = "实习项目管理")
 @PathRestController("internshipProcess")
@@ -22,6 +25,9 @@ public class InternshipProcessController {
 
     @Resource
     private IInternshipService iInternshipService;
+
+    @Resource
+    private EncryptUtil encryptUtil;
 
     // ==================== 实习项目管理（无需审核） ====================
 
@@ -62,21 +68,13 @@ public class InternshipProcessController {
         if (idsStr == null || idsStr.trim().isEmpty()) {
             throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
         }
-        // 去除首尾的方括号（如果存在）
-        idsStr = idsStr.trim();
-        if (idsStr.startsWith("[") && idsStr.endsWith("]")) {
-            idsStr = idsStr.substring(1, idsStr.length() - 1);
-        }
-        // 解析逗号分隔的id字符串
-        List<Integer> ids = Arrays.asList(idsStr.split(",")).stream()
+        // 使用 encryptUtil 解密并解析逗号分隔的id字符串
+        List<String> idsList = Arrays.asList(encryptUtil.getKeyWord(idsStr).split(Constant.SPLIT_OPERATOR.COMMA));
+        List<Integer> ids = idsList.stream()
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .map(s -> {
-                    // 再次去除可能的方括号
-                    s = s.replaceAll("^\\[|\\]$", "");
-                    return Integer.parseInt(s.trim());
-                })
-                .collect(java.util.stream.Collectors.toList());
+                .map(Integer::parseInt)
+                .collect(Collectors.toList());
         if (ids.isEmpty()) {
             throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
         }
