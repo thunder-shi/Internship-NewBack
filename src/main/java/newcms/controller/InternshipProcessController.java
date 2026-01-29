@@ -7,6 +7,7 @@ import jakarta.annotation.Resource;
 import newcms.annotation.PathRestController;
 import newcms.base.BaseResponse;
 import newcms.service.IInternshipService;
+import newcms.service.IVerifyProcessService;
 import newcms.utils.LogUtil;
 
 import org.springframework.http.MediaType;
@@ -22,6 +23,9 @@ public class InternshipProcessController {
 
     @Resource
     private IInternshipService iInternshipService;
+
+    @Resource
+    private IVerifyProcessService iVerifyProcessService;
 
     // ==================== 实习项目管理（无需审核） ====================
 
@@ -81,6 +85,19 @@ public class InternshipProcessController {
             throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
         }
         return BaseResponse.ok(iInternshipService.deleteNewInternship(ids));
+    }
+
+
+    @PostMapping(value = "/auditProcess", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object auditProcess(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("auditProcess", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        return BaseResponse.ok(iInternshipService.auditProcess(node));
+    }
+
+    @PostMapping(value = "/activateProcess")
+    public Object activateProcess () {
+        return BaseResponse.ok(iVerifyProcessService.activateStartedProcesses());
     }
 
 }

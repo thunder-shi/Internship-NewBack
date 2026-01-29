@@ -146,6 +146,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
+    public Object auditProcess(JSONObject node) {
+        // 当 MainVerifyProcess 的 isAudit 被修改为 1（审核通过）时，自动处理下一级审核
+        if (node.getInteger("isAudit") != null && node.getInteger("isAudit") == 1) {
+            Integer verifyProcessId = node.getInteger("id");
+            if (verifyProcessId != null) {
+                iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
+            }
+        }
+        return iCommonService.saveOneRecord("MainVerifyProcess", node);
+    }
+
+    @Override
     public Object deleteNewInternship(List<Integer> internshipIds) {
         if (internshipIds == null || internshipIds.isEmpty()) {
             throw BaseResponse.parameterInvalid.error("实习项目ID列表不能为空");
