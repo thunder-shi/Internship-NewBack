@@ -32,4 +32,6 @@ public class ViewRelProcessInternship extends OrderInfo {
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private String remarks;
+    private Integer currentVerifyTypeId;
+    private String currentVerifyTypeName;
 }

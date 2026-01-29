@@ -287,6 +287,101 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         return createdCount;
     }
 
+    @Override
+    public void onVerifyProcessApproved(Integer verifyProcessId) {
+        if (verifyProcessId == null) {
+            return;
+        }
+
+        // 获取审核通过的记录
+        MainVerifyProcess verifyProcess = mainVerifyProcessDao.findById(verifyProcessId).orElse(null);
+        if (verifyProcess == null) {
+            logger.warn("未找到审核记录 {}", verifyProcessId);
+            return;
+        }
+
+        Integer relationId = verifyProcess.getRelationId();
+        String tableName = verifyProcess.getTableName();
+        Integer createUserId = verifyProcess.getCreateUserId();
+
+        if (!"RelProcessInternship".equals(tableName) || relationId == null) {
+            return;
+        }
+
+        // 获取 RelProcessInternship 记录
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
+        if (relObj == null) {
+            logger.warn("未找到流程关联记录 {}", relationId);
+            return;
+        }
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
+        Integer verifyTypeId = relJson.getInteger("verifyTypeId");
+
+        if (currentVerifyTypeId == null) {
+            currentVerifyTypeId = 2; // 默认一级审核
+        }
+        if (verifyTypeId == null) {
+            verifyTypeId = 1; // 默认无需审核
+        }
+
+        int nextLevel = currentVerifyTypeId + 1;
+        if (nextLevel <= verifyTypeId) {
+            System.out.println("nextLevel = " + nextLevel + ", verifyTypeId = " + verifyTypeId);
+            // 还有下一级审核：更新 RelProcessInternship.currentVerifyTypeId，创建新审核记录
+            relJson.put("currentVerifyTypeId", nextLevel);
+            iCommonService.saveOneRecord("RelProcessInternship", relJson);
+
+            // 获取下一级审核角色ID
+            Integer nextVerifyRoleId = getVerifyRoleIdByLevel(relJson, nextLevel);
+            String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId);
+
+            // 创建下一级审核记录
+            MainVerifyProcess nextVerifyProcess = new MainVerifyProcess();
+            nextVerifyProcess.setRelationId(relationId);
+            nextVerifyProcess.setCreateUserId(createUserId);
+            nextVerifyProcess.setVerifyUserId(nextVerifyUserId);
+            nextVerifyProcess.setIsAudit(0); // 待审核
+            nextVerifyProcess.setReason("");
+            nextVerifyProcess.setTableName(tableName);
+            mainVerifyProcessDao.save(nextVerifyProcess);
+
+            logger.info("审核记录 {} 通过，流程 {} 进入下一级审核 {}，创建新审核记录 {}",
+                    verifyProcessId, relationId, nextLevel, nextVerifyProcess.getId());
+        } else {
+            // 审核全部完成，不需要再创建新记录
+            logger.info("审核记录 {} 通过，流程 {} 审核全部完成（当前级别 {}，最大级别 {}）",
+                    verifyProcessId, relationId, currentVerifyTypeId, verifyTypeId);
+        }
+    }
+
+    /**
+     * 根据审核级别从流程记录JSON中获取对应的审核角色ID
+     *
+     * @param relJson 流程关联记录JSON
+     * @param verifyLevel 审核级别（2-6）
+     * @return 对应级别的审核角色ID
+     */
+    private Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel) {
+        if (relJson == null || verifyLevel == null) {
+            return null;
+        }
+        switch (verifyLevel) {
+            case 2:
+                return relJson.getInteger("verifyFirstRoleId");
+            case 3:
+                return relJson.getInteger("verifySecondRoleId");
+            case 4:
+                return relJson.getInteger("verifyThirdRoleId");
+            case 5:
+                return relJson.getInteger("verifyFourthRoleId");
+            case 6:
+                return relJson.getInteger("verifyFifthRoleId");
+            default:
+                return null;
+        }
+    }
+
     /**
      * 如果不存在审核记录则创建
      *
@@ -323,13 +418,19 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return false;
         }
 
-        // 判断是否需要审核：verifyTypeId 为 0 或 null 表示不需要审核
+        // 判断是否需要审核：verifyTypeId = 1 表示不需要审核，verifyTypeId >= 2 表示需要审核
         Integer verifyTypeId = process.getVerifyTypeId();
-        boolean needsVerify = verifyTypeId != null && verifyTypeId != 0;
+        // verifyTypeId: 1-无需审核, 2-一级审核, 3-二级审核, 4-三级审核, 5-四级审核, 6-五级审核
+        boolean needsVerify = verifyTypeId != null && verifyTypeId >= 2;
 
-        // 获取审核用户ID（即使不需要审核也计算，用于记录）
-        Integer verifyFirstRoleId = process.getVerifyFirstRoleId();
-        String verifyUserId = needsVerify ? GetVerifyUserId(verifyFirstRoleId, creatorId) : "";
+        // 初始化 RelProcessInternship.currentVerifyTypeId
+        Integer currentVerifyTypeId = needsVerify ? 2 : 1;
+        process.setCurrentVerifyTypeId(currentVerifyTypeId);
+        relProcessInternshipDao.save(process);
+
+        // 获取当前级别的审核角色ID
+        Integer verifyRoleId = needsVerify ? process.getVerifyFirstRoleId() : null;
+        String verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, creatorId) : "";
 
         // 创建审核记录
         MainVerifyProcess verifyProcess = new MainVerifyProcess();
@@ -342,8 +443,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         verifyProcess.setTableName(tableName);
 
         mainVerifyProcessDao.save(verifyProcess);
-        logger.info("为流程 {} 创建审核记录成功，需要审核: {}，isAudit: {}",
-                relationId, needsVerify, verifyProcess.getIsAudit());
+        logger.info("为流程 {} 创建审核记录成功，需要审核: {}，isAudit: {}，当前审核级别: {}",
+                relationId, needsVerify, verifyProcess.getIsAudit(), currentVerifyTypeId);
         return true;
     }
 }

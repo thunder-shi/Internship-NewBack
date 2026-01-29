@@ -5,6 +5,7 @@ import newcms.base.BaseResponse;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IInternshipService;
+import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.LogUtil;
 import com.alibaba.fastjson.JSONObject;
@@ -29,6 +30,9 @@ public class DataListServiceImpl extends Base implements IDataListService {
 
     @Resource
     protected IInternshipService iInternshipService;
+
+    @Resource
+    protected IVerifyProcessService iVerifyProcessService;
 
     /**
      * 条件查询/模糊查询
@@ -122,7 +126,17 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
-        return iCommonService.saveOneRecord(tblName, node);
+        Object saved = iCommonService.saveOneRecord(tblName, node);
+
+        // 当 MainVerifyProcess 的 isAudit 被修改为 1（审核通过）时，自动处理下一级审核
+        if ("MainVerifyProcess".equals(tblName) && node.getInteger("isAudit") != null && node.getInteger("isAudit") == 1) {
+            Integer verifyProcessId = node.getInteger("id");
+            if (verifyProcessId != null) {
+                iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
+            }
+        }
+
+        return saved;
     }
 
     /**

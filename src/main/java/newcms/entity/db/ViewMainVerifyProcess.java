@@ -56,4 +56,5 @@ public class ViewMainVerifyProcess extends BaseInfo {
      * 审核类型ID（来自 view_rel_process_internship）
      */
     private Integer verifyTypeId;
+
 }

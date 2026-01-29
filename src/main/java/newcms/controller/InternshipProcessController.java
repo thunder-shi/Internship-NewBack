@@ -82,4 +82,5 @@ public class InternshipProcessController {
         }
         return BaseResponse.ok(iInternshipService.deleteNewInternship(ids));
     }
+
 }

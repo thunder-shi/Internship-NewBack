@@ -48,4 +48,15 @@ public interface IVerifyProcessService {
      * @return 新创建的审核记录数量
      */
     int activateStartedProcesses();
+
+    /**
+     * 审核通过后的回调处理
+     * 当 editOneNode 将 MainVerifyProcess.isAudit 修改为 1 后自动调用
+     * 检查 RelProcessInternship.currentVerifyTypeId 是否小于 verifyTypeId：
+     * - 是：currentVerifyTypeId + 1，并创建下一级审核的 MainVerifyProcess 记录
+     * - 否：审核全部完成
+     *
+     * @param verifyProcessId 审核通过的记录ID
+     */
+    void onVerifyProcessApproved(Integer verifyProcessId);
 }

@@ -71,6 +71,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             processInternshipJson.put("verifyThirdRoleId", processTypeJson.getInteger("verifyThirdRoleId"));
             processInternshipJson.put("verifyFourthRoleId", processTypeJson.getInteger("verifyFourthRoleId"));
             processInternshipJson.put("verifyFifthRoleId", processTypeJson.getInteger("verifyFifthRoleId"));
+            processInternshipJson.put("currentVerifyTypeId", 1);
             processInternshipList.add(processInternshipJson);
         }
 
@@ -115,13 +116,27 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("creatorId 参数不能为空");
         }
 
-        // 获取审核用户ID字符串
-        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+        // 获取 verifyTypeId 判断是否需要审核
+        Integer verifyTypeId = relJson.getInteger("verifyTypeId");
+        // verifyTypeId: 1-无需审核, 2-一级审核, 3-二级审核, 4-三级审核, 5-四级审核, 6-五级审核
+        boolean needsVerify = verifyTypeId != null && verifyTypeId >= 2;
 
+        // 初始化 RelProcessInternship.currentVerifyTypeId
+        Integer currentVerifyTypeId = needsVerify ? 2 : 1;
+        JSONObject updateRelJson = new JSONObject();
+        updateRelJson.put("id", relationId);
+        updateRelJson.put("currentVerifyTypeId", currentVerifyTypeId);
+        iCommonService.saveOneRecord("RelProcessInternship", updateRelJson);
+
+        // 获取审核用户ID字符串
+        String verifyUserId = needsVerify ? iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId) : "";
+
+        // 创建审核记录
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", relationId);
         verifyJson.put("createUserId", createUserId);
-        verifyJson.put("isAudit", 0); // 提交待审核
+        // 需要审核：isAudit = 0（提交待审核）；不需要审核：isAudit = 1（直接通过）
+        verifyJson.put("isAudit", needsVerify ? 0 : 1);
         verifyJson.put("reason", "");
         verifyJson.put("tableName", "RelProcessInternship");
         verifyJson.put("verifyUserId", verifyUserId);

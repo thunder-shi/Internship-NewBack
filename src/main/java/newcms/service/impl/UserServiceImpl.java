@@ -94,7 +94,6 @@ public Object getLoginUser(Date date, String userAgent) {
         //下面创建role、contestType和menuList的键值信息
         JSONObject jsRoleSearch = new JSONObject();
         jsRoleSearch.put("userId", userId);
-        jsRoleSearch.put("isAudit", 1);
         @SuppressWarnings("unchecked")
         Page<RelUserRole> rolePage = (Page<RelUserRole>)iCommonService.getSomeRecords("RelUserRole", jsRoleSearch);
         List<RelUserRole> roleInfoList = rolePage.getContent();
@@ -145,7 +144,7 @@ public Object getLoginUser(Date date, String userAgent) {
         jsReturnKey.put("menuList", menuList);
         redis.set(key, jsReturnKey, 0x12c);
         if (permissions.size() == 0) {
-            return null;
+           return null;
         }
     }
     Object result = redis.get(key);
