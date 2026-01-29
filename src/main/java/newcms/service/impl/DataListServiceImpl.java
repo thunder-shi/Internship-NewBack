@@ -126,17 +126,7 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
-        Object saved = iCommonService.saveOneRecord(tblName, node);
-
-        // 当 MainVerifyProcess 的 isAudit 被修改为 1（审核通过）时，自动处理下一级审核
-        if ("MainVerifyProcess".equals(tblName) && node.getInteger("isAudit") != null && node.getInteger("isAudit") == 1) {
-            Integer verifyProcessId = node.getInteger("id");
-            if (verifyProcessId != null) {
-                iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
-            }
-        }
-
-        return saved;
+        return iCommonService.saveOneRecord(tblName, node);
     }
 
     /**

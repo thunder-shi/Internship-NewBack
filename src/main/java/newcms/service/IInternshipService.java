@@ -39,4 +39,13 @@ public interface IInternshipService {
      * @return 保存后的实习项目实体
      */
     Object submitInternshipPlan(JSONObject requestJson);
+
+    // ========================= 推进审核步骤 =========================
+
+    /**
+     * 推进审核步骤
+     * @param requestJson
+     * @return 保存后的审核信息
+     */
+    Object auditProcess(JSONObject node);
 }
