@@ -16,7 +16,6 @@ public class ViewRelProcessInternship extends OrderInfo {
     private Integer verifyTypeId;
     private String processTypeName;
     private String verifyTypeName;
-    private String internshipName;  // 来自 view_main_internship.name
     private Integer verifyFirstRoleId;
     private Integer verifySecondRoleId;
     private Integer verifyThirdRoleId;
@@ -29,8 +28,12 @@ public class ViewRelProcessInternship extends OrderInfo {
     private String verifyFifthRoleName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private String internshipName;
     private String internshipCode;
     private String internshipRemarks;
+    private String universityName;
+    private String internshipTypeName;
+    private String intTypeName;
     private Integer currentVerifyTypeId;
     private String currentVerifyTypeName;
 }
