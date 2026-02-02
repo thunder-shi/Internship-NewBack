@@ -36,8 +36,6 @@ public class RelProcessInternship extends BaseInfo {
     private LocalDateTime startTime;
     @Column(columnDefinition = "datetime comment '流程结束时间'")
     private LocalDateTime endTime;
-    @Column(columnDefinition = "text comment '备注'")
-    private String remarks;
     @Column(columnDefinition = "integer unsigned default '1' comment '流程当前处在的审核级别id，外键，关联表BaseVerifyType'")
     private Integer currentVerifyTypeId;
 }

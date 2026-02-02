@@ -1,13 +1,11 @@
 package newcms.entity.db;
 
 import jakarta.persistence.Entity;
-import jakarta.persistence.Transient;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import newcms.entity.base.OrderInfo;
 
 import java.time.LocalDateTime;
-import java.util.Date;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -31,7 +29,8 @@ public class ViewRelProcessInternship extends OrderInfo {
     private String verifyFifthRoleName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-    private String remarks;
+    private String internshipCode;
+    private String internshipRemarks;
     private Integer currentVerifyTypeId;
     private String currentVerifyTypeName;
 }

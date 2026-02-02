@@ -3,7 +3,6 @@ package newcms.service.impl;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
-import newcms.entity.db.MainInternship;
 import newcms.entity.db.MainVerifyProcess;
 import newcms.entity.db.RelProcessInternship;
 import newcms.repository.db.MainVerifyProcessDao;

@@ -20,9 +20,11 @@ public class ViewVerifyInternshipPlanProcess extends BaseInfo {
     private String reason;
     private String tableName;
     private Integer internshipId;
+    private String internshipCode;
+    private String internshipRemarks;
     private String internshipName;
     private Integer verifyTypeId;
-    private String remarks;
+    private String verifyTypeName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private String verifyFirstRoleName;
