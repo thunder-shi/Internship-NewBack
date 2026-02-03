@@ -4,6 +4,7 @@ import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.BaseInfo;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -24,4 +25,9 @@ public class ViewMainVerifyProcess extends BaseInfo {
     private String internshipTypeName;
     private String intTypeName;
     private String universityName;
+    private String createUserName;
+    private String verifyUserName;
+    private LocalDateTime startTime;
+    private LocalDateTime endTime;
+
 }
