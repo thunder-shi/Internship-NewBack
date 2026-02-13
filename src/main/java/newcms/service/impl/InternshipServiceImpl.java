@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.repository.db.RelInterMajorDao;
 import newcms.repository.db.RelProcessInternshipDao;
 import newcms.service.ICommonService;
 import newcms.service.IInternshipService;
@@ -30,40 +31,33 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Resource
     private RelProcessInternshipDao relProcessInternshipDao;
 
+    @Resource
+    private RelInterMajorDao relInterMajorDao;
+
     // ==================== 实习项目管理（无需审核） ====================
 
-    @Override
-    public Object addNewInternship(JSONObject node) {
-        // (1) 在 MainInternship 实体增加一条记录（称为实体a）
-        Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
-        JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
-        Integer internshipId = savedInternshipJson.getInteger("id");
-        Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
-
-        if (internshipTypeId == null) {
-            throw BaseResponse.moreInfoError.error("实习类型ID不能为空");
-        }
-
-        // (2) 查找 RelProcessInternshipType 所有 internshipTypeId 和新增实体的 internshipTypeId 值相等的记录
-        // 譬如说找到3条（称为实体b1 b2 b3）
+    /**
+     * 创建实习项目的流程关联记录
+     * @param internshipId 实习项目ID
+     * @param internshipTypeId 实习类型ID
+     */
+    private void createProcessInternshipRecords(Integer internshipId, Integer internshipTypeId) {
+        // (1) 查找 RelProcessInternshipType 所有 internshipTypeId 和新增实体的 internshipTypeId 值相等的记录
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("internshipTypeId", internshipTypeId);
         @SuppressWarnings("unchecked")
         Page<Object> processTypePage = (Page<Object>) iCommonService.getSomeRecords("RelProcessInternshipType", searchKeys, null, Sort.unsorted());
         List<Object> processTypeList = processTypePage.getContent();
 
-        // (3) 在 RelProcessInternship 实体中增加若干条记录，例如对应刚刚的3条（称为实体c1 c2 c3）
+        // (2) 在 RelProcessInternship 实体中增加若干条记录
         List<Object> processInternshipList = new ArrayList<>();
         for (Object processTypeObj : processTypeList) {
             JSONObject processTypeJson = FastJsonUtil.toJson(processTypeObj);
             JSONObject processInternshipJson = new JSONObject();
             
-            // c1 c2 c3 的 internshipId 是实体a的id
+            // internshipId 是当前实习项目的id
             processInternshipJson.put("internshipId", internshipId);
-            
-            // c1 c2 c3 的其他几个属性，包括 processTypeId、verifyTypeId、verifyFirstRoleId、
-            // verifySecondRoleId、verifyThirdRoleId、verifyFourthRoleId、verifyFifthRoleId，
-            // 直接带入 b1 b2 b3 中的对应值
+            // 其他属性直接带入 RelProcessInternshipType 中的对应值
             processInternshipJson.put("processTypeId", processTypeJson.getInteger("processTypeId"));
             processInternshipJson.put("verifyTypeId", processTypeJson.getInteger("verifyTypeId"));
             processInternshipJson.put("verifyFirstRoleId", processTypeJson.getInteger("verifyFirstRoleId"));
@@ -74,11 +68,61 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             processInternshipJson.put("currentVerifyTypeId", 1);
             processInternshipList.add(processInternshipJson);
         }
-
         // 批量保存 RelProcessInternship 记录
         if (!processInternshipList.isEmpty()) {
             iCommonService.saveSomeRecords("RelProcessInternship", processInternshipList);
         }
+    }
+
+    /**
+     * 创建实习项目的专业范围关联记录
+     * @param internshipId 实习项目ID
+     * @param internshipTypeId 实习类型ID
+     */
+    private void createInternshipMajorRecords(Integer internshipId, Integer internshipTypeId) {
+        // (1) 查找当前新增实习项目的模板 internshipTypeId 在 RelInterTypeMajor 中所有 internshipTypeId 相等的记录，得到它们的 majorId
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("internshipTypeId", internshipTypeId);
+        @SuppressWarnings("unchecked")
+        Page<Object> interTypeMajorPage = (Page<Object>) iCommonService.getSomeRecords("RelInterTypeMajor", searchKeys, null, Sort.unsorted());
+        List<Object> interTypeMajorList = interTypeMajorPage.getContent();
+
+        // (2) 在 RelInterMajor 实体中创建数量相同的若干记录
+        List<Object> interMajorList = new ArrayList<>();
+        for (Object interTypeMajorObj : interTypeMajorList) {
+            JSONObject interTypeMajorJson = FastJsonUtil.toJson(interTypeMajorObj);
+            JSONObject interMajorJson = new JSONObject();
+            
+            // internshipId 都是当前的 internshipId
+            interMajorJson.put("internshipId", internshipId);
+            // majorId 就是查找到的 majorId
+            interMajorJson.put("majorId", interTypeMajorJson.getInteger("majorId"));
+            interMajorList.add(interMajorJson);
+        }
+        // 批量保存 RelInterMajor 记录
+        if (!interMajorList.isEmpty()) {
+            iCommonService.saveSomeRecords("RelInterMajor", interMajorList);
+        }
+    }
+
+    @Override
+    public Object addNewInternship(JSONObject node) {
+        // (1) 在 MainInternship 实体增加一条记录
+        Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
+        JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
+        Integer internshipId = savedInternshipJson.getInteger("id");
+        Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
+
+        // 参数校验
+        if (internshipId == null || internshipTypeId == null) {
+            throw BaseResponse.moreInfoError.error("实习项目ID或实习类型ID不能为空");
+        }
+
+        // (2) 创建流程关联记录
+        createProcessInternshipRecords(internshipId, internshipTypeId);
+
+        // (3) 创建专业范围关联记录
+        createInternshipMajorRecords(internshipId, internshipTypeId);
 
         return savedInternship;
     }
