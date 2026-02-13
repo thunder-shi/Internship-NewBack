@@ -29,5 +29,5 @@ public class ViewMainVerifyProcess extends BaseInfo {
     private String verifyUserName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-
+    private String currentVerifyTypeName;
 }
