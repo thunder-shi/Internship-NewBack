@@ -291,7 +291,7 @@ public class CommonServiceImpl extends Base implements ICommonService {
                 // 新增操作：直接转换
                 entity = json.toJavaObject(clazzInfo);
             }
-            
+        
             return clazzDao.getMethod("save", Object.class).invoke(beanDao, entity);
         } catch (ClassNotFoundException e) {
             LogUtil.error(logger, e);

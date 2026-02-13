@@ -54,6 +54,7 @@ public class LogUtil {
         } else {
             json.put("detail", obj.toJSONString());
         }
-        instance.iCommonService.saveOneRecord("SysLogger", json);
+        // instance.iCommonService.saveOneRecord("SysLogger", json);  
+        // 这里暂时注释掉，因为需要修改日志记录方式
     }
 }
