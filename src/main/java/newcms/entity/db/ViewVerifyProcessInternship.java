@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
 
 @Getter
 @Setter
-@Entity
-public class ViewMainVerifyProcess extends BaseInfo {
+@Entity(name = "view_verify_process_Internship")
+public class ViewVerifyProcessInternship extends BaseInfo {
     private Integer relationId;
     private Integer createUserId;
     private String verifyUserId;

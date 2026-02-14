@@ -217,7 +217,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             // 查询时需要考虑 isDeleted，所以使用默认的 getSomeRecords（会自动过滤 isDeleted=false）
             @SuppressWarnings("unchecked")
             Page<Object> verifyProcessPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "ViewMainVerifyProcess", searchKeys, null, Sort.unsorted());
+                    "ViewVerifyProcessInternship", searchKeys, null, Sort.unsorted());
             List<Object> verifyProcessList = verifyProcessPage.getContent();
 
             // 如果存在审核流程记录，返回错误信息
