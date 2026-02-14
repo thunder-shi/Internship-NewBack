@@ -30,4 +30,6 @@ public class ViewMainVerifyProcess extends BaseInfo {
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private String currentVerifyTypeName;
+    private String majorIds;
+    private String majorNames;
 }
