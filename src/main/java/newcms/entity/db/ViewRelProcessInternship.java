@@ -15,6 +15,7 @@ public class ViewRelProcessInternship extends OrderInfo {
     private Integer processTypeId;
     private Integer verifyTypeId;
     private String processTypeName;
+    private String processTypeCode;
     private String verifyTypeName;
     private Integer verifyFirstRoleId;
     private Integer verifySecondRoleId;
@@ -38,4 +39,5 @@ public class ViewRelProcessInternship extends OrderInfo {
     private String currentVerifyTypeName;
     private String majorIds;
     private String majorNames;
+
 }

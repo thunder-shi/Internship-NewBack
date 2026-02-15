@@ -98,4 +98,15 @@ public class InternshipProcessController {
         return BaseResponse.ok(iVerifyProcessService.activateStartedProcesses());
     }
 
+    @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")
+    @PostMapping(value = "/getNowInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getNowInternship(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getNowInternship", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        String processTypeCode = requestJson.getString("processTypeCode");
+        return BaseResponse.ok(iInternshipService.getNowInternship(processTypeCode));
+    }
+
 }

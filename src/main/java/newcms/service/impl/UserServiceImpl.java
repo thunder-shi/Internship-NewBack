@@ -587,12 +587,7 @@ public Object getLoginUser(Date date, String userAgent) {
                     RelUserRole userRoleRel = new RelUserRole();
                     userRoleRel.setRoleId((Integer)roleIdSet.toArray()[i]);
                     userRoleRel.setUserId(Integer.valueOf(userId));
-                    if ((Integer)roleIdSet.toArray()[i] == ROLE_TABLE.UNIVERSITY_ADMIN) {
-                        userRoleRel.setIsAudit(AUDIT_STATUS.SAVE);
-                    }
-                    else {
-                        userRoleRel.setIsAudit(AUDIT_STATUS.PASS);
-                    }
+                    userRoleRel.setIsAudit(AUDIT_STATUS.PASS);
                     userRoleRels.add(userRoleRel);
                 }
             }

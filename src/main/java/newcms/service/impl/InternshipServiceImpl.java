@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.repository.db.RelInterMajorDao;
 import newcms.repository.db.RelProcessInternshipDao;
 import newcms.service.ICommonService;
@@ -15,8 +16,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional(rollbackFor = Exception.class)
@@ -241,5 +243,112 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         return "删除成功";
+    }
+
+    @Override
+    public Object getNowInternship(String processTypeCode) {
+        if (processTypeCode == null || processTypeCode.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("processTypeCode 参数不能为空");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // (1) 从 ViewRelProcessInternship 中查找，当前时间在 startTime 和 endTime 之间的且 ProcessTypeCode 和传过来的字符串相同的
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("processTypeCode", processTypeCode);
+        searchKeys.put("startTime", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        searchKeys.put("endTime", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+
+        Map<String, String> regMap = new HashMap<>();
+        regMap.put("startTime", Constant.LE); // startTime <= 当前时间
+        regMap.put("endTime", Constant.GE);   // endTime >= 当前时间
+
+        @SuppressWarnings("unchecked")
+        Page<Object> firstPage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewRelProcessInternship", searchKeys, regMap, Sort.unsorted());
+        List<Object> firstList = firstPage.getContent();
+
+        if (firstList == null || firstList.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // (2) 上一条中找到的所有条目还需要排除一些，满足下面条件的不排除：
+        //     再去 ViewRelProcessInternship 中查找，这次查找条件是：
+        //     - InternshipId 在刚刚找到的条目的 InternshipId 中
+        //     - ProcessTypeCode 是 "INTERNSHIP_PLAN_MAKE"
+        //     - CurrentVerifyTypeId > VerifyTypeId（这里的 VerifyTypeId 是第一步找到的记录的 verifyTypeId）
+        
+        // 提取第一步找到的所有 internshipId
+        Set<Integer> firstInternshipIds = firstList.stream()
+                .map(obj -> {
+                    JSONObject json = FastJsonUtil.toJson(obj);
+                    return json.getInteger("internshipId");
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        if (firstInternshipIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 查询所有 processTypeCode = INTERNSHIP_PLAN_MAKE 且 internshipId 在第一步结果中的记录
+        JSONObject secondSearchKeys = new JSONObject();
+        secondSearchKeys.put("processTypeCode", Constant.PROCESS_TYPE.INTERNSHIP_PLAN_MAKE);
+        secondSearchKeys.put("internshipId", String.join(",", firstInternshipIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.toList())));
+
+        Map<String, String> secondRegMap = new HashMap<>();
+        secondRegMap.put("internshipId", Constant.IN); // internshipId IN (列表)
+
+        @SuppressWarnings("unchecked")
+        Page<Object> secondPage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewRelProcessInternship", secondSearchKeys, secondRegMap, Sort.unsorted());
+        List<Object> secondList = secondPage.getContent();
+
+        // 将第二步查询结果按 internshipId 分组，方便后续查找
+        Map<Integer, List<JSONObject>> secondMapByInternshipId = new HashMap<>();
+        if (secondList != null && !secondList.isEmpty()) {
+            for (Object obj : secondList) {
+                JSONObject json = FastJsonUtil.toJson(obj);
+                Integer internshipId = json.getInteger("internshipId");
+                if (internshipId != null) {
+                    secondMapByInternshipId.computeIfAbsent(internshipId, k -> new ArrayList<>()).add(json);
+                }
+            }
+        }
+
+        // (3) 把剩下没排除的返回给前端
+        // 对于第一步的每个记录，检查是否存在满足条件的记录（不排除的条件）
+        List<Object> result = new ArrayList<>();
+        for (Object firstObj : firstList) {
+            JSONObject firstJson = FastJsonUtil.toJson(firstObj);
+            Integer internshipId = firstJson.getInteger("internshipId");
+            Integer verifyTypeId = firstJson.getInteger("verifyTypeId");
+
+            if (internshipId == null || verifyTypeId == null) {
+                continue;
+            }
+
+            // 查找该 internshipId 对应的 INTERNSHIP_PLAN_MAKE 记录
+            List<JSONObject> planMakeRecords = secondMapByInternshipId.get(internshipId);
+            if (planMakeRecords != null && !planMakeRecords.isEmpty()) {
+                // 检查是否存在 currentVerifyTypeId > verifyTypeId 的记录
+                boolean shouldKeep = false;
+                for (JSONObject planMakeJson : planMakeRecords) {
+                    Integer currentVerifyTypeId = planMakeJson.getInteger("currentVerifyTypeId");
+                    if (currentVerifyTypeId != null && currentVerifyTypeId == verifyTypeId) {
+                        shouldKeep = true;
+                        break;
+                    }
+                }
+                // 如果满足条件（不排除），则添加到结果中
+                if (shouldKeep) {
+                    result.add(firstObj);
+                }
+            }
+        }
+
+        return result;
     }
 }

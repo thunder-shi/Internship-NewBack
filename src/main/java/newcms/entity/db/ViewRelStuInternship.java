@@ -1,6 +1,6 @@
 package newcms.entity.db;
 
-import jakarta.persistence.Column;
+
 import jakarta.persistence.Entity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
