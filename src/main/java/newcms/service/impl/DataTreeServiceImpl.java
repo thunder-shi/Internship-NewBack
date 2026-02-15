@@ -462,6 +462,35 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         }
     }
 
+    /**
+     * 递归获取指定节点的所有子节点 ID（包括当前节点）
+     * @param nodeId 当前节点 ID
+     * @param treeTblName 表名
+     * @param nodeIds 用于存储节点 ID 的列表
+     */
+    private void getAllChildIdsRecursive(Integer nodeId, String treeTblName, List<Integer> nodeIds) {
+        // 添加当前节点 ID
+        nodeIds.add(nodeId);
+        
+        // 查询当前节点的子节点
+        JSONObject searchKey = new JSONObject();
+        searchKey.put("parentId", nodeId);
+        @SuppressWarnings("unchecked")
+        Page<Object> pageResult = (Page<Object>) iCommonService.getSomeRecords(treeTblName, searchKey);
+        List<Object> children = pageResult.getContent();
+        
+        // 递归处理每个子节点
+        if (children != null && !children.isEmpty()) {
+            for (Object obj : children) {
+                JSONObject childJson = FastJsonUtil.toJson(obj);
+                Integer childId = childJson.getInteger("id");
+                if (childId != null) {
+                    getAllChildIdsRecursive(childId, treeTblName, nodeIds);
+                }
+            }
+        }
+    }
+
     public String idToParentName(String tblName, Integer nodeId){
         Object obj = iCommonService.getOneRecordById(tblName, nodeId);
         JSONObject json = FastJsonUtil.toJson(obj);
@@ -473,6 +502,25 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
             name=json.getString("name");
         }
         return name;
+    }
+
+    @Override
+    public List<Integer> getAllChildIndex(String tblName, Integer nodeId) {
+        if (nodeId == null || nodeId <= 0) {
+            return new ArrayList<>();
+        }
+        
+        // 验证节点是否存在
+        Object nodeObj = iCommonService.getOneRecordById(tblName, nodeId);
+        if (nodeObj == null) {
+            return new ArrayList<>();
+        }
+        
+        // 递归获取所有子节点 ID（包括当前节点）
+        List<Integer> nodeIds = new ArrayList<>();
+        getAllChildIdsRecursive(nodeId, tblName, nodeIds);
+        
+        return nodeIds;
     }
 
 }

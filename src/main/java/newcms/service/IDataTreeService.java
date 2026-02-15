@@ -6,6 +6,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -28,6 +29,13 @@ public interface IDataTreeService {
     Object getFirstParent(String tblName, Integer nodeId, Integer theLevel);
     Object getAllBrotherIndex(String tblName, Integer nodeId);
     ArrayList<JSONObject> getAllChildren(JSONObject treeInfo);
+    /**
+     * 获取指定节点及其所有子节点的 ID 列表
+     * @param tblName 实体表名
+     * @param nodeId 节点 ID
+     * @return 节点 ID 数组（包括当前节点）
+     */
+    List<Integer> getAllChildIndex(String tblName, Integer nodeId);
 
     /**
      * 树结构关联查询列表结构

@@ -112,6 +112,14 @@ public class DataTreeController extends CommonController {
         Integer nodeId = requestJson.getInteger("nodeId");
         return BaseResponse.ok(iDataTreeService.getFirstParent(key, nodeId, null));
     }
+
+    @PostMapping(value = "/getAllChildIndex", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getAllChildIndex(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getAllChildIndex", requestJson);
+        String key = encryptUtil.getKeyWord(requestJson.getString("keyWords"));
+        Integer nodeId = requestJson.getInteger("nodeId");
+        return BaseResponse.ok(iDataTreeService.getAllChildIndex(key, nodeId));
+    }
     @PostMapping(value = "/commonSearch", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object commonSearch(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("commonSearch", requestJson);

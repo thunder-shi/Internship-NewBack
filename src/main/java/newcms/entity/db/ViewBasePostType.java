@@ -10,13 +10,11 @@ import lombok.EqualsAndHashCode;
 @Entity
 public class ViewBasePostType extends NameRemarkOrderInfo {
     private Integer companyId;
-
     private Integer salary;
-
     private String address;
-
     private String departmentName;
-
     private Integer typeId;
+    private String majorIds;
+    private String majorNames;
 
 }
