@@ -337,7 +337,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 boolean shouldKeep = false;
                 for (JSONObject planMakeJson : planMakeRecords) {
                     Integer currentVerifyTypeId = planMakeJson.getInteger("currentVerifyTypeId");
-                    if (currentVerifyTypeId != null && currentVerifyTypeId == verifyTypeId) {
+                    Integer planVerifyTypeId = planMakeJson.getInteger("verifyTypeId");
+                    if (currentVerifyTypeId != null && planVerifyTypeId != null && currentVerifyTypeId > planVerifyTypeId) {
                         shouldKeep = true;
                         break;
                     }

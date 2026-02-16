@@ -254,8 +254,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             Object relObj = iCommonService.getOneRecordById("ViewRelProcessInternship", relationId);
             if (relObj != null) {
                 JSONObject relJson = FastJsonUtil.toJson(relObj);
-                // 返回第一级审核角色ID（后续可扩展支持多级审核）
-                return relJson.getInteger("verifyFirstRoleId");
+                // 根据当前审核级别返回对应的审核角色ID
+                Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
+                return getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
             }
         }
         // 可以在此扩展支持其他表
@@ -348,9 +349,13 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             logger.info("审核记录 {} 通过，流程 {} 进入下一级审核 {}，创建新审核记录 {}",
                     verifyProcessId, relationId, nextLevel, nextVerifyProcess.getId());
         } else {
-            // 审核全部完成，不需要再创建新记录
-            logger.info("审核记录 {} 通过，流程 {} 审核全部完成（当前级别 {}，最大级别 {}）",
-                    verifyProcessId, relationId, currentVerifyTypeId, verifyTypeId);
+            // 审核全部完成，将 currentVerifyTypeId 更新为 nextLevel（verifyTypeId + 1）
+            // 方便后续通过 currentVerifyTypeId > verifyTypeId 直接判断审核是否结束
+            relJson.put("currentVerifyTypeId", nextLevel);
+            iCommonService.saveOneRecord("RelProcessInternship", relJson);
+
+            logger.info("审核记录 {} 通过，流程 {} 审核全部完成（currentVerifyTypeId 更新为 {}，verifyTypeId {}）",
+                    verifyProcessId, relationId, nextLevel, verifyTypeId);
         }
     }
 
