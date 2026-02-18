@@ -4,18 +4,19 @@ package newcms.entity.db;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.NameRemarkOrderInfo;
+import newcms.entity.base.NameRemarkInfo;
 
 @Getter
 @Setter
 @Entity
-public class ViewMainInternshipPost extends NameRemarkOrderInfo {
-    private Integer basePostTypeId;
+public class ViewMainInternshipPost extends NameRemarkInfo {
+    private Integer postTypeId;
     private Integer allPersonNum;
     private Integer nowPersonNum;
-    private Integer mainInternshipId;
+    private Integer internshipId;
 
-    private String basePostTypeName;
-    private String mainInternshipName;
+    private String postTypeName;
+    private String internshipName;
+    private String companyName;
 
 }

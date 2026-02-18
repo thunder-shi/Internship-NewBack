@@ -4,14 +4,14 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Column;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.NameRemarkOrderInfo;
+import newcms.entity.base.NameRemarkInfo;
 
 @Getter
 @Setter
 @Entity
-public class MainInternshipPost extends NameRemarkOrderInfo {
+public class MainInternshipPost extends NameRemarkInfo {
     @Column(columnDefinition = "integer unsigned comment '岗位类型id,外键，关联表BasePostType'")
-    private Integer basePostTypeId;
+    private Integer postTypeId;
 
     @Column(columnDefinition = "integer unsigned default '0' comment '岗位人数'")
     private Integer allPersonNum;
@@ -20,6 +20,6 @@ public class MainInternshipPost extends NameRemarkOrderInfo {
     private Integer nowPersonNum = 0;
 
     @Column(columnDefinition = "integer unsigned comment '实习项目id，外键，关联表MainInternship'")
-    private Integer mainInternshipId;
+    private Integer internshipId;
 
 }
