@@ -15,6 +15,7 @@ public class ViewRelProcessInternshipType extends OrderInfo {
     private Integer verifyTypeId;
     private String processTypeName;
     private String verifyTypeName;
+    private String verifyTypeCode;
     private String internshipTypeName;  // 来自 view_base_internship_type.name
     private Integer verifyFirstRoleId;
     private Integer verifySecondRoleId;

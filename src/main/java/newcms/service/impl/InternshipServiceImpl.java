@@ -48,7 +48,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("internshipTypeId", internshipTypeId);
         @SuppressWarnings("unchecked")
-        Page<Object> processTypePage = (Page<Object>) iCommonService.getSomeRecords("RelProcessInternshipType", searchKeys, null, Sort.unsorted());
+        Page<Object> processTypePage = (Page<Object>) iCommonService.getSomeRecords("ViewRelProcessInternshipType", searchKeys, null, Sort.unsorted());
         List<Object> processTypeList = processTypePage.getContent();
 
         // (2) 在 RelProcessInternship 实体中增加若干条记录
@@ -67,7 +67,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             processInternshipJson.put("verifyThirdRoleId", processTypeJson.getInteger("verifyThirdRoleId"));
             processInternshipJson.put("verifyFourthRoleId", processTypeJson.getInteger("verifyFourthRoleId"));
             processInternshipJson.put("verifyFifthRoleId", processTypeJson.getInteger("verifyFifthRoleId"));
-            processInternshipJson.put("currentVerifyTypeId", 1);
+            // 根据 verifyTypeCode 设置 currentVerifyTypeId
+            String verifyTypeCode = processTypeJson.getString("verifyTypeCode");
+            if ("NO_VERIFY".equals(verifyTypeCode)) {
+                processInternshipJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+            } else {
+                processInternshipJson.put("currentVerifyTypeId", 2);
+            }
             processInternshipList.add(processInternshipJson);
         }
         // 批量保存 RelProcessInternship 记录

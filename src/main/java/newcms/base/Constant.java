@@ -107,16 +107,11 @@ public class Constant {
         public static final int STUDENT = 8; // 学生
     }
     public static final class AUDIT_STATUS {
-        public static final int SAVE = -1;
-        public static final String SAVENAME = "保存未提交";
-        public static final int SUBMIT = 0;
-        public static final String SUBMITNAME = "提交待审核";
-        public static final int PASS = 1;
-        public static final String PASSNAME = "审核通过";
-        public static final int NOTPASS = 2;
-        public static final String NOTPASSNAME = "审核未通过";
-        public static final int BACK = 3;
-        public static final String BACKNAME = "审核退回";
+        public static final int SAVE = -1; public static final String SAVENAME = "保存未提交";
+        public static final int SUBMIT = 0; public static final String SUBMITNAME = "提交待审核";
+        public static final int PASS = 1; public static final String PASSNAME = "审核通过";
+        public static final int NOTPASS = 2; public static final String NOTPASSNAME = "审核未通过";
+        public static final int BACK = 3; public static final String BACKNAME = "审核退回";
     }
 
     // 实习流程类型
@@ -134,7 +129,15 @@ public class Constant {
 
     public static final String BUCKET_NAME = "association";
 
-
+    // 审核级别
+    public static final class VERIFY_LEVEL {
+        public static final int NO_VERIFY = 1; // 无需审核
+        public static final int ONE_VERIFY = 2; // 一级审核
+        public static final int TWO_VERIFYS = 3; // 二级审核
+        public static final int THREE_VERIFYS = 4; // 三级审核
+        public static final int FOUR_VERIFYS = 5; // 四级审核
+        public static final int FIVE_VERIFYS = 6; // 五级审核
+    }
 
 
 }
