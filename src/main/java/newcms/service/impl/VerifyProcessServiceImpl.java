@@ -130,7 +130,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsers() {
         // 查询所有待审核记录（isAudit = 0）
@@ -153,7 +152,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsersByUser(Integer userId) {
         if (userId == null) {
@@ -287,9 +285,45 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 logger.warn("为流程 {} 创建审核记录失败: {}", process.getId(), e.getMessage());
             }
         }
-
-        logger.info("流程激活检查完成，共创建 {} 条审核记录", createdCount);
-        return createdCount;
+        JSONObject relJson = null;
+        if (relObj != null) {
+            relJson = FastJsonUtil.toJson(relObj);
+        }
+        // 判断是否需要审核：verifyTypeId = 1 表示不需要审核，verifyTypeId >= 2 表示需要审核
+        Integer verifyTypeId = null;
+        boolean needsVerify = false;
+        if (relJson != null) {
+            verifyTypeId = relJson.getInteger("verifyTypeId");
+            // verifyTypeId: 1-无需审核, 2-一级审核, 3-二级审核, 4-三级审核, 5-四级审核, 6-五级审核
+            needsVerify = verifyTypeId != null && verifyTypeId >= 2;
+            // 初始化 RelProcessInternship.currentVerifyTypeId（如果表是 RelProcessInternship）
+            // Integer currentVerifyTypeId = needsVerify ? 2 : 1;
+            // relJson.put("currentVerifyTypeId", currentVerifyTypeId);
+            // iCommonService.saveOneRecord(tableName, relJson);
+        }
+        // 获取当前级别的审核角色ID
+        Integer verifyRoleId = null;
+        if (needsVerify && relJson != null) {
+            verifyRoleId = getVerifyRoleIdByLevel(relJson, 2); // 从第一级审核开始
+        }
+        String verifyUserId = "";
+        if (needsVerify && createUserId != null) {
+            verifyUserId = GetVerifyUserId(verifyRoleId, createUserId);
+        }
+        // 创建审核记录
+        MainVerifyProcess verifyProcess = new MainVerifyProcess();
+        verifyProcess.setRelationId(relationId);
+        verifyProcess.setProcessId(processId);
+        verifyProcess.setCreateUserId(createUserId);
+        verifyProcess.setVerifyUserId(verifyUserId);
+        // 需要审核：isAudit = -1（未提交）；不需要审核：isAudit = 1（直接通过）
+        verifyProcess.setIsAudit(needsVerify ? -1 : 1);
+        verifyProcess.setReason("");
+        verifyProcess.setTableName(tableName);
+        MainVerifyProcess savedProcess = mainVerifyProcessDao.save(verifyProcess);
+        logger.info("为流程 {} 创建审核记录成功，需要审核: {}，isAudit: {}，当前审核级别: {}",
+                relationId, needsVerify, savedProcess.getIsAudit(), needsVerify ? 2 : 1);
+        return savedProcess;
     }
 
     @Override
@@ -344,7 +378,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             // 创建下一级审核记录
             MainVerifyProcess nextVerifyProcess = new MainVerifyProcess();
             nextVerifyProcess.setRelationId(relationId);
-            nextVerifyProcess.setProcessId(relationId);
             nextVerifyProcess.setCreateUserId(createUserId);
             nextVerifyProcess.setVerifyUserId(nextVerifyUserId);
             nextVerifyProcess.setIsAudit(0); // 待审核
@@ -445,7 +478,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         // 创建审核记录
         MainVerifyProcess verifyProcess = new MainVerifyProcess();
         verifyProcess.setRelationId(relationId);
-        verifyProcess.setProcessId(relationId);
         verifyProcess.setCreateUserId(creatorId);
         verifyProcess.setVerifyUserId(verifyUserId);
         // 需要审核：isAudit = -1（未提交）；不需要审核：isAudit = 1（直接通过）
