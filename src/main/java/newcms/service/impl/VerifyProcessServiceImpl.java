@@ -4,7 +4,6 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.entity.db.MainVerifyProcess;
-import newcms.entity.db.RelProcessInternship;
 import newcms.repository.db.MainVerifyProcessDao;
 import newcms.repository.db.RelProcessInternshipDao;
 import newcms.service.ICommonService;
@@ -16,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.fastjson.JSONObject;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -205,7 +203,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
      * @param verifyProcess 审核记录
      * @return 是否更新成功
      */
-    @SuppressWarnings("unchecked")
     private boolean refreshSingleVerifyProcess(MainVerifyProcess verifyProcess) {
         try {
             Integer relationId = verifyProcess.getRelationId();
@@ -264,27 +261,69 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    public int activateStartedProcesses() {
-        LocalDateTime now = LocalDateTime.now();
-        logger.info("开始检查已到开始时间的流程，当前时间: {}", now);
-
-        // 查找所有已到开始时间的流程
-        List<RelProcessInternship> startedProcesses = relProcessInternshipDao.findStartedProcesses(now);
-
-        int createdCount = 0;
-        for (RelProcessInternship process : startedProcesses) {
-            try {
-                boolean created = createVerifyProcessIfNotExists(process);
-                if (created) {
-                    createdCount++;
-                }
-            } catch (Exception e) {
-                logger.warn("为流程 {} 创建审核记录失败: {}", process.getId(), e.getMessage());
+    public Object activateProcess(JSONObject node) {
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node 参数不能为空");
+        }
+        // 从 node 中获取参数
+        Integer relationId = node.getInteger("relationId");
+        Integer processId = node.getInteger("processId");
+        Integer createUserId = node.getInteger("createUserId");
+        String tableName = node.getString("tableName");
+        // 检查是否已存在审核记录（需要 relationId 和 tableName）
+        // if (relationId != null && tableName != null) {
+        //     if (mainVerifyProcessDao.existsByRelationIdAndTableNameAndIsDeletedFalse(relationId, tableName)) {
+        //         logger.debug("流程 {} 已存在审核记录，跳过", relationId);
+        //         return null;
+        //     }
+        // }
+        // 获取关联记录以获取审核配置信息（需要 tableName 和 relationId）
+        Object relObj = null;
+        if (tableName != null && relationId != null) {
+            relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+            if (relObj == null) {
+                logger.warn("未找到关联记录 {}，表名: {}", relationId, tableName);
             }
         }
-
-        logger.info("流程激活检查完成，共创建 {} 条审核记录", createdCount);
-        return createdCount;
+        JSONObject relJson = null;
+        if (relObj != null) {
+            relJson = FastJsonUtil.toJson(relObj);
+        }
+        // 判断是否需要审核：verifyTypeId = 1 表示不需要审核，verifyTypeId >= 2 表示需要审核
+        Integer verifyTypeId = null;
+        boolean needsVerify = false;
+        if (relJson != null) {
+            verifyTypeId = relJson.getInteger("verifyTypeId");
+            // verifyTypeId: 1-无需审核, 2-一级审核, 3-二级审核, 4-三级审核, 5-四级审核, 6-五级审核
+            needsVerify = verifyTypeId != null && verifyTypeId >= 2;
+            // 初始化 RelProcessInternship.currentVerifyTypeId（如果表是 RelProcessInternship）
+            // Integer currentVerifyTypeId = needsVerify ? 2 : 1;
+            // relJson.put("currentVerifyTypeId", currentVerifyTypeId);
+            // iCommonService.saveOneRecord(tableName, relJson);
+        }
+        // 获取当前级别的审核角色ID
+        Integer verifyRoleId = null;
+        if (needsVerify && relJson != null) {
+            verifyRoleId = getVerifyRoleIdByLevel(relJson, 2); // 从第一级审核开始
+        }
+        String verifyUserId = "";
+        if (needsVerify && createUserId != null) {
+            verifyUserId = GetVerifyUserId(verifyRoleId, createUserId);
+        }
+        // 创建审核记录
+        MainVerifyProcess verifyProcess = new MainVerifyProcess();
+        verifyProcess.setRelationId(relationId);
+        verifyProcess.setProcessId(processId);
+        verifyProcess.setCreateUserId(createUserId);
+        verifyProcess.setVerifyUserId(verifyUserId);
+        // 需要审核：isAudit = -1（未提交）；不需要审核：isAudit = 1（直接通过）
+        verifyProcess.setIsAudit(needsVerify ? -1 : 1);
+        verifyProcess.setReason("");
+        verifyProcess.setTableName(tableName);
+        MainVerifyProcess savedProcess = mainVerifyProcessDao.save(verifyProcess);
+        logger.info("为流程 {} 创建审核记录成功，需要审核: {}，isAudit: {}，当前审核级别: {}",
+                relationId, needsVerify, savedProcess.getIsAudit(), needsVerify ? 2 : 1);
+        return savedProcess;
     }
 
     @Override
@@ -371,84 +410,13 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return null;
         }
         switch (verifyLevel) {
-            case 2:
-                return relJson.getInteger("verifyFirstRoleId");
-            case 3:
-                return relJson.getInteger("verifySecondRoleId");
-            case 4:
-                return relJson.getInteger("verifyThirdRoleId");
-            case 5:
-                return relJson.getInteger("verifyFourthRoleId");
-            case 6:
-                return relJson.getInteger("verifyFifthRoleId");
-            default:
-                return null;
+            case 2: return relJson.getInteger("verifyFirstRoleId");
+            case 3: return relJson.getInteger("verifySecondRoleId");
+            case 4: return relJson.getInteger("verifyThirdRoleId");
+            case 5: return relJson.getInteger("verifyFourthRoleId");
+            case 6: return relJson.getInteger("verifyFifthRoleId");
+            default: return null;
         }
     }
 
-    /**
-     * 如果不存在审核记录则创建
-     *
-     * @param process 流程关联记录
-     * @return 是否创建了新记录
-     */
-    private boolean createVerifyProcessIfNotExists(RelProcessInternship process) {
-        Integer relationId = process.getId();
-        String tableName = "RelProcessInternship";
-
-        // 检查是否已存在审核记录
-        if (mainVerifyProcessDao.existsByRelationIdAndTableNameAndIsDeletedFalse(relationId, tableName)) {
-            logger.debug("流程 {} 已存在审核记录，跳过", relationId);
-            return false;
-        }
-
-        // 获取实习项目信息以获取创建人ID
-        Integer internshipId = process.getInternshipId();
-        if (internshipId == null) {
-            logger.warn("流程 {} 缺少实习项目ID", relationId);
-            return false;
-        }
-
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) {
-            logger.warn("未找到实习项目 {}", internshipId);
-            return false;
-        }
-
-        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
-        Integer creatorId = internshipJson.getInteger("creatorId");
-        if (creatorId == null) {
-            logger.warn("实习项目 {} 缺少创建人ID", internshipId);
-            return false;
-        }
-
-        // 判断是否需要审核：verifyTypeId = 1 表示不需要审核，verifyTypeId >= 2 表示需要审核
-        Integer verifyTypeId = process.getVerifyTypeId();
-        // verifyTypeId: 1-无需审核, 2-一级审核, 3-二级审核, 4-三级审核, 5-四级审核, 6-五级审核
-        boolean needsVerify = verifyTypeId != null && verifyTypeId >= 2;
-
-        // 初始化 RelProcessInternship.currentVerifyTypeId
-        Integer currentVerifyTypeId = needsVerify ? 2 : 1;
-        process.setCurrentVerifyTypeId(currentVerifyTypeId);
-        relProcessInternshipDao.save(process);
-
-        // 获取当前级别的审核角色ID
-        Integer verifyRoleId = needsVerify ? process.getVerifyFirstRoleId() : null;
-        String verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, creatorId) : "";
-
-        // 创建审核记录
-        MainVerifyProcess verifyProcess = new MainVerifyProcess();
-        verifyProcess.setRelationId(relationId);
-        verifyProcess.setCreateUserId(creatorId);
-        verifyProcess.setVerifyUserId(verifyUserId);
-        // 需要审核：isAudit = -1（未提交）；不需要审核：isAudit = 1（直接通过）
-        verifyProcess.setIsAudit(needsVerify ? -1 : 1);
-        verifyProcess.setReason("");
-        verifyProcess.setTableName(tableName);
-
-        mainVerifyProcessDao.save(verifyProcess);
-        logger.info("为流程 {} 创建审核记录成功，需要审核: {}，isAudit: {}，当前审核级别: {}",
-                relationId, needsVerify, verifyProcess.getIsAudit(), currentVerifyTypeId);
-        return true;
-    }
 }

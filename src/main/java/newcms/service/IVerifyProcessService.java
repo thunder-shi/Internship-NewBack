@@ -1,5 +1,6 @@
 package newcms.service;
 
+import com.alibaba.fastjson.JSONObject;
 import org.springframework.stereotype.Service;
 
 /**
@@ -41,13 +42,13 @@ public interface IVerifyProcessService {
     int refreshPendingVerifyUsersByUser(Integer userId);
 
     /**
-     * 检查并激活已到开始时间的流程
-     * 扫描 RelProcessInternship 表，对于 startTime <= 当前时间 且尚未创建审核记录的流程，
-     * 自动创建 MainVerifyProcess 记录（isAudit=0）
+     * 激活单个流程
+     * 根据传入的参数创建审核记录
      *
-     * @return 新创建的审核记录数量
+     * @param node 包含 relationId、processId、createUserId、tableName 的 JSON 对象
+     * @return 创建的审核记录对象，如果已存在则返回 null
      */
-    int activateStartedProcesses();
+    Object activateProcess(JSONObject node);
 
     /**
      * 审核通过后的回调处理

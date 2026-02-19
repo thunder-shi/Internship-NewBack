@@ -94,8 +94,10 @@ public class InternshipProcessController {
     }
 
     @PostMapping(value = "/activateProcess")
-    public Object activateProcess () {
-        return BaseResponse.ok(iVerifyProcessService.activateStartedProcesses());
+    public Object activateProcess (@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("activateProcess", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        return BaseResponse.ok(iVerifyProcessService.activateProcess(node));
     }
 
     @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")

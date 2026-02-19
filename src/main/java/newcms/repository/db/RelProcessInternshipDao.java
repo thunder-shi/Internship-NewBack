@@ -24,6 +24,6 @@ public interface RelProcessInternshipDao extends BaseDao<RelProcessInternship, I
      * @param now 当前时间
      * @return 已到开始时间且未删除的流程列表
      */
-    @Query("SELECT r FROM RelProcessInternship r WHERE r.startTime IS NOT NULL AND r.startTime <= ?1 AND r.isDeleted = false")
-    List<RelProcessInternship> findStartedProcesses(LocalDateTime now);
+    // @Query("SELECT r FROM RelProcessInternship r WHERE r.startTime IS NOT NULL AND r.startTime <= ?1 AND r.isDeleted = false")
+    // List<RelProcessInternship> findStartedProcesses(LocalDateTime now);
 }

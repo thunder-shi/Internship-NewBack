@@ -48,5 +48,5 @@ public interface MainVerifyProcessDao extends BaseDao<MainVerifyProcess, Integer
      * @param tableName 表名
      * @return 是否存在
      */
-    boolean existsByRelationIdAndTableNameAndIsDeletedFalse(Integer relationId, String tableName);
+    // boolean existsByRelationIdAndTableNameAndIsDeletedFalse(Integer relationId, String tableName);
 }
