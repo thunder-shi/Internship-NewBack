@@ -195,20 +195,19 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Override
     public Object auditProcess(JSONObject node) {
         Integer isAudit = node.getInteger("isAudit");
-        Integer verifyProcessId = node.getInteger("id");
-
-        if (isAudit != null && isAudit == 1 && verifyProcessId != null) {
+        Integer Id = node.getInteger("id");
+        if (isAudit != null && isAudit == 1 && Id != null) {
             // 审核通过：推进到下一级
-            iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
+            iVerifyProcessService.onVerifyProcessApproved(Id);
         }
 
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
-        if (isAudit != null && (isAudit == 2 || isAudit == 3) && verifyProcessId != null) {
+        if (isAudit != null && (isAudit == 2 || isAudit == 3) && Id != null) {
             // 退回：立即在同一审核级别新建一条 isAudit=-1（保存未提交）的记录，
             // 原退回记录保留作为历史，前端可查看完整退回原因链
-            createPendingRecordAfterBack(verifyProcessId);
+            createPendingRecordAfterBack(Id);
         }
 
         return saved;
@@ -249,7 +248,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 4. 新建待提交记录（isAudit=-1），级别与退回时相同，无需修改 currentVerifyTypeId
         JSONObject newVerifyJson = new JSONObject();
         newVerifyJson.put("relationId", relationId);
-        newVerifyJson.put("processId", processId != null ? processId : relationId);
+        newVerifyJson.put("processId", processId);
         newVerifyJson.put("createUserId", createUserId);
         newVerifyJson.put("isAudit", -1);
         newVerifyJson.put("reason", "");

@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 @Entity(name = "view_verify_process_Internship")
 public class ViewVerifyProcessInternship extends BaseInfo {
     private Integer relationId;
+    private Integer processId;
     private Integer createUserId;
     private String verifyUserId;
     private Integer isAudit;

@@ -200,53 +200,36 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Object activateProcess(JSONObject node) {
         if (node == null) return null;
-
         Integer relationId  = node.getInteger("relationId");
         Integer processId   = node.getInteger("processId");
         Integer createUserId = node.getInteger("createUserId");
         String  tableName   = node.getString("tableName");
-
         if (relationId == null || createUserId == null) {
             logger.warn("activateProcess 参数不完整: {}", node);
             return null;
         }
         String finalTableName = (tableName != null) ? tableName : "RelProcessInternship";
 
-        // 防止重复激活
-        boolean exists = mainVerifyProcessDao
-                .findAll()
-                .stream()
-                .anyMatch(p -> finalTableName.equals(p.getTableName())
-                        && relationId.equals(p.getRelationId())
-                        && !Boolean.TRUE.equals(p.getIsDeleted()));
-        if (exists) {
-            logger.debug("流程 {} 已存在审核记录，跳过", relationId);
-            return null;
-        }
-
         // 加载流程配置
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
-            logger.warn("activateProcess：未找到流程配置 {}", relationId);
+            logger.warn("activateProcess：未找到流程配置 {}", processId);
             return null;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
         boolean needsVerify  = verifyTypeId != null && verifyTypeId >= 2;
-
         // 更新 currentVerifyTypeId
         Integer currentVerifyTypeId = needsVerify ? 2 : 1;
         relJson.put("currentVerifyTypeId", currentVerifyTypeId);
         iCommonService.saveOneRecord("RelProcessInternship", relJson);
-
         // 计算审核人
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
         String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "";
-
         // 创建审核记录
         MainVerifyProcess verifyProcess = new MainVerifyProcess();
         verifyProcess.setRelationId(relationId);
-        verifyProcess.setProcessId(processId != null ? processId : relationId);
+        verifyProcess.setProcessId(processId);
         verifyProcess.setCreateUserId(createUserId);
         verifyProcess.setVerifyUserId(verifyUserId);
         verifyProcess.setIsAudit(needsVerify ? -1 : 1);
@@ -325,30 +308,27 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    public void onVerifyProcessApproved(Integer verifyProcessId) {
-        if (verifyProcessId == null) {
+    public void onVerifyProcessApproved(Integer Id) {
+        if (Id == null) {
             return;
         }
 
         // 获取审核通过的记录
-        MainVerifyProcess verifyProcess = mainVerifyProcessDao.findById(verifyProcessId).orElse(null);
-        if (verifyProcess == null) {
-            logger.warn("未找到审核记录 {}", verifyProcessId);
+        Object verifyProcessObj = iCommonService.getOneRecordById("MainVerifyProcess", Id);
+        if (verifyProcessObj == null) {
+            logger.warn("未找到审核记录 {}", Id);
             return;
         }
-
+        MainVerifyProcess verifyProcess = (MainVerifyProcess) verifyProcessObj;
+        Integer processId = verifyProcess.getProcessId();
         Integer relationId = verifyProcess.getRelationId();
         String tableName = verifyProcess.getTableName();
         Integer createUserId = verifyProcess.getCreateUserId();
-
-        if (!"RelProcessInternship".equals(tableName) || relationId == null) {
-            return;
-        }
-
+        String verifyUserId = verifyProcess.getVerifyUserId();
         // 获取 RelProcessInternship 记录
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
-            logger.warn("未找到流程关联记录 {}", relationId);
+            logger.warn("未找到流程关联记录 {}", processId);
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
@@ -372,12 +352,11 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             // 获取下一级审核角色ID
             Integer nextVerifyRoleId = getVerifyRoleIdByLevel(relJson, nextLevel);
             String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId);
-
             // 创建下一级审核记录
             MainVerifyProcess nextVerifyProcess = new MainVerifyProcess();
             nextVerifyProcess.setRelationId(relationId);
-            nextVerifyProcess.setProcessId(relationId);
-            nextVerifyProcess.setCreateUserId(createUserId);
+            nextVerifyProcess.setProcessId(processId);
+            nextVerifyProcess.setCreateUserId(Integer.parseInt(verifyUserId.split("\\|")[0]));
             nextVerifyProcess.setVerifyUserId(nextVerifyUserId);
             nextVerifyProcess.setIsAudit(0); // 待审核
             nextVerifyProcess.setReason("");
@@ -385,7 +364,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             mainVerifyProcessDao.save(nextVerifyProcess);
 
             logger.info("审核记录 {} 通过，流程 {} 进入下一级审核 {}，创建新审核记录 {}",
-                    verifyProcessId, relationId, nextLevel, nextVerifyProcess.getId());
+                    Id, relationId, nextLevel, nextVerifyProcess.getId());
         } else {
             // 审核全部完成，将 currentVerifyTypeId 更新为 nextLevel（verifyTypeId + 1）
             // 方便后续通过 currentVerifyTypeId > verifyTypeId 直接判断审核是否结束
@@ -393,7 +372,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             iCommonService.saveOneRecord("RelProcessInternship", relJson);
 
             logger.info("审核记录 {} 通过，流程 {} 审核全部完成（currentVerifyTypeId 更新为 {}，verifyTypeId {}）",
-                    verifyProcessId, relationId, nextLevel, verifyTypeId);
+                    Id, relationId, nextLevel, verifyTypeId);
         }
     }
 
@@ -409,18 +388,12 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return null;
         }
         switch (verifyLevel) {
-            case 2:
-                return relJson.getInteger("verifyFirstRoleId");
-            case 3:
-                return relJson.getInteger("verifySecondRoleId");
-            case 4:
-                return relJson.getInteger("verifyThirdRoleId");
-            case 5:
-                return relJson.getInteger("verifyFourthRoleId");
-            case 6:
-                return relJson.getInteger("verifyFifthRoleId");
-            default:
-                return null;
+            case 2: return relJson.getInteger("verifyFirstRoleId");
+            case 3: return relJson.getInteger("verifySecondRoleId");
+            case 4: return relJson.getInteger("verifyThirdRoleId");
+            case 5: return relJson.getInteger("verifyFourthRoleId");
+            case 6: return relJson.getInteger("verifyFifthRoleId");
+            default: return null;
         }
     }
 
