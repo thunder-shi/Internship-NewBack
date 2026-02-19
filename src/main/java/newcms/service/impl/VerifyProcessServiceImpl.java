@@ -13,6 +13,7 @@ import newcms.utils.FastJsonUtil;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.fastjson.JSONObject;
@@ -62,8 +63,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     @Override
     @SuppressWarnings("unchecked")
     public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId) {
-        if (verifyFirstRoleId == null) {
-            // 如果没有审核角色ID，返回空字符串
+        if (verifyFirstRoleId == null || verifyFirstRoleId == 0) {
+            // 如果没有审核角色ID（null 或 0 均视为未配置），返回空字符串
             return "";
         }
         if (createUserId == null) {
@@ -129,6 +130,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsers() {
         // 查询所有待审核记录（isAudit = 0）
@@ -151,6 +153,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsersByUser(Integer userId) {
         if (userId == null) {
@@ -218,7 +221,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
             // 根据 tableName 获取对应的流程关联记录
             Integer verifyRoleId = getVerifyRoleIdFromRelation(relationId, tableName);
-            if (verifyRoleId == null) {
+            if (verifyRoleId == null || verifyRoleId == 0) {
+                // roleId 为 null 或 0 均表示该级别未配置审核角色，跳过刷新
                 return false;
             }
 
@@ -264,6 +268,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public int activateStartedProcesses() {
         LocalDateTime now = LocalDateTime.now();
         logger.info("开始检查已到开始时间的流程，当前时间: {}", now);
@@ -339,6 +344,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             // 创建下一级审核记录
             MainVerifyProcess nextVerifyProcess = new MainVerifyProcess();
             nextVerifyProcess.setRelationId(relationId);
+            nextVerifyProcess.setProcessId(relationId);
             nextVerifyProcess.setCreateUserId(createUserId);
             nextVerifyProcess.setVerifyUserId(nextVerifyUserId);
             nextVerifyProcess.setIsAudit(0); // 待审核
@@ -439,6 +445,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         // 创建审核记录
         MainVerifyProcess verifyProcess = new MainVerifyProcess();
         verifyProcess.setRelationId(relationId);
+        verifyProcess.setProcessId(relationId);
         verifyProcess.setCreateUserId(creatorId);
         verifyProcess.setVerifyUserId(verifyUserId);
         // 需要审核：isAudit = -1（未提交）；不需要审核：isAudit = 1（直接通过）

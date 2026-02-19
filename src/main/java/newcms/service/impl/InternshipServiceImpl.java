@@ -180,6 +180,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 创建审核记录
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", relationId);
         verifyJson.put("createUserId", createUserId);
         // 需要审核：isAudit = 0（提交待审核）；不需要审核：isAudit = 1（直接通过）
         verifyJson.put("isAudit", needsVerify ? 0 : 1);
@@ -193,14 +194,85 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object auditProcess(JSONObject node) {
-        // 当 MainVerifyProcess 的 isAudit 被修改为 1（审核通过）时，自动处理下一级审核
-        if (node.getInteger("isAudit") != null && node.getInteger("isAudit") == 1) {
-            Integer verifyProcessId = node.getInteger("id");
-            if (verifyProcessId != null) {
-                iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
-            }
+        Integer isAudit = node.getInteger("isAudit");
+        Integer verifyProcessId = node.getInteger("id");
+
+        if (isAudit != null && isAudit == 1 && verifyProcessId != null) {
+            // 审核通过：推进到下一级
+            iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
         }
-        return iCommonService.saveOneRecord("MainVerifyProcess", node);
+
+        // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
+        Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
+
+        if (isAudit != null && (isAudit == 2 || isAudit == 3) && verifyProcessId != null) {
+            // 退回：立即在同一审核级别新建一条 isAudit=-1（保存未提交）的记录，
+            // 原退回记录保留作为历史，前端可查看完整退回原因链
+            createPendingRecordAfterBack(verifyProcessId);
+        }
+
+        return saved;
+    }
+
+    /**
+     * 审核退回后，在相同审核级别新建一条 isAudit=-1 的记录，等待用户重新提交。
+     * 用户重新提交时只需将该记录的 isAudit 改为 0（通过 auditProcess 接口即可），
+     * 无需专门的 resubmit 接口。
+     */
+    private void createPendingRecordAfterBack(Integer rejectedProcessId) {
+        // 1. 读取退回记录（此时 save 已完成，isAudit 已更新为退回状态）
+        Object verifyProcessObj = iCommonService.getOneRecordById("MainVerifyProcess", rejectedProcessId);
+        if (verifyProcessObj == null) {
+            logger.warn("退回后新建记录失败：未找到审核记录 {}", rejectedProcessId);
+            return;
+        }
+        JSONObject verifyProcessJson = FastJsonUtil.toJson(verifyProcessObj);
+
+        Integer relationId  = verifyProcessJson.getInteger("relationId");
+        Integer createUserId = verifyProcessJson.getInteger("createUserId");
+        Integer processId   = verifyProcessJson.getInteger("processId");
+        String  tableName   = verifyProcessJson.getString("tableName");
+
+        // 2. 读取流程配置，获取当前审核级别
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
+        if (relObj == null) {
+            logger.warn("退回后新建记录失败：未找到流程配置 {}", relationId);
+            return;
+        }
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
+
+        // 3. 重新计算该级别的审核人（刷新最新角色/部门状态）
+        Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+
+        // 4. 新建待提交记录（isAudit=-1），级别与退回时相同，无需修改 currentVerifyTypeId
+        JSONObject newVerifyJson = new JSONObject();
+        newVerifyJson.put("relationId", relationId);
+        newVerifyJson.put("processId", processId != null ? processId : relationId);
+        newVerifyJson.put("createUserId", createUserId);
+        newVerifyJson.put("isAudit", -1);
+        newVerifyJson.put("reason", "");
+        newVerifyJson.put("tableName", tableName);
+        newVerifyJson.put("verifyUserId", verifyUserId);
+        iCommonService.saveOneRecord("MainVerifyProcess", newVerifyJson);
+    }
+
+    /**
+     * 根据审核级别从流程记录JSON中获取对应的审核角色ID
+     */
+    private Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel) {
+        if (relJson == null || verifyLevel == null) {
+            return null;
+        }
+        return switch (verifyLevel) {
+            case 2 -> relJson.getInteger("verifyFirstRoleId");
+            case 3 -> relJson.getInteger("verifySecondRoleId");
+            case 4 -> relJson.getInteger("verifyThirdRoleId");
+            case 5 -> relJson.getInteger("verifyFourthRoleId");
+            case 6 -> relJson.getInteger("verifyFifthRoleId");
+            default -> null;
+        };
     }
 
     @Override

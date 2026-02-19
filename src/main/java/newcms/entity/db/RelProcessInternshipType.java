@@ -26,14 +26,14 @@ public class RelProcessInternshipType extends NameRemarkOrderInfo {
     private Integer verifyTypeId;
 
     @Column(columnDefinition = "integer unsigned default '0' comment '第一轮审核的人物角色id，外键，关联表SysRole'")
-    private Integer verifyFirstRoleId;
+    private Integer verifyFirstRoleId = 0;
     @Column(columnDefinition = "integer unsigned default '0' comment '第二轮审核的人物角色id，外键，关联表SysRole'")
-    private Integer verifySecondRoleId;
+    private Integer verifySecondRoleId = 0;
     @Column(columnDefinition = "integer unsigned default '0' comment '第三轮审核的人物角色id，外键，关联表SysRole'")
-    private Integer verifyThirdRoleId;
+    private Integer verifyThirdRoleId = 0;
     @Column(columnDefinition = "integer unsigned default '0' comment '第四轮审核的人物角色id，外键，关联表SysRole'")
-    private Integer verifyFourthRoleId;
+    private Integer verifyFourthRoleId = 0;
     @Column(columnDefinition = "integer unsigned default '0' comment '第五轮审核的人物角色id，外键，关联表SysRole'")
-    private Integer verifyFifthRoleId;
+    private Integer verifyFifthRoleId = 0;
 }
 

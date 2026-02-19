@@ -245,12 +245,13 @@ public class CommonServiceImpl extends Base implements ICommonService {
      */
     private Object mergeExistingRecord(Class<?> clazzDao, Object beanDao, Class<?> clazzInfo, JSONObject json) 
             throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
-        // 查询现有记录
-        Object existingEntity = clazzDao.getMethod("findById", Object.class).invoke(beanDao, json.get("id"));
+        // 查询现有记录（findById 返回 Optional<T>，需要解包）
+        Object findResult = clazzDao.getMethod("findById", Object.class).invoke(beanDao, json.get("id"));
+        Object existingEntity = (findResult instanceof Optional) ? ((Optional<?>) findResult).orElse(null) : findResult;
         if (existingEntity == null) {
             throw BaseResponse.moreInfoError.error("记录不存在[id=" + json.get("id") + "]");
         }
-        
+
         // 将现有实体转换为 JSONObject
         JSONObject existingJson = FastJsonUtil.toJson(existingEntity);
         
@@ -298,7 +299,9 @@ public class CommonServiceImpl extends Base implements ICommonService {
             throw BaseResponse.moreInfoError.error("tblName 异常[" + tblName + "]: " + e.getMessage());
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
+            Throwable cause = (ex instanceof InvocationTargetException) ? ex.getCause() : ex;
+            String detail = (cause != null && cause.getMessage() != null) ? cause.getMessage() : String.valueOf(ex);
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + detail);
         }
     }
 
@@ -318,7 +321,9 @@ public class CommonServiceImpl extends Base implements ICommonService {
             return clazzDao.getMethod("saveAll", Iterable.class).invoke(beanDao, list);
         } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException ex) {
             LogUtil.error(logger, ex);
-            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
+            Throwable cause = (ex instanceof InvocationTargetException) ? ex.getCause() : ex;
+            String detail = (cause != null && cause.getMessage() != null) ? cause.getMessage() : String.valueOf(ex);
+            throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + detail);
         }
     }
 

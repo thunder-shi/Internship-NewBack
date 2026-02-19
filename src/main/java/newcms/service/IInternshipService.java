@@ -44,10 +44,11 @@ public interface IInternshipService {
 
     /**
      * 推进审核步骤
-     * @param requestJson
+     * @param node
      * @return 保存后的审核信息
      */
     Object auditProcess(JSONObject node);
+
 
     /**
      * 获取当前进行中的实习项目
