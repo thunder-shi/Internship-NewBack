@@ -220,9 +220,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
         boolean needsVerify  = verifyTypeId != null && verifyTypeId >= 2;
         // 更新 currentVerifyTypeId
-        Integer currentVerifyTypeId = needsVerify ? 2 : 1;
-        relJson.put("currentVerifyTypeId", currentVerifyTypeId);
-        iCommonService.saveOneRecord("RelProcessInternship", relJson);
+        // Integer currentVerifyTypeId = needsVerify ? 2 : 1;
+        // relJson.put("currentVerifyTypeId", currentVerifyTypeId);
+        // iCommonService.saveOneRecord("RelProcessInternship", relJson);
         // 计算审核人
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
         String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "";
@@ -235,10 +235,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         verifyProcess.setIsAudit(needsVerify ? -1 : 1);
         verifyProcess.setReason("");
         verifyProcess.setTableName(finalTableName);
-
         MainVerifyProcess saved = mainVerifyProcessDao.save(verifyProcess);
-        logger.info("流程 {} 激活成功，isAudit: {}, currentVerifyTypeId: {}",
-                relationId, saved.getIsAudit(), currentVerifyTypeId);
+        // logger.info("流程 {} 激活成功，isAudit: {}, currentVerifyTypeId: {}",
+        //         relationId, saved.getIsAudit(), currentVerifyTypeId);
         return saved;
     }
 
@@ -312,7 +311,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         if (Id == null) {
             return;
         }
-
         // 获取审核通过的记录
         Object verifyProcessObj = iCommonService.getOneRecordById("MainVerifyProcess", Id);
         if (verifyProcessObj == null) {

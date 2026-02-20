@@ -415,9 +415,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 for (JSONObject planMakeJson : planMakeRecords) {
                     Integer currentVerifyTypeId = planMakeJson.getInteger("currentVerifyTypeId");
                     Integer planVerifyTypeId = planMakeJson.getInteger("verifyTypeId");
-                    if (currentVerifyTypeId != null && planVerifyTypeId != null && currentVerifyTypeId > planVerifyTypeId) {
-                        shouldKeep = true;
-                        break;
+                    if (currentVerifyTypeId != null && planVerifyTypeId != null) {
+                        // 通过 verifyTypeId 查询 BaseVerifyType 获取 code，再从 Constant.VERIFY_LEVEL 获取值
+                        Integer planVerifyTypeValue = getVerifyLevelValue(planVerifyTypeId);
+                        if (planVerifyTypeValue != null && currentVerifyTypeId > planVerifyTypeValue) {
+                            shouldKeep = true;
+                            break;
+                        }
                     }
                 }
                 // 如果满足条件（不排除），则添加到结果中
@@ -428,5 +432,40 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         return result;
+    }
+
+    /**
+     * 根据 verifyTypeId 获取对应的 VERIFY_LEVEL 常量值
+     * @param verifyTypeId BaseVerifyType 的 ID
+     * @return VERIFY_LEVEL 常量值，如果未找到则返回 null
+     */
+    private Integer getVerifyLevelValue(Integer verifyTypeId) {
+        if (verifyTypeId == null) {
+            return null;
+        }
+        try {
+            // 通过 verifyTypeId 查询 BaseVerifyType 记录
+            Object verifyTypeObj = iCommonService.getOneRecordById("BaseVerifyType", verifyTypeId);
+            if (verifyTypeObj == null) {
+                return null;
+            }
+            JSONObject verifyTypeJson = FastJsonUtil.toJson(verifyTypeObj);
+            String code = verifyTypeJson.getString("code");
+            if (code == null || code.trim().isEmpty()) {
+                return null;
+            }
+            // 使用反射获取 VERIFY_LEVEL 类中对应字段的值
+            java.lang.reflect.Field field = Constant.VERIFY_LEVEL.class.getField(code.trim().toUpperCase());
+            if (field != null && field.getType() == int.class) {
+                return (Integer) field.get(null);
+            }
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            logger.debug("未找到 VERIFY_LEVEL 中对应的常量: {}", verifyTypeId);
+            return null;
+        } catch (Exception e) {
+            logger.warn("获取 VERIFY_LEVEL 值失败: {}", e.getMessage());
+            return null;
+        }
+        return null;
     }
 }
