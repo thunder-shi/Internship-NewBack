@@ -18,5 +18,5 @@ public class ViewMainInternshipPost extends NameRemarkInfo {
     private String postTypeName;
     private String internshipName;
     private String companyName;
-
+    private Integer companyId;
 }

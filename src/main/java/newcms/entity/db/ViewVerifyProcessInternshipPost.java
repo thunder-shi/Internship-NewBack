@@ -41,10 +41,11 @@ public class ViewVerifyProcessInternshipPost extends BaseInfo {
     // 来自 view_main_internship_post
     private String postName;
     private String postCode;
+    private String postId;
     private Integer allPersonNum;
     private Integer nowPersonNum;
     private String companyName;
-    
+    private Integer companyId;
     // 来自子查询 (verify_user_name)
     private String verifyUserName;
 }
