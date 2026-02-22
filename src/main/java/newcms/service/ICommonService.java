@@ -73,4 +73,14 @@ public interface ICommonService {
      * @return
      */
     Object deleteSomeRecords(String tblName, List<Integer> ids);
+
+    /**
+     * 根据查询条件逻辑删除多条记录
+     * @param tblName 表名
+     * @param searchKeys 查询条件
+     * @param repMap 查询操作符映射（如：LT, GT, EQ, LIKE, IN等）
+     * @param andor 查询条件AND/OR映射
+     * @return 删除的记录数量
+     */
+    Object deleteSomeRecords(String tblName, JSONObject searchKeys, Map<String, String> repMap, Map<String, Boolean> andor);
 }

@@ -36,7 +36,29 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Resource
     private RelInterMajorDao relInterMajorDao;
 
-    // ==================== 实习项目管理（无需审核） ====================
+    // ==================== 实习项目管理====================
+
+    @Override
+    public Object addNewInternship(JSONObject node) {
+        // (1) 在 MainInternship 实体增加一条记录
+        Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
+        JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
+        Integer internshipId = savedInternshipJson.getInteger("id");
+        Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
+        // 参数校验
+        if (internshipId == null || internshipTypeId == null) {
+            throw BaseResponse.moreInfoError.error("实习项目ID或实习类型ID不能为空");
+        }
+        // (2) 创建专业范围关联记录
+        createInternshipMajorRecords(internshipId, internshipTypeId);
+        // (3) 创建流程关联记录和第一条审核记录
+        createProcessInternshipRecords(internshipId, internshipTypeId);
+        // (4) 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
+        createFirstVerifyProcessRecord(internshipId);
+        return savedInternship;
+    }
+
+
 
     /**
      * 创建实习项目的流程关联记录
@@ -50,13 +72,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         @SuppressWarnings("unchecked")
         Page<Object> processTypePage = (Page<Object>) iCommonService.getSomeRecords("ViewRelProcessInternshipType", searchKeys, null, Sort.unsorted());
         List<Object> processTypeList = processTypePage.getContent();
-
         // (2) 在 RelProcessInternship 实体中增加若干条记录
         List<Object> processInternshipList = new ArrayList<>();
         for (Object processTypeObj : processTypeList) {
             JSONObject processTypeJson = FastJsonUtil.toJson(processTypeObj);
             JSONObject processInternshipJson = new JSONObject();
-            
             // internshipId 是当前实习项目的id
             processInternshipJson.put("internshipId", internshipId);
             // 其他属性直接带入 RelProcessInternshipType 中的对应值
@@ -72,7 +92,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if ("NO_VERIFY".equals(verifyTypeCode)) {
                 processInternshipJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
             } else {
-                processInternshipJson.put("currentVerifyTypeId", 2);
+                processInternshipJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);
             }
             processInternshipList.add(processInternshipJson);
         }
@@ -80,6 +100,42 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (!processInternshipList.isEmpty()) {
             iCommonService.saveSomeRecords("RelProcessInternship", processInternshipList);
         }
+    }
+
+    /**
+     * 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
+     * @param internshipId 实习项目ID
+     */
+    private void createFirstVerifyProcessRecord(Integer internshipId) {
+        // 2. 查找流程关联记录（取第一条，对应计划制定流程）
+        Object foundProcess = iVerifyProcessService.GetInternshipFoundProcess(internshipId);
+        JSONObject relJson = FastJsonUtil.toJson(foundProcess);
+        Integer relProcessId = relJson.getInteger("id");
+        Integer verifyFirstRoleId = relJson.getInteger("verifyFirstRoleId");
+        // 3. 创建审核记录 MainVerifyProcess
+        // 从 MainInternship 获取 createUserId
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) {
+            throw BaseResponse.moreInfoError.error("未找到实习项目记录");
+        }
+        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
+        Integer createUserId = internshipJson.getInteger("creatorId");
+        if (createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("creatorId 参数不能为空");
+        }
+        // 获取审核用户ID字符串
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+        // 创建审核记录
+        // relationId 使用当前的 internshipId（根据用户要求）
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", internshipId);
+        verifyJson.put("processId", relProcessId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("isAudit", -1);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", "MainInternship");
+        verifyJson.put("verifyUserId", verifyUserId);
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
     }
 
     /**
@@ -113,30 +169,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
     }
 
-    @Override
-    public Object addNewInternship(JSONObject node) {
-        // (1) 在 MainInternship 实体增加一条记录
-        Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
-        JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
-        Integer internshipId = savedInternshipJson.getInteger("id");
-        Integer internshipTypeId = savedInternshipJson.getInteger("internshipTypeId");
 
-        // 参数校验
-        if (internshipId == null || internshipTypeId == null) {
-            throw BaseResponse.moreInfoError.error("实习项目ID或实习类型ID不能为空");
-        }
-
-        // (2) 创建流程关联记录
-        createProcessInternshipRecords(internshipId, internshipTypeId);
-
-        // (3) 创建专业范围关联记录
-        createInternshipMajorRecords(internshipId, internshipTypeId);
-
-        return savedInternship;
-    }
 
     // ==================== 实习计划流程（需要审核） ====================
 
+    /*
     @Override
     public Object submitInternshipPlan(JSONObject requestJson) {
         if (requestJson == null) {
@@ -197,6 +234,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         return savedInternship;
     }
+    */
 
     @Override
     public Object auditProcess(JSONObject node) {
@@ -286,25 +324,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("实习项目ID列表不能为空");
         }
 
-        // (1) 检查所有id是否在审核流程中
-        for (Integer internshipId : internshipIds) {
-            if (internshipId == null) {
-                continue;
-            }
-            JSONObject searchKeys = new JSONObject();
-            searchKeys.put("internshipId", internshipId);
-            // 查询时需要考虑 isDeleted，所以使用默认的 getSomeRecords（会自动过滤 isDeleted=false）
-            @SuppressWarnings("unchecked")
-            Page<Object> verifyProcessPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "ViewVerifyProcessInternship", searchKeys, null, Sort.unsorted());
-            List<Object> verifyProcessList = verifyProcessPage.getContent();
+        // // (1) 检查所有id是否在审核流程中，这个不检查了，因为前端已经检查过了。
+        // for (Integer internshipId : internshipIds) {
+        //     if (internshipId == null) {
+        //         continue;
+        //     }
+        //     JSONObject searchKeys = new JSONObject();
+        //     searchKeys.put("internshipId", internshipId);
+        //     // 查询时需要考虑 isDeleted，所以使用默认的 getSomeRecords（会自动过滤 isDeleted=false）
+        //     @SuppressWarnings("unchecked")
+        //     Page<Object> verifyProcessPage = (Page<Object>) iCommonService.getSomeRecords(
+        //             "ViewVerifyProcessInternship", searchKeys, null, Sort.unsorted());
+        //     List<Object> verifyProcessList = verifyProcessPage.getContent();
 
-            // 如果存在审核流程记录，返回错误信息
-            if (verifyProcessList != null && !verifyProcessList.isEmpty()) {
-                throw BaseResponse.parameterInvalid.error("当前项目已经进入审核流程，无法删除");
-            }
-        }
-
+        //     // 如果存在审核流程记录，返回错误信息
+        //     if (verifyProcessList != null && !verifyProcessList.isEmpty()) {
+        //         throw BaseResponse.parameterInvalid.error("当前项目已经进入审核流程，无法删除");
+        //     }
+        // }
         // (2) 批量删除 MainInternship 中对应的记录（伪删除）
         // 过滤掉 null 值
         List<Integer> validIds = internshipIds.stream()
@@ -315,9 +352,23 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         // (3) 批量删除 RelProcessInternship 中所有 internshipId 是对应 Id 的记录（伪删除）
-        for (Integer internshipId : validIds) {
-            relProcessInternshipDao.deleteByInternshipId(internshipId);
-        }
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("internshipId", String.join(",", validIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.toList())));
+        Map<String, String> regMap = new HashMap<>();
+        regMap.put("internshipId", Constant.IN); // internshipId IN (列表)
+        iCommonService.deleteSomeRecords("RelProcessInternship", searchKeys, regMap, null);
+
+        // (4) 批量删除 MainVerifyProcess 中 relationId 在 validIds 集合且 tableName 是 "MainInternship" 的所有记录（伪删除）
+        JSONObject verifySearchKeys = new JSONObject();
+        verifySearchKeys.put("relationId", String.join(",", validIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.toList())));
+        verifySearchKeys.put("tableName", "MainInternship");
+        Map<String, String> verifyRegMap = new HashMap<>();
+        verifyRegMap.put("relationId", Constant.IN); // relationId IN (列表)
+        iCommonService.deleteSomeRecords("MainVerifyProcess", verifySearchKeys, verifyRegMap, null);
 
         return "删除成功";
     }

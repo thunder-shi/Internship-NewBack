@@ -45,12 +45,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Page<Object> relPage = (Page<Object>) iCommonService.getSomeRecords(
                 "ViewRelProcessInternship", searchKeys, null,
                 Sort.by(Sort.Direction.ASC, "theOrder"), 1, 1);
-        List<Object> relList = relPage.getContent();
-        
+        List<Object> relList = relPage.getContent();        
         if (relList == null || relList.isEmpty()) {
             throw BaseResponse.moreInfoError.error("未找到实习项目的流程配置，请先创建流程模板");
-        }
-        
+        }        
         return relList.get(0);
     }
 
@@ -210,10 +208,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         }
         String finalTableName = (tableName != null) ? tableName : "RelProcessInternship";
 
-        // 加载流程配置
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+        // 加载流程配置（使用 relationId，它是 RelProcessInternship 表的主键ID）
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
         if (relObj == null) {
-            logger.warn("activateProcess：未找到流程配置 {}", processId);
+            logger.warn("activateProcess：未找到流程配置 {}", relationId);
             return null;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);

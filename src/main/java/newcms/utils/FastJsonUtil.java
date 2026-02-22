@@ -15,6 +15,9 @@ import java.util.List;
 @Component
 public class FastJsonUtil extends JSONObject {
     private static String pattern;
+    
+    // 统一使用北京时间（Asia/Shanghai）
+    private static final ZoneId BEIJING_ZONE = ZoneId.of("Asia/Shanghai");
 
     public String getPattern() {
         return pattern;
@@ -29,7 +32,7 @@ public class FastJsonUtil extends JSONObject {
         ContextValueFilter valueFilter = (beanContext, object, key, value) -> {
             if(value instanceof Date){
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
-                return ((Date) value).toInstant().atZone(ZoneId.systemDefault()).format(formatter);
+                return ((Date) value).toInstant().atZone(BEIJING_ZONE).format(formatter);
             }
             return value;
         };

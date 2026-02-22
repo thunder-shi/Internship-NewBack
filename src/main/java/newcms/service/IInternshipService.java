@@ -31,14 +31,8 @@ public interface IInternshipService {
 
     // ==================== 实习计划流程（需要审核） ====================
 
-    /**
-     * 提交实习计划（创建审核记录）
-     * 用于计划制定流程的提交审核，会创建 MainVerifyProcess 审核记录
-     *
-     * @param requestJson 前端传入的 JSON，包含 node（实习项目数据）和 creatorId
-     * @return 保存后的实习项目实体
-     */
-    Object submitInternshipPlan(JSONObject requestJson);
+    // 已注释：提交实习计划（创建审核记录）方法
+    // Object submitInternshipPlan(JSONObject requestJson);
 
     // ========================= 推进审核步骤 =========================
 

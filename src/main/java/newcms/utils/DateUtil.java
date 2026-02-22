@@ -12,11 +12,14 @@ import java.util.Date;
  */
 @Component
 public class DateUtil {
+    
+    // 统一使用北京时间（Asia/Shanghai）
+    private static final ZoneId BEIJING_ZONE = ZoneId.of("Asia/Shanghai");
 
     public static Date toDate(String dateStr, String pattern) throws DateTimeParseException {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
         LocalDateTime localDateTime = LocalDateTime.parse(dateStr, formatter);
-        return Date.from(localDateTime.atZone(ZoneId.systemDefault()).toInstant());
+        return Date.from(localDateTime.atZone(BEIJING_ZONE).toInstant());
     }
 
     public static String toString(long timeMillis, String pattern) {
@@ -28,7 +31,7 @@ public class DateUtil {
             date = new Date();
         }
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
-        return date.toInstant().atZone(ZoneId.systemDefault()).format(formatter);
+        return date.toInstant().atZone(BEIJING_ZONE).format(formatter);
     }
 
     /**
@@ -36,7 +39,7 @@ public class DateUtil {
      * @return
      */
     public static Integer year(Date date) {
-        return date.toInstant().atZone(ZoneId.systemDefault()).getYear();
+        return date.toInstant().atZone(BEIJING_ZONE).getYear();
     }
 
     /**
@@ -46,7 +49,7 @@ public class DateUtil {
      */
     public static String format(Date date, String format) {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern(format);
-        return date.toInstant().atZone(ZoneId.systemDefault()).format(formatter);
+        return date.toInstant().atZone(BEIJING_ZONE).format(formatter);
     }
 
     /**

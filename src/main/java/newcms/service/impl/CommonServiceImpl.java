@@ -397,4 +397,91 @@ public class CommonServiceImpl extends Base implements ICommonService {
             throw BaseResponse.moreInfoError.error("反射处理失败[" + tblName + "]: " + ex.getMessage());
         }
     }
+
+    /**
+     * 根据查询条件逻辑删除多条记录
+     * @param tblName 表名
+     * @param searchKeys 查询条件
+     * @param repMap 查询操作符映射（如：LT, GT, EQ, LIKE, IN等）
+     * @param andor 查询条件AND/OR映射
+     * @return 删除的记录数量
+     */
+    @Override
+    @SuppressWarnings("null")
+    public Object deleteSomeRecords(String tblName, JSONObject searchKeys, Map<String, String> repMap, Map<String, Boolean> andor) {
+        // 处理查询条件，过滤空值（参考 getSomeRecords 的实现）
+        if (searchKeys != null) {
+            JSONObject searchKey = new JSONObject();
+            searchKey.putAll(searchKeys);
+            for (Map.Entry<String, Object> entry : searchKey.entrySet()) {
+                if (ObjectUtils.isEmpty(entry.getValue())) {
+                    if (repMap != null) {
+                        repMap.remove(entry.getKey());
+                    }
+                    searchKeys.remove(entry.getKey());
+                }
+            }
+        } else {
+            searchKeys = new JSONObject();
+        }
+
+        try {
+            Class<?> clazzDao = DaoClassUtil.getDaoClass(tblName);
+            Class<?> clazzInfo = Class.forName(Base.entityPackage + tblName);
+            Object beanDao = applicationContext.getBean(tblName.substring(0, 1).toLowerCase() + tblName.substring(1) + "Dao", clazzDao);
+
+            // 使用 Specification 查询符合条件的记录（查询所有，不限制数量）
+            Object pageResult = clazzDao.getMethod("findAll", Specification.class, Pageable.class).invoke(
+                    beanDao, 
+                    super.getSpecification(searchKeys, repMap, andor, clazzInfo), 
+                    PageRequest.of(0, 10000, Sort.unsorted())
+            );
+
+            // 获取查询结果列表
+            List<?> contentList = (List<?>) pageResult.getClass().getMethod("getContent").invoke(pageResult);
+            
+            if (contentList == null || contentList.isEmpty()) {
+                return 0; // 没有找到符合条件的记录
+            }
+
+            // 遍历结果，设置 isDeleted = true，更新 updateTime
+            List<Object> updatedEntities = new ArrayList<>();
+            for (Object entity : contentList) {
+                // 将实体转换为 JSONObject
+                JSONObject entityJson = FastJsonUtil.toJson(entity);
+                // 设置 isDeleted = true（逻辑删除）
+                entityJson.put("isDeleted", true);
+                // 更新 updateTime（使用 Date 对象）
+                entityJson.put("updateTime", Date.from(Instant.now()));
+                // 转换回实体对象
+                Object updatedEntity = entityJson.toJavaObject(clazzInfo);
+                updatedEntities.add(updatedEntity);
+            }
+
+            // 批量保存更新后的记录
+            clazzDao.getMethod("saveAll", Iterable.class).invoke(beanDao, updatedEntities);
+
+            return updatedEntities.size(); // 返回删除的记录数量
+        } catch (Exception ex) {
+            LogUtil.error(logger, ex);
+            
+            // 获取详细的错误信息
+            String errorMsg = ex.getMessage();
+            String errorType = ex.getClass().getSimpleName();
+            
+            // 如果是 InvocationTargetException，获取底层异常的原因
+            if (ex instanceof InvocationTargetException) {
+                Throwable cause = ((InvocationTargetException) ex).getTargetException();
+                if (cause != null) {
+                    errorType = cause.getClass().getSimpleName();
+                    errorMsg = cause.getMessage();
+                    if (cause.getCause() != null) {
+                        errorMsg += " (原因: " + cause.getCause().getMessage() + ")";
+                    }
+                }
+            }
+            
+            throw BaseResponse.moreInfoError.error("删除出错[" + tblName + "]: " + errorType + " - " + (errorMsg != null ? errorMsg : "未知错误"));
+        }
+    }
 }

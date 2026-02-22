@@ -35,7 +35,7 @@ public class InternshipProcessController {
 
     // ==================== 实习项目管理（无需审核） ====================
 
-    @Operation(summary = "新增实习项目", description = "创建实习项目并自动配置流程，无需审核")
+    @Operation(summary = "新增实习项目", description = "创建实习项目并自动配置流程")
     @PostMapping(value = "/addNewInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object addNewInternship(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("addNewInternship", requestJson);
@@ -51,15 +51,15 @@ public class InternshipProcessController {
 
     // ==================== 实习计划流程（需要审核） ====================
 
-    @Operation(summary = "提交实习计划", description = "提交计划制定流程，创建审核记录")
-    @PostMapping(value = "/submitInternshipPlan", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Object submitInternshipPlan(@RequestBody JSONObject requestJson) {
-        LogUtil.loggerRecord("submitInternshipPlan", requestJson);
-        if (requestJson == null) {
-            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
-        }
-        return BaseResponse.ok(iInternshipService.submitInternshipPlan(requestJson));
-    }
+    // @Operation(summary = "提交实习计划", description = "提交计划制定流程，创建审核记录")
+    // @PostMapping(value = "/submitInternshipPlan", consumes = MediaType.APPLICATION_JSON_VALUE)
+    // public Object submitInternshipPlan(@RequestBody JSONObject requestJson) {
+    //     LogUtil.loggerRecord("submitInternshipPlan", requestJson);
+    //     if (requestJson == null) {
+    //         throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+    //     }
+    //     return BaseResponse.ok(iInternshipService.submitInternshipPlan(requestJson));
+    // }
 
     @Operation(summary = "删除实习项目", description = "删除实习项目及其关联的流程配置")
     @PostMapping(value = "/deleteNewInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
