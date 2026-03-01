@@ -1,10 +1,10 @@
 package newcms.repository.db;
 
-import jdk.jfr.Registered;
+import org.springframework.stereotype.Repository;
 import newcms.entity.db.RelStuInternship;
 import newcms.repository.base.BaseDao;
 
-@Registered
-public interface RelStuInternshipDao extends BaseDao<RelStuInternship,Integer> {
+@Repository
+public interface RelStuInternshipDao extends BaseDao<RelStuInternship, Integer> {
 
 }

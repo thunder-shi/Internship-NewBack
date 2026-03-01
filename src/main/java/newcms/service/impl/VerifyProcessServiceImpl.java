@@ -3,8 +3,8 @@ package newcms.service.impl;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.entity.db.MainVerifyProcess;
-import newcms.repository.db.MainVerifyProcessDao;
 import newcms.service.ICommonService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -29,19 +29,22 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     @Resource
     private ICommonService iCommonService;
 
-    @Resource
-    private MainVerifyProcessDao mainVerifyProcessDao;
-
     @Override
     @SuppressWarnings("unchecked")
-    public Object GetInternshipFoundProcess(Integer internshipId) {
+    public Object GetInternshipProcess(Integer internshipId, String processTypeCode) {
         if (internshipId == null) {
             throw BaseResponse.parameterInvalid.error("实习项目ID不能为空");
+        }
+
+        // 如果 processTypeCode 为空，则使用默认值
+        if (processTypeCode == null || processTypeCode.trim().isEmpty()) {
+            processTypeCode = Constant.PROCESS_TYPE.INTERNSHIP_PLAN_MAKE;
         }
 
         // 查找流程关联记录（取第一条）
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("internshipId", internshipId);
+        searchKeys.put("processTypeCode", processTypeCode);
         Page<Object> relPage = (Page<Object>) iCommonService.getSomeRecords(
                 "ViewRelProcessInternship", searchKeys, null,
                 Sort.by(Sort.Direction.ASC, "theOrder"), 1, 1);
@@ -119,29 +122,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         return verifyUserIds.stream()
                 .map(String::valueOf)
                 .collect(Collectors.joining("|"));
-    }
-
-    @Override
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    @SuppressWarnings("unchecked")
-    public int refreshPendingVerifyUsers() {
-        // 查询所有待审核记录（isAudit = 0）
-        JSONObject searchKeys = new JSONObject();
-        searchKeys.put("isAudit", 0);
-        Page<MainVerifyProcess> pendingPage = (Page<MainVerifyProcess>) iCommonService.getSomeRecords(
-                "MainVerifyProcess", searchKeys, null, Sort.unsorted());
-        List<MainVerifyProcess> pendingList = pendingPage.getContent();
-
-        int updatedCount = 0;
-        for (MainVerifyProcess verifyProcess : pendingList) {
-            boolean updated = refreshSingleVerifyProcess(verifyProcess);
-            if (updated) {
-                updatedCount++;
-            }
-        }
-
-        logger.info("刷新待审核记录完成，共更新 {} 条记录", updatedCount);
-        return updatedCount;
     }
 
     @Override
@@ -225,15 +205,15 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
         String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "";
         // 创建审核记录
-        MainVerifyProcess verifyProcess = new MainVerifyProcess();
-        verifyProcess.setRelationId(relationId);
-        verifyProcess.setProcessId(processId);
-        verifyProcess.setCreateUserId(createUserId);
-        verifyProcess.setVerifyUserId(verifyUserId);
-        verifyProcess.setIsAudit(needsVerify ? -1 : 1);
-        verifyProcess.setReason("");
-        verifyProcess.setTableName(finalTableName);
-        MainVerifyProcess saved = mainVerifyProcessDao.save(verifyProcess);
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", processId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("verifyUserId", verifyUserId);
+        verifyJson.put("isAudit", needsVerify ? -1 : 1);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", finalTableName);
+        Object saved = iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
         // logger.info("流程 {} 激活成功，isAudit: {}, currentVerifyTypeId: {}",
         //         relationId, saved.getIsAudit(), currentVerifyTypeId);
         return saved;
@@ -269,8 +249,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
             // 如果有变化则更新
             if (!newVerifyUserId.equals(oldVerifyUserId)) {
-                verifyProcess.setVerifyUserId(newVerifyUserId);
-                mainVerifyProcessDao.save(verifyProcess);
+                JSONObject updateJson = new JSONObject();
+                updateJson.put("id", verifyProcess.getId());
+                updateJson.put("verifyUserId", newVerifyUserId);
+                iCommonService.saveOneRecord("MainVerifyProcess", updateJson);
                 logger.debug("更新审核记录 {} 的 verifyUserId: {} -> {}",
                         verifyProcess.getId(), oldVerifyUserId, newVerifyUserId);
                 return true;
@@ -304,6 +286,35 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         return null;
     }
 
+    /**
+     * 审核通过后的回调处理
+     * <p>
+     * 当审核记录被标记为通过（isAudit = 1）时调用此方法，用于推进多级审核流程。
+     * </p>
+     * <p>
+     * 功能说明：
+     * <ul>
+     *   <li>获取审核通过的记录和对应的流程配置</li>
+     *   <li>判断是否还有下一级审核（通过比较 currentVerifyTypeId 和 verifyTypeId）</li>
+     *   <li>如果还有下一级审核：
+     *     <ul>
+     *       <li>更新 RelProcessInternship 的 currentVerifyTypeId 为下一级</li>
+     *       <li>根据下一级审核级别获取对应的审核角色ID</li>
+     *       <li>计算下一级的审核用户ID列表</li>
+     *       <li>创建新的 MainVerifyProcess 记录，状态为待审核（isAudit = 0）</li>
+     *     </ul>
+     *   </li>
+     *   <li>如果审核全部完成：
+     *     <ul>
+     *       <li>更新 RelProcessInternship 的 currentVerifyTypeId 为 verifyTypeId + 1</li>
+     *       <li>便于后续通过 currentVerifyTypeId > verifyTypeId 判断审核是否结束</li>
+     *     </ul>
+     *   </li>
+     * </ul>
+     * </p>
+     * 
+     * @param Id 审核通过的 MainVerifyProcess 记录ID
+     */
     @Override
     public void onVerifyProcessApproved(Integer Id) {
         if (Id == null) {
@@ -349,18 +360,20 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             Integer nextVerifyRoleId = getVerifyRoleIdByLevel(relJson, nextLevel);
             String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId);
             // 创建下一级审核记录
-            MainVerifyProcess nextVerifyProcess = new MainVerifyProcess();
-            nextVerifyProcess.setRelationId(relationId);
-            nextVerifyProcess.setProcessId(processId);
-            nextVerifyProcess.setCreateUserId(Integer.parseInt(verifyUserId.split("\\|")[0]));
-            nextVerifyProcess.setVerifyUserId(nextVerifyUserId);
-            nextVerifyProcess.setIsAudit(0); // 待审核
-            nextVerifyProcess.setReason("");
-            nextVerifyProcess.setTableName(tableName);
-            mainVerifyProcessDao.save(nextVerifyProcess);
+            JSONObject nextVerifyJson = new JSONObject();
+            nextVerifyJson.put("relationId", relationId);
+            nextVerifyJson.put("processId", processId);
+            nextVerifyJson.put("createUserId", Integer.parseInt(verifyUserId.split("\\|")[0]));
+            nextVerifyJson.put("verifyUserId", nextVerifyUserId);
+            nextVerifyJson.put("isAudit", 0); // 待审核
+            nextVerifyJson.put("reason", "");
+            nextVerifyJson.put("tableName", tableName);
+            Object savedNextVerify = iCommonService.saveOneRecord("MainVerifyProcess", nextVerifyJson);
+            JSONObject savedNextVerifyJson = FastJsonUtil.toJson(savedNextVerify);
+            Integer nextVerifyId = savedNextVerifyJson.getInteger("id");
 
             logger.info("审核记录 {} 通过，流程 {} 进入下一级审核 {}，创建新审核记录 {}",
-                    Id, relationId, nextLevel, nextVerifyProcess.getId());
+                    Id, relationId, nextLevel, nextVerifyId);
         } else {
             // 审核全部完成，将 currentVerifyTypeId 更新为 nextLevel（verifyTypeId + 1）
             // 方便后续通过 currentVerifyTypeId > verifyTypeId 直接判断审核是否结束
@@ -379,7 +392,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
      * @param verifyLevel 审核级别（2-6）
      * @return 对应级别的审核角色ID
      */
-    private Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel) {
+    @Override
+    public Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel) {
         if (relJson == null || verifyLevel == null) {
             return null;
         }

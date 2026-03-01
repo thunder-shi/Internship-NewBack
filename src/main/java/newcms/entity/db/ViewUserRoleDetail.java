@@ -12,7 +12,6 @@ import jakarta.persistence.Entity;
 public class ViewUserRoleDetail extends BaseInfo {
     private Integer roleId;
     private Integer userId;
-    private Integer isAudit;
     private String roleName;
     private String roleCode;
     private String userName;

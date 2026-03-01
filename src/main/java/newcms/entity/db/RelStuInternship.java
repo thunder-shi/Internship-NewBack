@@ -4,25 +4,24 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.AuditInfo;
+import newcms.entity.base.BaseInfo;
 
-
+/**
+ * 学生实习岗位选择表
+ */
 @Getter
 @Setter
 @Entity
-public class RelStuInternship extends AuditInfo {
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（学生）'")
+public class RelStuInternship extends BaseInfo {
+    @Column(nullable = false, columnDefinition = "int unsigned comment '外键，关联表1（学生）'")
     private Integer studentId;
 
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表9（岗位）'")
-    private Integer postId;
+    @Column(nullable = false, columnDefinition = "int unsigned comment '外键，关联表9（实习项目）'")
+    private Integer internshipPostId;
 
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表16（实习）'")
-    private Integer internshipId;
+    @Column(nullable = false, columnDefinition = "int unsigned default '1' comment '志愿轮数（第1轮，第2轮）'")
+    private Integer round = 1;
 
-    @Column(columnDefinition = "int unsigned not null default '1' comment '志愿轮数（第1轮，第2轮）'")
-    private Integer round;
-
-    @Column(columnDefinition = "int unsigned not null default '1' comment '志愿排序（第1志愿，第2志愿）'")
-    private Integer sort;
+    @Column(nullable = false, columnDefinition = "int unsigned default '1' comment '志愿排序（第1志愿，第2志愿）'")
+    private Integer sort = 1;
 }

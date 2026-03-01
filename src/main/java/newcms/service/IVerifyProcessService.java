@@ -9,11 +9,12 @@ import org.springframework.stereotype.Service;
 @Service
 public interface IVerifyProcessService {
     /**
-     * 根据实习项目ID查找流程关联记录（取第一条）
+     * 根据实习项目ID和流程类型代码查找流程关联记录（取第一条）
      * @param internshipId 实习项目ID
+     * @param processTypeCode 流程类型代码，如果为null则默认为INTERNSHIP_PLAN_MAKE
      * @return 找到的流程关联记录对象
      */
-    Object GetInternshipFoundProcess(Integer internshipId);
+    Object GetInternshipProcess(Integer internshipId, String processTypeCode);
 
     /**
      * 根据审核角色ID和当前用户ID获取审核用户ID字符串
@@ -22,15 +23,6 @@ public interface IVerifyProcessService {
      * @return 审核用户ID字符串，用竖线分隔（格式：12|14|17）
      */
     String GetVerifyUserId(Integer verifyRoleId, Integer createUserId);
-
-    /**
-     * 刷新所有待审核记录的审核用户ID
-     * 当用户角色或部门发生变更时调用此方法
-     * 会重新计算所有 isAudit=0 的待审核记录的 verifyUserId
-     *
-     * @return 更新的记录数量
-     */
-    int refreshPendingVerifyUsers();
 
     /**
      * 刷新指定用户相关的待审核记录
@@ -60,4 +52,13 @@ public interface IVerifyProcessService {
      * @param verifyProcessId 审核通过的记录ID
      */
     void onVerifyProcessApproved(Integer verifyProcessId);
+
+    /**
+     * 根据审核级别从流程记录JSON中获取对应的审核角色ID
+     *
+     * @param relJson 流程关联记录JSON
+     * @param verifyLevel 审核级别（2-6）
+     * @return 对应级别的审核角色ID
+     */
+    Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel);
 }

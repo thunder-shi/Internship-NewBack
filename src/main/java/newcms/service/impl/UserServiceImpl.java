@@ -379,8 +379,6 @@ public Object getLoginUser(Date date, String userAgent) {
             RelUserRole userRoleRel = new RelUserRole();
             userRoleRel.setRoleId(integer);
             userRoleRel.setUserId(userId);
-            // 设置审核状态为通过，否则用户无法登录
-            userRoleRel.setIsAudit(AUDIT_STATUS.PASS);
             userRoleRels.add(userRoleRel);
         });
         return tblUserRoleRelDao.saveAll(userRoleRels);
@@ -626,7 +624,6 @@ public Object getLoginUser(Date date, String userAgent) {
                     RelUserRole userRoleRel = new RelUserRole();
                     userRoleRel.setRoleId((Integer)roleIdSet.toArray()[i]);
                     userRoleRel.setUserId(Integer.valueOf(userId));
-                    userRoleRel.setIsAudit(AUDIT_STATUS.PASS);
                     userRoleRels.add(userRoleRel);
                 }
             }
