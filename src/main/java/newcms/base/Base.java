@@ -136,11 +136,17 @@ public class Base extends Constant {
                 if ((!andor.containsKey(field.getName()) && and) || (andor.containsKey(field.getName()) && andor.get(field.getName()).equals(and))) {
                     //首先判断in
                     if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.IN)) {
-                        list.add(root.get(field.getName()).in(Arrays.stream(searchKeys.getString(field.getName()).split(",")).toArray()));
+                        String valueStr = searchKeys.getString(field.getName());
+                        // 支持逗号和管道符两种分隔符：如果包含 | 就用 | 分割，否则用 , 分割
+                        String delimiter = valueStr.contains("|") ? "\\|" : ",";
+                        list.add(root.get(field.getName()).in(Arrays.stream(valueStr.split(delimiter)).toArray()));
                     }
                     //NOT_IN
                     else if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.NOT_IN)) {
-                        list.add(criteriaBuilder.not(root.get(field.getName()).in(Arrays.stream(searchKeys.getString(field.getName()).split(",")).toArray())));
+                        String valueStr = searchKeys.getString(field.getName());
+                        // 支持逗号和管道符两种分隔符：如果包含 | 就用 | 分割，否则用 , 分割
+                        String delimiter = valueStr.contains("|") ? "\\|" : ",";
+                        list.add(criteriaBuilder.not(root.get(field.getName()).in(Arrays.stream(valueStr.split(delimiter)).toArray())));
                     } else {
                         switch (field.getType().getName()) {
                             case "java.lang.String":

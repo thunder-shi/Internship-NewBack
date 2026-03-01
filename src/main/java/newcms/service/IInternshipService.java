@@ -44,11 +44,11 @@ public interface IInternshipService {
     Object auditProcess(JSONObject node);
 
 
-    /**
-     * 获取当前进行中的实习项目
-     * 根据流程类型代码查询当前时间范围内的实习项目
-     * @param processTypeCode 流程类型代码
-     * @return 符合条件的实习项目列表
-     */
-    Object getNowInternship(String processTypeCode);
+    // /**
+    //  * 获取当前进行中的实习项目
+    //  * 根据流程类型代码查询当前时间范围内的实习项目
+    //  * @param processTypeCode 流程类型代码
+    //  * @return 符合条件的实习项目列表
+    //  */
+    // Object getNowInternship(String processTypeCode);
 }

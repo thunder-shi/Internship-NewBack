@@ -45,10 +45,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Page<Object> relPage = (Page<Object>) iCommonService.getSomeRecords(
                 "ViewRelProcessInternship", searchKeys, null,
                 Sort.by(Sort.Direction.ASC, "theOrder"), 1, 1);
-        List<Object> relList = relPage.getContent();        
+        List<Object> relList = relPage.getContent();
         if (relList == null || relList.isEmpty()) {
             throw BaseResponse.moreInfoError.error("未找到实习项目的流程配置，请先创建流程模板");
-        }        
+        }
         return relList.get(0);
     }
 
