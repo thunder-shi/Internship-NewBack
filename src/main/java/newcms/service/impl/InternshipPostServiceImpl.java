@@ -29,9 +29,12 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternship";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
     private static final String TABLE_MAIN_INTERNSHIP_POST = "MainInternshipPost";
+    private static final String VIEW_VERIFY_PROCESS_REL_STU_INTERNSHIP = "ViewVerifyProcessRelStuInternship";
 
     @Override
     public Object stuSelPost(Integer studentId, Integer oldPostId, Integer newPostId) {
+        Integer finalRelStuInternshipId = null;
+        
         if (oldPostId != 0 && newPostId == 0) {
             // 情况一：取消岗位选择
             JSONObject recordA = findRelStuInternshipRecord(studentId, oldPostId);
@@ -40,21 +43,27 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             }
             Integer recordAId = recordA.getInteger("id");
             cancelPostSelection(recordAId, oldPostId);
+            // 取消选择后，返回 null
+            return null;
         } else if (oldPostId != 0 && newPostId != 0) {
             // 情况二：更换岗位
             JSONObject recordA = findRelStuInternshipRecord(studentId, oldPostId);
             if (recordA == null) {
                 throw BaseResponse.moreInfoError.error("未找到对应的学生实习岗位选择记录");
             }
+            Integer recordAId = recordA.getInteger("id");
             changePost(recordA, oldPostId, newPostId);
+            finalRelStuInternshipId = recordAId;
         } else if (oldPostId == 0 && newPostId != 0) {
             // 情况三：第一次选择岗位
-            selectPostFirstTime(studentId, newPostId);
+            JSONObject recordA = selectPostFirstTime(studentId, newPostId);
+            finalRelStuInternshipId = recordA.getInteger("id");
         } else {
             throw BaseResponse.parameterInvalid.error("参数错误：oldPostId 和 newPostId 不能同时为 0");
         }
 
-        return "操作成功";
+        // 查询并返回 ViewVerifyProcessRelStuInternship 完整实体
+        return findViewVerifyProcessRelStuInternship(finalRelStuInternshipId);
     }
 
     /**
@@ -211,8 +220,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
     /**
      * 第一次选择岗位
+     * @return 创建的 RelStuInternship 记录
      */
-    private void selectPostFirstTime(Integer studentId, Integer newPostId) {
+    private JSONObject selectPostFirstTime(Integer studentId, Integer newPostId) {
         // 1. 新增 RelStuInternship 记录
         JSONObject newRelJson = new JSONObject();
         newRelJson.put("studentId", studentId);
@@ -245,6 +255,8 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
         // 3. 创建 MainVerifyProcess 记录
         createMainVerifyProcessForFirstSelection(recordAId, internshipId, studentId);
+        
+        return recordA;
     }
 
     /**
@@ -280,5 +292,29 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         verifyJson.put("reason", "");
         verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
         iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+    }
+
+    /**
+     * 查询 ViewVerifyProcessRelStuInternship 视图，根据 relationId 找到对应记录
+     */
+    private Object findViewVerifyProcessRelStuInternship(Integer relationId) {
+        if (relationId == null) {
+            return null;
+        }
+
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("relationId", relationId);
+        searchKeys.put("tableName", TABLE_REL_STU_INTERNSHIP);
+
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                VIEW_VERIFY_PROCESS_REL_STU_INTERNSHIP, searchKeys, null, Sort.unsorted(), 1, 1);
+
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+
+        return content.get(0);
     }
 }

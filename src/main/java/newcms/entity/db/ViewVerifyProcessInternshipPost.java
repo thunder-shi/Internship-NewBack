@@ -39,9 +39,9 @@ public class ViewVerifyProcessInternshipPost extends BaseInfo {
     private String createUserName;
     
     // 来自 view_main_internship_post
-    private String postName;
-    private String postCode;
-    private String postId;
+    private String internshipPostName;
+    private String internshipPostCode;
+    private String internshipPostId;
     private Integer allPersonNum;
     private Integer nowPersonNum;
     private String companyName;
