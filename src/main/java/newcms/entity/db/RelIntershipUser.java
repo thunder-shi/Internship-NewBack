@@ -7,19 +7,17 @@ import lombok.Setter;
 import newcms.entity.base.NameRemarkInfo;
 
 /**
- * 教师与学生实习关联表
+ * 实习与用户关联表
  */
 @Getter
 @Setter
 @Entity
-public class RelTeacherStudent extends NameRemarkInfo {
-
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（教师）'")
-    private Integer teacherId;
+public class RelIntershipUser extends NameRemarkInfo {
 
     @Column(columnDefinition = "int unsigned not null comment '外键，关联表16（实习）'")
     private Integer internshipId;
 
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1 ")
-    private Integer stuId;
+    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（用户）'")
+    private Integer userId;
 }
+
