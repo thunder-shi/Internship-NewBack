@@ -20,6 +20,6 @@ public class RelTeacherStudent extends NameRemarkInfo {
     @Column(columnDefinition = "int unsigned not null comment '外键，关联表16（实习）'")
     private Integer internshipId;
 
-    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1 ")
+    @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（学生）'")
     private Integer stuId;
 }

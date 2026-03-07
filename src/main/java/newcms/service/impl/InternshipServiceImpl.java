@@ -186,7 +186,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
-     * 审核退回后，在相同审核级别新建一条 isAudit=-1 的记录，等待用户重新提交。
+     * 审核退回后，回退 currentVerifyTypeId 并新建一条 isAudit=-1 的记录，等待用户重新提交。
      * 用户重新提交时只需将该记录的 isAudit 改为 0（通过 auditProcess 接口即可），
      * 无需专门的 resubmit 接口。
      */
@@ -204,20 +204,28 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Integer processId   = verifyProcessJson.getInteger("processId");
         String  tableName   = verifyProcessJson.getString("tableName");
 
-        // 2. 读取流程配置，获取当前审核级别
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", relationId);
+        // 2. 读取流程配置，获取当前审核级别（使用 processId 查 RelProcessInternship）
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
-            logger.warn("退回后新建记录失败：未找到流程配置 {}", relationId);
+            logger.warn("退回后新建记录失败：未找到流程配置 {}", processId);
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
         Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
 
-        // 3. 重新计算该级别的审核人（刷新最新角色/部门状态）
+        // 3. 退回时 currentVerifyTypeId - 1，回退到上一级审核
+        //    但不低于 2（第一级审核的初始值），第一级退回时保持原级别
+        if (currentVerifyTypeId != null && currentVerifyTypeId > 2) {
+            currentVerifyTypeId -= 1;
+            relJson.put("currentVerifyTypeId", currentVerifyTypeId);
+            iCommonService.saveOneRecord("RelProcessInternship", relJson);
+        }
+
+        // 4. 重新计算回退后级别的审核人
         Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
 
-        // 4. 新建待提交记录（isAudit=-1），级别与退回时相同，无需修改 currentVerifyTypeId
+        // 5. 新建待提交记录（isAudit=-1）
         JSONObject newVerifyJson = new JSONObject();
         newVerifyJson.put("relationId", relationId);
         newVerifyJson.put("processId", processId);
