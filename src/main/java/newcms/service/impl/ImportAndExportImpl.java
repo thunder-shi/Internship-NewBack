@@ -495,10 +495,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "学院名称*", "班级名称*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份");
-                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份");
+                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
-                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 break;
         }
         //给除表头外 50行单元格非必填项设置默认值（空字符串）
@@ -650,7 +650,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
                 
-                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 学院名称, 班级名称, 身份类别, 工号, 专业名称, 入学年份, 毕业年份
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业名称, 入学年份, 毕业年份
                 String name = getCellStringValue(row.getCell(0));
                 String sex = getCellStringValue(row.getCell(1));
                 String phone = getCellStringValue(row.getCell(2));
@@ -662,25 +662,22 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 String address = getCellStringValue(row.getCell(8));
                 String postalCode = getCellStringValue(row.getCell(9));
                 String nickName = getCellStringValue(row.getCell(10));
-                String collegeName = getCellStringValue(row.getCell(11));
-                String className = getCellStringValue(row.getCell(12));
-                String jobName = getCellStringValue(row.getCell(13));
-                String workId = getCellStringValue(row.getCell(14));
-                String majorName = getCellStringValue(row.getCell(15));
+                String departmentCode = getCellStringValue(row.getCell(11));
+                String jobName = getCellStringValue(row.getCell(12));
+                String workId = getCellStringValue(row.getCell(13));
+                String majorName = getCellStringValue(row.getCell(14));
                 // 入学年份和毕业年份（BaseUser实体中暂无这些字段，保留读取以保持与模板一致）
                 @SuppressWarnings("unused")
-                String startYearStr = getCellStringValue(row.getCell(16));
+                String startYearStr = getCellStringValue(row.getCell(15));
                 @SuppressWarnings("unused")
-                String endYearStr = getCellStringValue(row.getCell(17));
+                String endYearStr = getCellStringValue(row.getCell(16));
                 
                 // 跳过空行（姓名为空则跳过）
                 if (name.isEmpty()) continue;
                 
                 // 验证必填字段：departmentId、majorId、jobId 不能为空
-                // 检查学院名称是否为空
-                if (collegeName.isEmpty()) continue;
-                // 检查班级名称是否为空
-                if (className.isEmpty()) continue;
+                // 检查部门编码是否为空
+                if (departmentCode.isEmpty()) continue;
                 // 检查身份类别是否为空
                 if (jobName.isEmpty()) continue;
                 // 检查专业名称是否为空
@@ -709,47 +706,17 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (!nickName.isEmpty()) data.put("nickName", nickName);
                 if (!workId.isEmpty()) data.put("workId", workId);
                 
-                // 通过学院名称和班级名称查找部门ID（必填）
-                // 1. 通过学院名称查找学院实体（唯一）
-                // 2. 通过班级名称查找班级实体集合（可能有重复）
-                // 3. 在班级集合中找到parentId等于学院id的班级
-                // 4. 使用该班级的id作为departmentId
+                // 通过部门编码查找部门ID（必填）
                 Integer departmentId = null;
                 try {
-                    // 查找学院实体（应该唯一）
-                    List<BaseDepartment> collegeList = baseDepartmentDao.findByNameAndIsDeletedFalse(collegeName);
-                    if (collegeList == null || collegeList.isEmpty()) {
-                        logger.warn("未找到学院名称为 {} 的记录，跳过该行数据", collegeName);
+                    BaseDepartment department = (BaseDepartment) iCommonService.getOneRecordByCode("BaseDepartment", departmentCode, false);
+                    if (department == null) {
+                        logger.warn("未找到部门编码为 {} 的记录，跳过该行数据", departmentCode);
                         continue;
                     }
-                    if (collegeList.size() > 1) {
-                        logger.warn("学院名称 {} 存在多条记录，跳过该行数据", collegeName);
-                        continue;
-                    }
-                    BaseDepartment college = collegeList.get(0);
-                    Integer collegeId = college.getId();
-                    
-                    // 查找班级实体集合（可能有重复）
-                    List<BaseDepartment> classList = baseDepartmentDao.findByNameAndIsDeletedFalse(className);
-                    if (classList == null || classList.isEmpty()) {
-                        logger.warn("未找到班级名称为 {} 的记录，跳过该行数据", className);
-                        continue;
-                    }
-                    
-                    // 在班级集合中找到parentId等于学院id的班级
-                    BaseDepartment targetClass = classList.stream()
-                            .filter(clazz -> collegeId.equals(clazz.getParentId()))
-                            .findFirst()
-                            .orElse(null);
-                    
-                    if (targetClass == null) {
-                        logger.warn("未找到班级名称为 {} 且父级为学院 {} 的记录，跳过该行数据", className, collegeName);
-                        continue;
-                    }
-                    
-                    departmentId = targetClass.getId();
+                    departmentId = department.getId();
                 } catch (Exception e) {
-                    logger.error("查找学院 {} 或班级 {} 时发生异常，跳过该行数据", collegeName, className);
+                    logger.error("查找部门编码 {} 时发生异常，跳过该行数据", departmentCode, e);
                     continue;
                 }
                 if (departmentId == null) {

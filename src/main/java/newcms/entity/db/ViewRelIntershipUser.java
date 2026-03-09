@@ -33,5 +33,13 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
      * 实习项目名称
      */
     private String internshipName;
+
+    private Integer userId;
+
+    private String processTypeCode;
+
+    private String verifyTypeName;
+
+    // private String isAudit;
 }
 
