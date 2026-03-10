@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.fastjson.JSONObject;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -85,7 +86,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         JSONObject schoolSearchKeys = new JSONObject();
         schoolSearchKeys.put("schoolId", schoolId);
         Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted());
+                "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
         List<Object> schoolUserList = schoolUserPage.getContent();
         Set<Integer> schoolUserIds = schoolUserList.stream()
                 .map(user -> {
@@ -103,7 +104,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         JSONObject roleSearchKeys = new JSONObject();
         roleSearchKeys.put("roleId", verifyFirstRoleId);
         Page<Object> userRolePage = (Page<Object>) iCommonService.getSomeRecords(
-                "RelUserRole", roleSearchKeys, null, Sort.unsorted());
+                "RelUserRole", roleSearchKeys, null, Sort.unsorted(), 1, 10000);
         List<Object> userRoleList = userRolePage.getContent();
 
         // (4) 筛选出 userId 在 schoolUserIds 中的记录，并提取 userId
@@ -127,60 +128,115 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsersByUser(Integer userId) {
         if (userId == null) {
             return 0;
         }
 
-        // 获取用户的 schoolId
+        // 1. 获取用户的 schoolId
         Object userObj = iCommonService.getOneRecordById("ViewBaseUser", userId);
         if (userObj == null) {
             return 0;
         }
         JSONObject userJson = FastJsonUtil.toJson(userObj);
         Integer schoolId = userJson.getInteger("schoolId");
-
         if (schoolId == null) {
             return 0;
         }
 
-        // 1. 批量查出同校所有用户ID，避免逐条查询（解决 N+1 问题）
+        // 2. 批量查出同校所有用户ID
         JSONObject schoolSearchKeys = new JSONObject();
         schoolSearchKeys.put("schoolId", schoolId);
         Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted());
+                "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
         Set<Integer> schoolUserIds = schoolUserPage.getContent().stream()
                 .map(u -> FastJsonUtil.toJson(u).getInteger("id"))
                 .filter(id -> id != null)
                 .collect(Collectors.toSet());
-
         if (schoolUserIds.isEmpty()) {
             return 0;
         }
 
-        // 2. 查询所有待处理记录（isAudit = -1 保存未提交 或 isAudit = 0 待审核）
-        JSONObject searchKeys = new JSONObject();
-        searchKeys.put("isAudit", "-1,0");
-        Map<String, String> regMap = new HashMap<>();
-        regMap.put("isAudit", Constant.IN);
-        Page<MainVerifyProcess> pendingPage = (Page<MainVerifyProcess>) iCommonService.getSomeRecords(
-                "MainVerifyProcess", searchKeys, regMap, Sort.unsorted());
-        List<MainVerifyProcess> pendingList = pendingPage.getContent();
+        // 3. 查询所有 MainVerifyProcess 记录（不限 isAudit 状态，覆盖全量数据）
+        //    显式指定大 pageSize 避免被默认的 25 条分页截断
+        Page<MainVerifyProcess> allPage = (Page<MainVerifyProcess>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", new JSONObject(), null,
+                Sort.by(Sort.Direction.ASC, "id"), 1, 10000);
+        List<MainVerifyProcess> allRecords = allPage.getContent();
 
-        // 3. 只刷新创建人在同校的记录（通过内存中的 Set 判断，无需逐条查库）
+        // 4. 只处理创建人在同校的记录
+        List<MainVerifyProcess> relevantRecords = allRecords.stream()
+                .filter(vp -> schoolUserIds.contains(vp.getCreateUserId()))
+                .collect(Collectors.toList());
+
+        // 5. 按 processId 分组
+        Map<Integer, List<MainVerifyProcess>> groupedByProcess = relevantRecords.stream()
+                .filter(vp -> vp.getProcessId() != null)
+                .collect(Collectors.groupingBy(MainVerifyProcess::getProcessId));
+
+        // 6. 缓存流程配置和 verifyUserId 计算结果，避免重复查询
+        Map<Integer, JSONObject> processConfigCache = new HashMap<>();
+        Map<String, String> verifyUserIdCache = new HashMap<>();
+
         int updatedCount = 0;
-        for (MainVerifyProcess verifyProcess : pendingList) {
-            if (schoolUserIds.contains(verifyProcess.getCreateUserId())) {
-                boolean updated = refreshSingleVerifyProcess(verifyProcess);
-                if (updated) {
-                    updatedCount++;
+        for (Map.Entry<Integer, List<MainVerifyProcess>> entry : groupedByProcess.entrySet()) {
+            Integer processId = entry.getKey();
+            List<MainVerifyProcess> records = entry.getValue();
+
+            // 按 id 升序排列
+            records.sort(Comparator.comparingInt(MainVerifyProcess::getId));
+
+            // 加载流程配置（RelProcessInternship）
+            JSONObject relJson = processConfigCache.get(processId);
+            if (relJson == null) {
+                Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+                if (relObj == null) continue;
+                relJson = FastJsonUtil.toJson(relObj);
+                processConfigCache.put(processId, relJson);
+            }
+
+            // 7. 遍历记录，通过"行走算法"推断每条记录的审核级别
+            //    审核级别从 2 开始（对应 verifyFirstRoleId）
+            //    - isAudit=1（通过）→ 下一条记录级别 +1
+            //    - isAudit=2/3（退回）→ 下一条记录级别 -1（最低为 2）
+            //    - isAudit=-1/0（未提交/待审）→ 级别不变
+            int currentLevel = 2;
+            for (MainVerifyProcess record : records) {
+                Integer isAudit = record.getIsAudit();
+
+                // 只更新待处理记录（isAudit=-1 保存未提交 或 isAudit=0 待审核）
+                // 已通过/已退回的记录是历史数据，保留当时审核人信息不动
+                if (isAudit != null && (isAudit == -1 || isAudit == 0)) {
+                    Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentLevel);
+                    if (verifyRoleId != null && verifyRoleId != 0) {
+                        String cacheKey = verifyRoleId + ":" + record.getCreateUserId();
+                        String newVerifyUserId = verifyUserIdCache.computeIfAbsent(cacheKey,
+                                k -> GetVerifyUserId(verifyRoleId, record.getCreateUserId()));
+                        String oldVerifyUserId = record.getVerifyUserId();
+
+                        if (!newVerifyUserId.equals(oldVerifyUserId)) {
+                            JSONObject updateJson = new JSONObject();
+                            updateJson.put("id", record.getId());
+                            updateJson.put("verifyUserId", newVerifyUserId);
+                            iCommonService.saveOneRecord("MainVerifyProcess", updateJson);
+                            updatedCount++;
+                        }
+                    }
+                }
+
+                // 无论是否更新，都要根据 isAudit 状态推进级别（保证行走算法正确）
+                if (isAudit != null) {
+                    if (isAudit == 1) {
+                        currentLevel++;
+                    } else if (isAudit == 2 || isAudit == 3) {
+                        currentLevel = Math.max(2, currentLevel - 1);
+                    }
                 }
             }
         }
 
-        logger.info("刷新用户 {} 相关的待审核记录完成，共更新 {} 条记录", userId, updatedCount);
+        logger.info("刷新用户 {} 相关的审核记录完成，共更新 {} 条记录", userId, updatedCount);
         return updatedCount;
     }
 
@@ -213,7 +269,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         // iCommonService.saveOneRecord("RelProcessInternship", relJson);
         // 计算审核人
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
-        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "";
+        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "系统自动通过";
         // 创建审核记录
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", relationId);
@@ -229,56 +285,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         return saved;
     }
 
-    /**
-     * 刷新单条审核记录的 verifyUserId
-     * 通过 processId 查找 RelProcessInternship 流程配置，获取当前审核级别对应的角色，
-     * 重新计算同校同角色的审核人列表。
-     *
-     * @param verifyProcess 审核记录
-     * @return 是否更新成功
-     */
-    private boolean refreshSingleVerifyProcess(MainVerifyProcess verifyProcess) {
-        try {
-            Integer processId = verifyProcess.getProcessId();
-            Integer createUserId = verifyProcess.getCreateUserId();
-
-            if (processId == null || createUserId == null) {
-                return false;
-            }
-
-            // 通过 processId 查找流程配置（processId 是 RelProcessInternship 的主键）
-            Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
-            if (relObj == null) {
-                return false;
-            }
-            JSONObject relJson = FastJsonUtil.toJson(relObj);
-            Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
-            Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
-
-            if (verifyRoleId == null || verifyRoleId == 0) {
-                return false;
-            }
-
-            // 重新计算 verifyUserId
-            String newVerifyUserId = GetVerifyUserId(verifyRoleId, createUserId);
-            String oldVerifyUserId = verifyProcess.getVerifyUserId();
-
-            // 如果有变化则更新
-            if (!newVerifyUserId.equals(oldVerifyUserId)) {
-                JSONObject updateJson = new JSONObject();
-                updateJson.put("id", verifyProcess.getId());
-                updateJson.put("verifyUserId", newVerifyUserId);
-                iCommonService.saveOneRecord("MainVerifyProcess", updateJson);
-                logger.info("更新审核记录 {} 的 verifyUserId: {} -> {}",
-                        verifyProcess.getId(), oldVerifyUserId, newVerifyUserId);
-                return true;
-            }
-            return false;
-        } catch (Exception e) {
-            logger.warn("刷新审核记录 {} 失败: {}", verifyProcess.getId(), e.getMessage());
-            return false;
-        }
-    }
 
     /**
      * 审核通过后的回调处理
@@ -357,7 +363,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             JSONObject nextVerifyJson = new JSONObject();
             nextVerifyJson.put("relationId", relationId);
             nextVerifyJson.put("processId", processId);
-            nextVerifyJson.put("createUserId", Integer.parseInt(verifyUserId.split("\\|")[0]));
+            nextVerifyJson.put("createUserId", createUserId);
             nextVerifyJson.put("verifyUserId", nextVerifyUserId);
             nextVerifyJson.put("isAudit", 0); // 待审核
             nextVerifyJson.put("reason", "");
