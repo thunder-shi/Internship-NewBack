@@ -30,7 +30,6 @@ public class ViewVerifyProcessInternship extends BaseInfo {
     private String verifyUserName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-    private String currentVerifyTypeName;
     private String majorIds;
     private String majorNames;
 }

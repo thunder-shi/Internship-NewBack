@@ -4,7 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
-import newcms.entity.base.VerifyProcessInfo;
+import newcms.entity.base.VerifyConfigInfo;
 
 import java.time.LocalDateTime;
 
@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @Entity
-public class RelProcessInternship extends VerifyProcessInfo {
+public class RelProcessInternship extends VerifyConfigInfo {
     @Column(columnDefinition = "integer unsigned comment '实习项目id，外键，关联表BaseInternship'")
     private Integer internshipId;
     @Column(columnDefinition = "integer unsigned comment '流程类型id，外键，关联表BaseProcessType'")

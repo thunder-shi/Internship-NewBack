@@ -126,7 +126,19 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
-        return iCommonService.saveOneRecord(tblName, node);
+        Object saved = iCommonService.saveOneRecord(tblName, node);
+
+        // 修改 RelProcessInternship 的审核角色后，刷新对应的待审核记录
+        if ("RelProcessInternship".equals(tblName) && !isNew) {
+            try {
+                Integer processId = node.getInteger("id");
+                iVerifyProcessService.refreshPendingVerifyUsersByProcess(processId);
+            } catch (Exception e) {
+                logger.warn("刷新流程审核记录失败，不影响保存: {}", e.getMessage());
+            }
+        }
+
+        return saved;
     }
 
     /**

@@ -61,4 +61,12 @@ public interface IVerifyProcessService {
      * @return 对应级别的审核角色ID
      */
     Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel);
+
+    /**
+     * 当 RelProcessInternship 的审核角色配置变更时，刷新对应的待审核记录的 verifyUserId
+     *
+     * @param processId RelProcessInternship 的 ID
+     * @return 更新的记录数量
+     */
+    int refreshPendingVerifyUsersByProcess(Integer processId);
 }

@@ -332,15 +332,24 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         String tableName = verifyProcess.getTableName();
         Integer createUserId = verifyProcess.getCreateUserId();
         String verifyUserId = verifyProcess.getVerifyUserId();
-        // 获取 RelProcessInternship 记录
+        // 获取 RelProcessInternship 记录（获取审核角色配置和 verifyTypeId）
         Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
             logger.warn("未找到流程关联记录 {}", processId);
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
+        Integer internshipId = relJson.getInteger("internshipId");
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
+
+        // 从 MainInternship 获取 currentVerifyTypeId
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) {
+            logger.warn("未找到实习项目记录 {}", internshipId);
+            return;
+        }
+        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
+        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
 
         if (currentVerifyTypeId == null) {
             currentVerifyTypeId = 2; // 默认一级审核
@@ -350,13 +359,15 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         }
 
         int nextLevel = currentVerifyTypeId + 1;
-        if (nextLevel <= verifyTypeId) {
-            System.out.println("nextLevel = " + nextLevel + ", verifyTypeId = " + verifyTypeId);
-            // 还有下一级审核：更新 RelProcessInternship.currentVerifyTypeId，创建新审核记录
-            relJson.put("currentVerifyTypeId", nextLevel);
-            iCommonService.saveOneRecord("RelProcessInternship", relJson);
 
-            // 获取下一级审核角色ID
+        // 更新 MainInternship 的 currentVerifyTypeId
+        JSONObject updateInternshipJson = new JSONObject();
+        updateInternshipJson.put("id", internshipId);
+        updateInternshipJson.put("currentVerifyTypeId", nextLevel);
+        iCommonService.saveOneRecord("MainInternship", updateInternshipJson);
+
+        if (nextLevel <= verifyTypeId) {
+            // 还有下一级审核：创建新审核记录
             Integer nextVerifyRoleId = getVerifyRoleIdByLevel(relJson, nextLevel);
             String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId);
             // 创建下一级审核记录
@@ -375,11 +386,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             logger.info("审核记录 {} 通过，流程 {} 进入下一级审核 {}，创建新审核记录 {}",
                     Id, relationId, nextLevel, nextVerifyId);
         } else {
-            // 审核全部完成，将 currentVerifyTypeId 更新为 nextLevel（verifyTypeId + 1）
-            // 方便后续通过 currentVerifyTypeId > verifyTypeId 直接判断审核是否结束
-            relJson.put("currentVerifyTypeId", nextLevel);
-            iCommonService.saveOneRecord("RelProcessInternship", relJson);
-
+            // 审核全部完成（currentVerifyTypeId > verifyTypeId）
             logger.info("审核记录 {} 通过，流程 {} 审核全部完成（currentVerifyTypeId 更新为 {}，verifyTypeId {}）",
                     Id, relationId, nextLevel, verifyTypeId);
         }
@@ -405,6 +412,78 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             case 6: return relJson.getInteger("verifyFifthRoleId");
             default: return null;
         }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public int refreshPendingVerifyUsersByProcess(Integer processId) {
+        if (processId == null) {
+            return 0;
+        }
+
+        // 1. 加载流程配置
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+        if (relObj == null) {
+            return 0;
+        }
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer internshipId = relJson.getInteger("internshipId");
+
+        // 2. 从 MainInternship 获取 currentVerifyTypeId
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) {
+            return 0;
+        }
+        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
+        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
+        if (currentVerifyTypeId == null) {
+            currentVerifyTypeId = 2;
+        }
+
+        // 3. 查询该流程下所有待处理的 MainVerifyProcess 记录（isAudit = -1 或 0）
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("processId", processId);
+        Page<Object> allPage = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", searchKeys, null,
+                Sort.by(Sort.Direction.ASC, "id"), 1, 10000);
+        List<Object> allRecords = allPage.getContent();
+
+        // 4. 用行走算法推断每条记录的审核级别，并刷新待处理记录的 verifyUserId
+        int updatedCount = 0;
+        int currentLevel = 2;
+        for (Object record : allRecords) {
+            JSONObject recordJson = FastJsonUtil.toJson(record);
+            Integer isAudit = recordJson.getInteger("isAudit");
+            Integer createUserId = recordJson.getInteger("createUserId");
+
+            if (isAudit != null && (isAudit == -1 || isAudit == 0)) {
+                Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentLevel);
+                if (verifyRoleId != null && verifyRoleId != 0) {
+                    String newVerifyUserId = GetVerifyUserId(verifyRoleId, createUserId);
+                    String oldVerifyUserId = recordJson.getString("verifyUserId");
+
+                    if (!newVerifyUserId.equals(oldVerifyUserId)) {
+                        JSONObject updateJson = new JSONObject();
+                        updateJson.put("id", recordJson.getInteger("id"));
+                        updateJson.put("verifyUserId", newVerifyUserId);
+                        iCommonService.saveOneRecord("MainVerifyProcess", updateJson);
+                        updatedCount++;
+                    }
+                }
+            }
+
+            // 根据 isAudit 推进级别
+            if (isAudit != null) {
+                if (isAudit == 1) {
+                    currentLevel++;
+                } else if (isAudit == 2 || isAudit == 3) {
+                    currentLevel = Math.max(2, currentLevel - 1);
+                }
+            }
+        }
+
+        logger.info("刷新流程 {} 的审核记录完成，共更新 {} 条记录", processId, updatedCount);
+        return updatedCount;
     }
 
 }

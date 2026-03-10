@@ -42,9 +42,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         // (2) 创建专业范围关联记录
         createInternshipMajorRecords(internshipId, internshipTypeId);
-        // (3) 创建流程关联记录和第一条审核记录
+        // (3) 创建流程关联记录
         createProcessInternshipRecords(internshipId, internshipTypeId);
-        // (4) 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
+        // (4) 根据流程配置设置 MainInternship 的初始 currentVerifyTypeId
+        initInternshipVerifyLevel(internshipId);
+        // (5) 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
         createFirstVerifyProcessRecord(internshipId);
         return savedInternship;
     }
@@ -78,13 +80,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             processInternshipJson.put("verifyThirdRoleId", processTypeJson.getInteger("verifyThirdRoleId"));
             processInternshipJson.put("verifyFourthRoleId", processTypeJson.getInteger("verifyFourthRoleId"));
             processInternshipJson.put("verifyFifthRoleId", processTypeJson.getInteger("verifyFifthRoleId"));
-            // 根据 verifyTypeCode 设置 currentVerifyTypeId
-            String verifyTypeCode = processTypeJson.getString("verifyTypeCode");
-            if ("NO_VERIFY".equals(verifyTypeCode)) {
-                processInternshipJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
-            } else {
-                processInternshipJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);
-            }
             processInternshipList.add(processInternshipJson);
         }
         // 批量保存 RelProcessInternship 记录
@@ -94,18 +89,36 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
+     * 根据流程配置设置 MainInternship 的初始 currentVerifyTypeId
+     * @param internshipId 实习项目ID
+     */
+    private void initInternshipVerifyLevel(Integer internshipId) {
+        Object foundProcess = iVerifyProcessService.GetInternshipProcess(internshipId, null);
+        JSONObject relJson = FastJsonUtil.toJson(foundProcess);
+        String verifyTypeCode = relJson.getString("verifyTypeCode");
+        int initialLevel;
+        if ("NO_VERIFY".equals(verifyTypeCode)) {
+            initialLevel = Constant.VERIFY_LEVEL.NO_VERIFY;
+        } else {
+            initialLevel = Constant.VERIFY_LEVEL.ONE_VERIFY;
+        }
+        JSONObject updateJson = new JSONObject();
+        updateJson.put("id", internshipId);
+        updateJson.put("currentVerifyTypeId", initialLevel);
+        iCommonService.saveOneRecord("MainInternship", updateJson);
+    }
+
+    /**
      * 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
      * @param internshipId 实习项目ID
      */
     private void createFirstVerifyProcessRecord(Integer internshipId) {
-        // 2. 查找流程关联记录（取第一条，对应计划制定流程）
+        // 1. 查找流程关联记录（取第一条，对应计划制定流程）
         Object foundProcess = iVerifyProcessService.GetInternshipProcess(internshipId, null);
         JSONObject relJson = FastJsonUtil.toJson(foundProcess);
         Integer relProcessId = relJson.getInteger("id");
-        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
         Integer verifyFirstRoleId = relJson.getInteger("verifyFirstRoleId");
-        // 3. 创建审核记录 MainVerifyProcess
-        // 从 MainInternship 获取 createUserId
+        // 2. 从 MainInternship 获取 createUserId 和 currentVerifyTypeId
         Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
         if (internshipObj == null) {
             throw BaseResponse.moreInfoError.error("未找到实习项目记录");
@@ -115,6 +128,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (createUserId == null) {
             throw BaseResponse.parameterInvalid.error("creatorId 参数不能为空");
         }
+        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
 
         // 判断是否无需审核（currentVerifyTypeId == 1 即 NO_VERIFY）
         boolean noVerify = currentVerifyTypeId != null
@@ -219,24 +233,35 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Integer processId   = verifyProcessJson.getInteger("processId");
         String  tableName   = verifyProcessJson.getString("tableName");
 
-        // 2. 读取流程配置，获取当前审核级别（使用 processId 查 RelProcessInternship）
+        // 2. 读取流程配置（使用 processId 查 RelProcessInternship）
         Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
             logger.warn("退回后新建记录失败：未找到流程配置 {}", processId);
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
+        Integer internshipId = relJson.getInteger("internshipId");
 
-        // 3. 退回时 currentVerifyTypeId - 1，回退到上一级审核
+        // 3. 从 MainInternship 获取 currentVerifyTypeId
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) {
+            logger.warn("退回后新建记录失败：未找到实习项目 {}", internshipId);
+            return;
+        }
+        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
+        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
+
+        // 4. 退回时 currentVerifyTypeId - 1，回退到上一级审核
         //    但不低于 2（第一级审核的初始值），第一级退回时保持原级别
         if (currentVerifyTypeId != null && currentVerifyTypeId > 2) {
             currentVerifyTypeId -= 1;
-            relJson.put("currentVerifyTypeId", currentVerifyTypeId);
-            iCommonService.saveOneRecord("RelProcessInternship", relJson);
+            JSONObject updateJson = new JSONObject();
+            updateJson.put("id", internshipId);
+            updateJson.put("currentVerifyTypeId", currentVerifyTypeId);
+            iCommonService.saveOneRecord("MainInternship", updateJson);
         }
 
-        // 4. 重新计算回退后级别的审核人
+        // 5. 重新计算回退后级别的审核人
         Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
 

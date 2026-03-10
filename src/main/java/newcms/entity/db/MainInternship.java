@@ -24,4 +24,6 @@ public class MainInternship extends NameRemarkInfo {
     @Column(columnDefinition = "int unsigned comment '已选学生人数'")
     private Integer studentNum;
 
+    @Column(columnDefinition = "integer unsigned default '1' comment '流程当前处在的审核级别id，外键，关联表BaseVerifyType'")
+    private Integer currentVerifyTypeId = 1;
 }

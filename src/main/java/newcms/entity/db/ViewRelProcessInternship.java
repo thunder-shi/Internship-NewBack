@@ -35,8 +35,6 @@ public class ViewRelProcessInternship extends OrderInfo {
     private String universityName;
     private String internshipTypeName;
     private String intTypeName;
-    private Integer currentVerifyTypeId;
-    private String currentVerifyTypeName;
     private String majorIds;
     private String majorNames;
 
