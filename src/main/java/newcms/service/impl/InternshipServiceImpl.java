@@ -102,6 +102,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Object foundProcess = iVerifyProcessService.GetInternshipProcess(internshipId, null);
         JSONObject relJson = FastJsonUtil.toJson(foundProcess);
         Integer relProcessId = relJson.getInteger("id");
+        Integer currentVerifyTypeId = relJson.getInteger("currentVerifyTypeId");
         Integer verifyFirstRoleId = relJson.getInteger("verifyFirstRoleId");
         // 3. 创建审核记录 MainVerifyProcess
         // 从 MainInternship 获取 createUserId
@@ -114,15 +115,29 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (createUserId == null) {
             throw BaseResponse.parameterInvalid.error("creatorId 参数不能为空");
         }
-        // 获取审核用户ID字符串
-        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+
+        // 判断是否无需审核（currentVerifyTypeId == 1 即 NO_VERIFY）
+        boolean noVerify = currentVerifyTypeId != null
+                && currentVerifyTypeId == Constant.VERIFY_LEVEL.NO_VERIFY;
+
+        String verifyUserId;
+        int isAudit;
+        if (noVerify) {
+            // 无需审核：直接标记为通过
+            verifyUserId = "系统自动通过";
+            isAudit = 1;
+        } else {
+            // 需要审核：获取审核用户ID字符串，状态为未提交
+            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+            isAudit = -1;
+        }
+
         // 创建审核记录
-        // relationId 使用当前的 internshipId（根据用户要求）
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", internshipId);
         verifyJson.put("processId", relProcessId);
         verifyJson.put("createUserId", createUserId);
-        verifyJson.put("isAudit", -1);
+        verifyJson.put("isAudit", isAudit);
         verifyJson.put("reason", "");
         verifyJson.put("tableName", "MainInternship");
         verifyJson.put("verifyUserId", verifyUserId);
