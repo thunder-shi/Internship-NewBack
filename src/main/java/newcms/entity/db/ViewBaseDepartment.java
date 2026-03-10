@@ -17,8 +17,11 @@ public class ViewBaseDepartment extends BaseTreeInfo<ViewBaseDepartment> {
     private Integer areaId;
     private Integer typeId;
     private Integer majorId;
+    private Integer schoolId;
     private Integer startYear;
     private String majorName;
     private String areaName;
     private String typeName;
+    private String typeCode;
+
 }
