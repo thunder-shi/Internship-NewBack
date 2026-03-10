@@ -117,14 +117,17 @@ public class Constant {
     // 实习流程类型
     public static final class PROCESS_TYPE {
         public static final String INTERNSHIP_PLAN_MAKE = "INTERNSHIP_PLAN_MAKE"; // 实习计划制定
-        public static final String STUDENT_SELECT_INTERNSHIP = "STUDENT_SELECT_INTERNSHIP"; // 学生选择实习项目
-        public static final String INTERNAL_TEACHER_SELECT_PROJECT = "INTERNAL_TEACHER_SELECT_PROJECT"; // 校内实习-老师选择实习项目
-        public static final String INTERNAL_TEACHER_DECLARE_TOPIC = "INTERNAL_TEACHER_DECLARE_TOPIC"; // 校内实习-老师申报毕设题目
+        public static final String STUDENT_SELECT_INTERNSHIP = "STUDENT_SELECT_INTERNSHIP"; // 学生实习项目安排
+        public static final String TEACHER_SELECT_INTERNALSHIP = "TEACHER_SELECT_INTERNALSHIP"; // 指导老师实习项目安排
+        public static final String INTERNAL_TEACHER_SELECT_PROJECT = "INTERNAL_TEACHER_SELECT_PROJECT"; // 校内实习-分配指导老师
+        public static final String INTERNAL_TEACHER_DECLARE_TOPIC = "INTERNAL_TEACHER_DECLARE_TOPIC"; // 校内实习-老师申报题目
         public static final String INTERNAL_STUDENT_TEACHER_MATCH = "INTERNAL_STUDENT_TEACHER_MATCH"; // 校内实习-师生互选
         public static final String EXTERNAL_ENTERPRISE_POST_DECLARATION = "EXTERNAL_ENTERPRISE_POST_DECLARATION"; // 校外实习-企业岗位申报
-        public static final String EXTERNAL_STUDENT_SELECT_POST = "EXTERNAL_STUDENT_SELECT_POST"; // 校外实习-学生选择岗位
-        public static final String EXTERNAL_ASSIGN_INTERNAL_TUTOR = "EXTERNAL_ASSIGN_INTERNAL_TUTOR"; // 校外实习-分配校内指导老师
-        public static final String EXTERNAL_ENTERPRISE_ASSIGN_TUTOR = "EXTERNAL_ENTERPRISE_ASSIGN_TUTOR"; // 校外实习-企业分配指导老师
+        public static final String EXTERNAL_STUDENT_SELECT_POST = "EXTERNAL_STUDENT_SELECT_POST"; // 校外实习-学生报名岗位
+        public static final String EXTERNAL_STUDENT_SELF_DECLARATION = "EXTERNAL_STUDENT_SELF_DECLARATION"; // 校外实习-学生自主申报
+        public static final String EXTERNAL_STUDENT_ASSIGN_POST = "EXTERNAL_STUDENT_ASSIGN_POST"; // 校外实习-学生岗位安排
+        public static final String EXTERNAL_ASSIGN_INTERNAL_TUTOR = "EXTERNAL_ASSIGN_INTERNAL_TUTOR"; // 校外实习-分配校内导师
+        public static final String EXTERNAL_ENTERPRISE_ASSIGN_TUTOR = "EXTERNAL_ENTERPRISE_ASSIGN_TUTOR"; // 校外实习-分配企业导师
     }
 
     public static final String BUCKET_NAME = "association";
