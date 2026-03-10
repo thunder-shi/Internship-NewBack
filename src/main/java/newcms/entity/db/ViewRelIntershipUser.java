@@ -1,5 +1,5 @@
 package newcms.entity.db;
-
+import java.time.LocalDateTime;
 import jakarta.persistence.Entity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -35,10 +35,30 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
     private String internshipName;
 
     private Integer userId;
+    private String tableName;
+    private Integer isAudit;
+    private String reason;
+    private String phone;
+    private String currentVerifyTypeName;
+    private String currentVerifyTypeId;
+    private LocalDateTime startTime;
+    private LocalDateTime endTime;
 
     private String processTypeCode;
+    private Integer verifyProcessId;
 
-    private String verifyTypeName;
+
+
+    // private Integer processTypeId;
+
+    // private Integer verifyTypeId;
+
+    // private Integer currentVerifyTypeId;
+
+    // private LocalDateTime startTime;
+
+    // private LocalDateTime endTime;
+    // private String verifyTypeName;
 
     // private String isAudit;
 }
