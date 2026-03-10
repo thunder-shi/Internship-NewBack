@@ -18,4 +18,5 @@ public class ViewMainInternship extends NameRemarkInfo {
     private String universityName;
     private String majorIds;
     private String majorNames;
+    private Integer currentVerifyTypeId;
 }

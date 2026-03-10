@@ -31,7 +31,6 @@ public class ViewVerifyProcessInternshipPost extends BaseInfo {
     private String universityName;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-    private String currentVerifyTypeName;
     private String majorIds;
     private String majorNames;
     

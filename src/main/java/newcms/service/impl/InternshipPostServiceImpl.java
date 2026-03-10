@@ -272,8 +272,13 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             throw BaseResponse.moreInfoError.error("未找到流程配置信息");
         }
 
-        // 获取审核角色ID（根据当前审核级别）
-        Integer currentVerifyTypeId = processJson.getInteger("currentVerifyTypeId");
+        // 从 MainInternship 获取当前审核级别
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) {
+            throw BaseResponse.moreInfoError.error("未找到实习项目记录");
+        }
+        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
+        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
         if (currentVerifyTypeId == null) {
             currentVerifyTypeId = 2; // 默认一级审核
         }

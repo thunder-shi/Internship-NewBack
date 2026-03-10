@@ -53,31 +53,6 @@ public class UserServiceImpl extends Base implements IUserService {
 
     private static Pattern pattern = Pattern.compile("-?[0-9]+(\\\\.[0-9]+)?");
 
-    /**
-     * 根据角色 code 获取对应的 ROLE_TABLE 常量值
-     * 使用反射根据 code 值（如 "SUPER_ADMIN"）获取对应的 ROLE_TABLE 常量值
-     * @param roleCode 角色 code，对应 ROLE_TABLE 中的常量名（如 "SUPER_ADMIN"）
-     * @return ROLE_TABLE 中的常量值，如果找不到则返回 null
-     */
-    private Integer getRoleTableValue(String roleCode) {
-        if (roleCode == null || roleCode.trim().isEmpty()) {
-            return null;
-        }
-        try {
-            // 使用反射获取 ROLE_TABLE 类中对应字段的值
-            java.lang.reflect.Field field = Constant.ROLE_TABLE.class.getField(roleCode.trim());
-            if (field != null && field.getType() == int.class) {
-                return (Integer) field.get(null);
-            }
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            // 如果找不到对应的字段，返回 null
-            logger.debug("角色 code [{}] 在 ROLE_TABLE 中找不到对应的常量", roleCode);
-        }
-        return null;
-    }
-
-
-
 /**
      * 当前登录用户信息(包含 roles  permissions)
      * 写入redis中三个键，1 userInfo，包含用户的基本信息；2 roles包含用户的角色名称信息；
@@ -121,22 +96,9 @@ public Object getLoginUser(Date date, String userAgent) {
         Page<RelUserRole> rolePage = (Page<RelUserRole>)iCommonService.getSomeRecords("RelUserRole", jsRoleSearch);
         List<RelUserRole> roleInfoList = rolePage.getContent();
         
-        // 获取角色ID集合
+        // 获取角色ID集合（直接使用 SysRole.id，不再映射 ROLE_TABLE 常量）
         Set<Integer> roleIdSet = roleInfoList.stream().map(RelUserRole::getRoleId).collect(Collectors.toSet());
-        
-        // 根据角色ID查询角色信息，然后映射到 ROLE_TABLE 中的常量值
-        Set<Integer> roleTableValues = new HashSet<>();
-        if (!roleIdSet.isEmpty()) {
-            @SuppressWarnings("unchecked")
-            List<SysRole> sysRoleList = (List<SysRole>) iCommonService.getRecordsByIds("SysRole", roleIdSet, false);
-            for (SysRole sysRole : sysRoleList) {
-                Integer roleTableValue = getRoleTableValue(sysRole.getCode());
-                if (roleTableValue != null) {
-                    roleTableValues.add(roleTableValue);
-                }
-            }
-        }
-        jsReturnKey.put("roles", roleTableValues);
+        jsReturnKey.put("roles", roleIdSet);
 
         //下面创建permissions键值信息
         // roleIdSet 已经在上面定义过了
