@@ -88,6 +88,15 @@ public Object getLoginUser(Date date, String userAgent) {
         JSONObject userInfoJSON = FastJsonUtil.toJson(userInfo);
         userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
         userInfoJSON.put("jobName", viewBaseUser.getJobName());
+        // schoolId 来自部门：department_getSchoolId(base_department.ID)，找不到则置为空
+        // Integer schoolId = viewBaseUser.getSchoolId();
+        // if (schoolId == null && userInfo.getDepartmentId() != null) {
+        //     Object viewDept = iCommonService.getOneRecordById("ViewBaseDepartment", userInfo.getDepartmentId());
+        //     if (viewDept instanceof ViewBaseDepartment) {
+        //         schoolId = ((ViewBaseDepartment) viewDept).getSchoolId();
+        //     }
+        // }
+        // userInfoJSON.put("schoolId", schoolId);
         jsReturnKey.put("userInfo", userInfoJSON);
         //下面创建role、contestType和menuList的键值信息
         JSONObject jsRoleSearch = new JSONObject();

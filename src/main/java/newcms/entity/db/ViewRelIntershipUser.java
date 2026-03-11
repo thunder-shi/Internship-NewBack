@@ -47,6 +47,7 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
     private String processTypeCode;
     private Integer verifyProcessId;
 
+    private String verifyUserId;
 
 
     // private Integer processTypeId;
