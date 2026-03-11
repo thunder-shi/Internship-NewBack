@@ -45,7 +45,6 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
     private LocalDateTime endTime;
 
     private String processTypeCode;
-    private Integer verifyProcessId;
 
 
 
