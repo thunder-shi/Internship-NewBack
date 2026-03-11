@@ -42,6 +42,9 @@ public class DataListController extends CommonController {
         } catch (Exception e) {
             logger.warn("搜索条件解密失败", e);
         }
+
+        // ★ 在这里加一行：
+        logger.info("getSomeRecords 解密后: tblName={}, searchKeys={}", tblName, searchKeys);
         try {
             regJson = FastJsonUtil.toJson(encryptUtil.getKeyWord(requestJson.getString("reg")));
         } catch (Exception e) {

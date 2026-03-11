@@ -36,10 +36,16 @@ public class ViewRelTeacherStudent extends NameRemarkInfo {
      * 实习项目名称（来自MainInternship）
      */
     private String internshipName;
+
+    /**
+     * 审核状态：-1 待提交、0 待审核、1 审核通过、2 审核不通过、3 审核退回。
+     * 来自 MainVerifyProcess，若无审核记录则可为 -1。
+     */
+    private Integer isAudit;
     
     /**
-     * 实习批次名称（来自RelProcessInternship）
-     */
-    // private String relInternshipName;
+    * 对应的审核记录主键ID（MainVerifyProcess.id），用于提交/查看进度。
+    */
+    private Integer verifyProcessId;
 }
 

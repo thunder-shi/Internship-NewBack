@@ -128,6 +128,21 @@ public class DataListServiceImpl extends Base implements IDataListService {
         }
         Object saved = iCommonService.saveOneRecord(tblName, node);
 
+        // 老师申报题目：新增 RelTeacherStudent 后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）
+        if ("RelTeacherStudent".equals(tblName) && isNew && saved != null) {
+            try {
+                JSONObject savedJson = FastJsonUtil.toJson(saved);
+                Integer relationId = savedJson.getInteger("id");
+                Integer internshipId = savedJson.getInteger("internshipId");
+                Integer createUserId = savedJson.getInteger("teacherId");
+                if (relationId != null && internshipId != null && createUserId != null) {
+                    iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId);
+                }
+            } catch (Exception e) {
+                logger.warn("老师申报题目创建审核记录失败，不影响保存: {}", e.getMessage());
+            }
+        }
+
         // 修改 RelProcessInternship 的审核角色后，刷新对应的待审核记录
         if ("RelProcessInternship".equals(tblName) && !isNew) {
             try {
@@ -149,6 +164,18 @@ public class DataListServiceImpl extends Base implements IDataListService {
      */
     @Override
     public Object deleteSomeNodes(String tblName, List<Integer> ids) {
+        // 老师申报题目：删除题目时同步清理其 MainVerifyProcess 审核记录
+        if ("RelTeacherStudent".equals(tblName) && ids != null) {
+            for (Integer relationId : ids) {
+                if (relationId != null) {
+                    try {
+                        iInternshipService.deleteVerifyProcessByRelationIdAndTableName(relationId, "RelTeacherStudent");
+                    } catch (Exception e) {
+                        logger.warn("删除题目时清理审核记录失败, relationId={}: {}", relationId, e.getMessage());
+                    }
+                }
+            }
+        }
         iCommonService.deleteSomeRecords(tblName, ids);
         return null;
     }
