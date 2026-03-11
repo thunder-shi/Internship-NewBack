@@ -88,6 +88,7 @@ public Object getLoginUser(Date date, String userAgent) {
         JSONObject userInfoJSON = FastJsonUtil.toJson(userInfo);
         userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
         userInfoJSON.put("jobName", viewBaseUser.getJobName());
+        userInfoJSON.put("schoolId", viewBaseUser.getSchoolId());
         jsReturnKey.put("userInfo", userInfoJSON);
         //下面创建role、contestType和menuList的键值信息
         JSONObject jsRoleSearch = new JSONObject();
