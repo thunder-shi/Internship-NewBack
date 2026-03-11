@@ -88,6 +88,24 @@ public class InternshipProcessController {
         return BaseResponse.ok(iVerifyProcessService.activateProcess(node));
     }
 
+     @Operation(summary = "根据角色和创建人获取审核人ID串", description = "返回同校、指定审核角色下的所有审核人ID，使用竖线分隔，如：12|14|17")
+     @PostMapping(value = "/getVerifyUserIds", consumes = MediaType.APPLICATION_JSON_VALUE)
+     public Object getVerifyUserIds(@RequestBody JSONObject requestJson) {
+         LogUtil.loggerRecord("getVerifyUserIds", requestJson);
+         if (requestJson == null) {
+             throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+         }
+         JSONObject node = requestJson.getJSONObject("node");
+         Integer verifyRoleId = node != null ? node.getInteger("verifyRoleId") : requestJson.getInteger("verifyRoleId");
+         Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
+         if (createUserId == null) {
+             throw BaseResponse.parameterInvalid.error("createUserId 不能为空");
+         }
+         // verifyRoleId 允许为 null/0，此时服务方法会按约定返回空字符串
+         String verifyUserIds = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+         return BaseResponse.ok(verifyUserIds);
+     }
+
     // @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")
     // @PostMapping(value = "/getNowInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
     // public Object getNowInternship(@RequestBody JSONObject requestJson) {
