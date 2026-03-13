@@ -54,6 +54,18 @@ public interface IInternshipService {
      */
     void deleteVerifyProcessByRelationIdAndTableName(Integer relationId, String tableName);
 
+    /**
+     * 根据实习项目和职务获取可选用户列表（带分页）
+     * 从 BaseUser 中筛选出 jobId 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
+     *
+     * @param internshipId 实习项目ID
+     * @param jobId        职务/身份ID
+     * @param page         页码（从1开始）
+     * @param size         每页数量
+     * @return 可选用户分页结果
+     */
+    Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size);
+
     // /**
     //  * 获取当前进行中的实习项目
     //  * 根据流程类型代码查询当前时间范围内的实习项目
