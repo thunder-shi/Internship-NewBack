@@ -43,6 +43,16 @@ public interface IInternshipService {
      */
     Object auditProcess(JSONObject node);
 
+    /**
+     * 老师申报题目：新增 RelTeacherStudent 后创建首条 MainVerifyProcess。
+     * 需审核时 isAudit=-1（保存未提交），无需审核时 isAudit=1（直接通过）。
+     */
+    void createFirstVerifyProcessForRelTeacherStudent(Integer relationId, Integer internshipId, Integer createUserId);
+
+    /**
+     * 根据业务表关联删除其 MainVerifyProcess 记录（如删除题目时清理审核记录）。
+     */
+    void deleteVerifyProcessByRelationIdAndTableName(Integer relationId, String tableName);
 
     // /**
     //  * 获取当前进行中的实习项目

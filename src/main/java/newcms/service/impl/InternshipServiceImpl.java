@@ -348,4 +348,74 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         return "删除成功";
     }
+
+    // ==================== 老师申报题目（保存/提交、需审核与无需审核） ====================
+
+    private static final String TABLE_REL_TEACHER_STUDENT = "RelTeacherStudent";
+    private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
+
+    @Override
+    public void createFirstVerifyProcessForRelTeacherStudent(Integer relationId, Integer internshipId, Integer createUserId) {
+        if (relationId == null || internshipId == null || createUserId == null) {
+            logger.warn("createFirstVerifyProcessForRelTeacherStudent 参数不完整: relationId={}, internshipId={}, createUserId={}", relationId, internshipId, createUserId);
+            return;
+        }
+        // 1. 获取「老师申报题目」流程配置（ViewRelProcessInternship 的 id 即 RelProcessInternship.id）
+        Object processObj = iVerifyProcessService.GetInternshipProcess(internshipId, Constant.PROCESS_TYPE.INTERNAL_TEACHER_DECLARE_TOPIC);
+        if (processObj == null) {
+            logger.warn("未找到老师申报题目流程配置, internshipId={}", internshipId);
+            return;
+        }
+        JSONObject processJson = FastJsonUtil.toJson(processObj);
+        Integer processId = processJson.getInteger("id");
+        if (processId == null) {
+            return;
+        }
+        Integer verifyTypeId = processJson.getInteger("verifyTypeId");
+        boolean needsVerify = verifyTypeId != null && verifyTypeId >= Constant.VERIFY_LEVEL.ONE_VERIFY;
+
+        String verifyUserId;
+        int isAudit;
+        if (needsVerify) {
+            Integer verifyFirstRoleId = processJson.getInteger("verifyFirstRoleId");
+            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+            isAudit = Constant.AUDIT_STATUS.SAVE; // -1 保存未提交
+        } else {
+            verifyUserId = "系统自动通过";
+            isAudit = Constant.AUDIT_STATUS.PASS; // 1 直接通过
+        }
+
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", processId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("verifyUserId", verifyUserId);
+        verifyJson.put("isAudit", isAudit);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", TABLE_REL_TEACHER_STUDENT);
+        iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+    }
+
+    @Override
+    public void deleteVerifyProcessByRelationIdAndTableName(Integer relationId, String tableName) {
+        if (relationId == null || tableName == null || tableName.isEmpty()) {
+            return;
+        }
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("relationId", relationId);
+        searchKeys.put("tableName", tableName);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                TABLE_MAIN_VERIFY_PROCESS, searchKeys, null, Sort.unsorted(), 1, 100);
+        List<Object> content = page.getContent();
+        if (content != null) {
+            for (Object obj : content) {
+                JSONObject verifyProcessJson = FastJsonUtil.toJson(obj);
+                Integer id = verifyProcessJson.getInteger("id");
+                if (id != null) {
+                    iCommonService.deleteRecordByDelflag(TABLE_MAIN_VERIFY_PROCESS, id);
+                }
+            }
+        }
+    }
 }
