@@ -1,6 +1,7 @@
 package newcms.service;
 
 import com.alibaba.fastjson.JSONObject;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -62,9 +63,10 @@ public interface IInternshipService {
      * @param jobId        职务/身份ID
      * @param page         页码（从1开始）
      * @param size         每页数量
+     * @param sort         排序规则
      * @return 可选用户分页结果
      */
-    Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size);
+    Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size, Sort sort);
 
     // /**
     //  * 获取当前进行中的实习项目

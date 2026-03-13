@@ -15,6 +15,7 @@ import newcms.utils.LogUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.data.domain.Sort;
 
 import java.util.Arrays;
 import java.util.List;
@@ -143,8 +144,30 @@ public class InternshipProcessController {
                  ? pageInfo.getInteger("size")
                  : Constant.DEFAULT_SIZE;
 
+         // 排序信息：优先从 node.sort 取值
+         JSONObject sortJson = node != null ? node.getJSONObject("sort") : requestJson.getJSONObject("sort");
+         Sort sort = Sort.unsorted();
+         if (sortJson != null) {
+             String properties = sortJson.getString("properties");
+             String directionStr = sortJson.getString("direction");
+             if (properties != null && !properties.trim().isEmpty()) {
+                 Sort.Direction direction;
+                 try {
+                     direction = directionStr != null
+                             ? Sort.Direction.fromString(directionStr)
+                             : Sort.Direction.ASC;
+                 } catch (IllegalArgumentException e) {
+                     direction = Sort.Direction.ASC;
+                 }
+
+                 // 支持逗号分隔的多字段排序
+                 String[] props = properties.split(Constant.SPLIT_OPERATOR.COMMA);
+                 sort = Sort.by(direction, props);
+             }
+         }
+
          return BaseResponse.ok(
-                 iInternshipService.getAvailableUsersForInternship(internshipId, jobId, page, size)
+                 iInternshipService.getAvailableUsersForInternship(internshipId, jobId, page, size, sort)
          );
      }
 

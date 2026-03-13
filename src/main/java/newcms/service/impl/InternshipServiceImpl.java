@@ -190,7 +190,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size) {
+    public Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size, Sort sort) {
         if (internshipId == null || jobId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId 和 jobId 不能为空");
         }
@@ -232,12 +232,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             repMap.put("id", Constant.NOT_IN);
         }
 
-        // 3. 通过通用的 getSomeRecords 分页查询 BaseUser
+        // 3. 通过通用的 getSomeRecords 分页查询 BaseUser（带排序）
+        Sort finalSort = (sort == null) ? Sort.unsorted() : sort;
         return iCommonService.getSomeRecords(
                 "BaseUser",
                 userSearchKeys,
                 repMap,
-                Sort.unsorted(),
+                finalSort,
                 pageNum,
                 pageSize
         );
