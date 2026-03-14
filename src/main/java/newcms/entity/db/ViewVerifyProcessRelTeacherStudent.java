@@ -1,5 +1,6 @@
 package newcms.entity.db;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.Setter;
@@ -66,5 +67,8 @@ public class ViewVerifyProcessRelTeacherStudent extends BaseInfo {
     // 来自 base_user 表的字段（审核人）
     @jakarta.persistence.Column(columnDefinition = "varchar(50) comment '审核人姓名'")
     private String verifyUserName;
+
+    @Column(columnDefinition = "varchar(1000) comment '备注'")
+    private String remarks;
 }
 
