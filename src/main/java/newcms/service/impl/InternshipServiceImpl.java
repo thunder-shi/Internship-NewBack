@@ -189,6 +189,61 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
     }
 
+    @Override
+    public Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size, Sort sort) {
+        if (internshipId == null || jobId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 和 jobId 不能为空");
+        }
+
+        int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
+        int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+
+        // 1. 查出该实习项目下已经在 RelIntershipUser 中关联过的 userId 列表（只看未删除的关联）
+        JSONObject relSearchKeys = new JSONObject();
+        relSearchKeys.put("internshipId", internshipId);
+        relSearchKeys.put("isDeleted", 0);
+
+        @SuppressWarnings("unchecked")
+        Page<Object> relPage = (Page<Object>) iCommonService.getSomeRecords(
+                "RelIntershipUser", relSearchKeys, null, Sort.unsorted()
+        );
+
+        List<Object> relList = relPage.getContent();
+        List<Integer> usedUserIds = relList.stream()
+                .map(FastJsonUtil::toJson)
+                .map(json -> json.getInteger("userId"))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        // 2. 组装 BaseUser 的查询条件：
+        //    - jobId = 前端传入 jobId
+        //    - id NOT IN (已关联且未删除的 userId 列表)
+        JSONObject userSearchKeys = new JSONObject();
+        userSearchKeys.put("jobId", jobId);
+
+        Map<String, String> repMap = new HashMap<>();
+
+        if (!usedUserIds.isEmpty()) {
+            String idStr = usedUserIds.stream()
+                    .map(String::valueOf)
+                    .collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
+            userSearchKeys.put("id", idStr);
+            // 使用 Constant.NOT_IN 实现 “id NOT IN (...)”
+            repMap.put("id", Constant.NOT_IN);
+        }
+
+        // 3. 通过通用的 getSomeRecords 分页查询 BaseUser（带排序）
+        Sort finalSort = (sort == null) ? Sort.unsorted() : sort;
+        return iCommonService.getSomeRecords(
+                "BaseUser",
+                userSearchKeys,
+                repMap,
+                finalSort,
+                pageNum,
+                pageSize
+        );
+    }
+
 
 
     // ==================== 实习计划流程（需要审核） ====================

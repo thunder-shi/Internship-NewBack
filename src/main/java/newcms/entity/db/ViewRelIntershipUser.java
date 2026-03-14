@@ -39,7 +39,6 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
     private Integer isAudit;
     private String reason;
     private String phone;
-    private String currentVerifyTypeName;
     private String currentVerifyTypeId;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
@@ -51,6 +50,24 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
     private Integer relationId;
     private Integer processId;
 
+    private Integer relIntershipUserId;
+
+  
+    private Integer verifyTypeId;
+
+  
+    private Integer verifyFirstRoleId ;
+
+ 
+
+
+    private Integer verifyThirdRoleId ;
+
+ 
+    private Integer verifyFourthRoleId ;
+
+
+    private Integer verifyFifthRoleId;
     // private Integer processTypeId;
 
     // private Integer verifyTypeId;
