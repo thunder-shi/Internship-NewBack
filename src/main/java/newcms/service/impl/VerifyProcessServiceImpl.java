@@ -331,7 +331,6 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer relationId = verifyProcess.getRelationId();
         String tableName = verifyProcess.getTableName();
         Integer createUserId = verifyProcess.getCreateUserId();
-        String verifyUserId = verifyProcess.getVerifyUserId();
         // 获取 RelProcessInternship 记录（获取审核角色配置和 verifyTypeId）
         Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
         if (relObj == null) {
@@ -339,17 +338,16 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer internshipId = relJson.getInteger("internshipId");
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
 
-        // 从 MainInternship 获取 currentVerifyTypeId
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) {
-            logger.warn("未找到实习项目记录 {}", internshipId);
+        // 从对应的业务实体表获取 currentVerifyTypeId（每个审核条目独立跟踪审核级别）
+        Object entityObj = iCommonService.getOneRecordById(tableName, relationId);
+        if (entityObj == null) {
+            logger.warn("未找到业务实体记录 {} id={}", tableName, relationId);
             return;
         }
-        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
-        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
+        JSONObject entityJson = FastJsonUtil.toJson(entityObj);
+        Integer currentVerifyTypeId = entityJson.getInteger("currentVerifyTypeId");
 
         if (currentVerifyTypeId == null) {
             currentVerifyTypeId = 2; // 默认一级审核
@@ -360,11 +358,11 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
         int nextLevel = currentVerifyTypeId + 1;
 
-        // 更新 MainInternship 的 currentVerifyTypeId
-        JSONObject updateInternshipJson = new JSONObject();
-        updateInternshipJson.put("id", internshipId);
-        updateInternshipJson.put("currentVerifyTypeId", nextLevel);
-        iCommonService.saveOneRecord("MainInternship", updateInternshipJson);
+        // 更新业务实体表的 currentVerifyTypeId
+        JSONObject updateEntityJson = new JSONObject();
+        updateEntityJson.put("id", relationId);
+        updateEntityJson.put("currentVerifyTypeId", nextLevel);
+        iCommonService.saveOneRecord(tableName, updateEntityJson);
 
         if (nextLevel <= verifyTypeId) {
             // 还有下一级审核：创建新审核记录
@@ -427,20 +425,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return 0;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer internshipId = relJson.getInteger("internshipId");
 
-        // 2. 从 MainInternship 获取 currentVerifyTypeId
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) {
-            return 0;
-        }
-        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
-        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
-        if (currentVerifyTypeId == null) {
-            currentVerifyTypeId = 2;
-        }
-
-        // 3. 查询该流程下所有待处理的 MainVerifyProcess 记录（isAudit = -1 或 0）
+        // 2. 查询该流程下所有待处理的 MainVerifyProcess 记录（isAudit = -1 或 0）
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("processId", processId);
         Page<Object> allPage = (Page<Object>) iCommonService.getSomeRecords(

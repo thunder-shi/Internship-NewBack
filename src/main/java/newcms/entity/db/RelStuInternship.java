@@ -24,4 +24,7 @@ public class RelStuInternship extends BaseInfo {
 
     @Column(nullable = false, columnDefinition = "int unsigned default '1' comment '志愿排序（第1志愿，第2志愿）'")
     private Integer sort = 1;
+
+    @Column(columnDefinition = "integer default '1' comment '当前处在的审核级别'")
+    private Integer currentVerifyTypeId = 1;
 }
