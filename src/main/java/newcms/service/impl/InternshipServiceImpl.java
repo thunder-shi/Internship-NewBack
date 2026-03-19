@@ -295,25 +295,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             return;
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer internshipId = relJson.getInteger("internshipId");
 
-        // 3. 从 MainInternship 获取 currentVerifyTypeId
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) {
-            logger.warn("退回后新建记录失败：未找到实习项目 {}", internshipId);
+        // 3. 从对应的业务实体表获取 currentVerifyTypeId（每个审核条目独立跟踪审核级别）
+        Object entityObj = iCommonService.getOneRecordById(tableName, relationId);
+        if (entityObj == null) {
+            logger.warn("退回后新建记录失败：未找到业务实体 {} id={}", tableName, relationId);
             return;
         }
-        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
-        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
+        JSONObject entityJson = FastJsonUtil.toJson(entityObj);
+        Integer currentVerifyTypeId = entityJson.getInteger("currentVerifyTypeId");
 
         // 4. 退回时 currentVerifyTypeId - 1，回退到上一级审核
         //    但不低于 2（第一级审核的初始值），第一级退回时保持原级别
         if (currentVerifyTypeId != null && currentVerifyTypeId > 2) {
             currentVerifyTypeId -= 1;
             JSONObject updateJson = new JSONObject();
-            updateJson.put("id", internshipId);
+            updateJson.put("id", relationId);
             updateJson.put("currentVerifyTypeId", currentVerifyTypeId);
-            iCommonService.saveOneRecord("MainInternship", updateJson);
+            iCommonService.saveOneRecord(tableName, updateJson);
         }
 
         // 5. 重新计算回退后级别的审核人

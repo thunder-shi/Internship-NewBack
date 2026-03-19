@@ -22,4 +22,7 @@ public class RelTeacherStudent extends NameRemarkInfo {
 
     @Column(columnDefinition = "int unsigned not null comment '外键，关联表1（学生）'")
     private Integer stuId;
+
+    @Column(columnDefinition = "integer default '1' comment '当前处在的审核级别'")
+    private Integer currentVerifyTypeId = 1;
 }
