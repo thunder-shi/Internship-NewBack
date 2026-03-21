@@ -46,6 +46,63 @@ public class DataListServiceImpl extends Base implements IDataListService {
     public Object getSomeRecords(String tblName, JSONObject searchKeys, Map<String, String> regMap, Sort sort, Integer page, Integer size) {
         Object rawRet;
         rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+        // 老师申报题目兼容：历史数据可能没有初始化 MainVerifyProcess，按 relationId+tableName 查询为空时自动补建
+        if ("MainVerifyProcess".equals(tblName) && searchKeys != null) {
+            Integer relationId = searchKeys.getInteger("relationId");
+            String tableName = searchKeys.getString("tableName");
+            if (relationId != null && ("RelTitleTeacher".equals(tableName) || "RelTeacherStudent".equals(tableName))) {
+                JSONObject pageJson = FastJsonUtil.toJson(rawRet);
+                if (pageJson != null && pageJson.getJSONArray("content") != null && pageJson.getJSONArray("content").isEmpty()) {
+                    Object relationObj = iCommonService.getOneRecordById(tableName, relationId);
+                    if (relationObj != null) {
+                        JSONObject relationJson = FastJsonUtil.toJson(relationObj);
+                        Integer internshipId = relationJson.getInteger("internshipId");
+                        Integer createUserId = relationJson.getInteger("teacherId");
+                        if (internshipId != null && createUserId != null) {
+                            iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tableName);
+                            rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                        }
+                    }
+                }
+            }
+        }
+        // 老师申报题目列表：view 中 verify_process_id 依赖 MainVerifyProcess；历史数据可能未建审核单，此处补建后重查一页
+        if ("ViewRelTitleTeacher".equals(tblName)) {
+            JSONObject pageJson = FastJsonUtil.toJson(rawRet);
+            if (pageJson != null && pageJson.getJSONArray("content") != null) {
+                boolean anyCreated = false;
+                for (Object o : pageJson.getJSONArray("content")) {
+                    JSONObject row = FastJsonUtil.toJson(o);
+                    if (row == null) {
+                        continue;
+                    }
+                    Integer verifyProcessId = row.getInteger("verifyProcessId");
+                    if (verifyProcessId != null && verifyProcessId != 0) {
+                        continue;
+                    }
+                    Integer relationId = row.getInteger("id");
+                    Integer internshipId = row.getInteger("internshipId");
+                    Integer teacherId = row.getInteger("teacherId");
+                    if (relationId == null || internshipId == null || teacherId == null) {
+                        continue;
+                    }
+                    JSONObject verifySearch = new JSONObject();
+                    verifySearch.put("relationId", relationId);
+                    verifySearch.put("tableName", "RelTitleTeacher");
+                    @SuppressWarnings("unchecked")
+                    Page<Object> verifyPage = (Page<Object>) iCommonService.getSomeRecords(
+                            "MainVerifyProcess", verifySearch, null, Sort.unsorted(), 1, 10);
+                    if (verifyPage != null && verifyPage.getContent() != null && verifyPage.getContent().isEmpty()) {
+                        iInternshipService.createFirstVerifyProcessForRelTeacherStudent(
+                                relationId, internshipId, teacherId, "RelTitleTeacher");
+                        anyCreated = true;
+                    }
+                }
+                if (anyCreated) {
+                    rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                }
+            }
+        }
         return rawRet;
     }
 
@@ -128,15 +185,15 @@ public class DataListServiceImpl extends Base implements IDataListService {
         }
         Object saved = iCommonService.saveOneRecord(tblName, node);
 
-        // 老师申报题目：新增 RelTeacherStudent 后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）
-        if ("RelTeacherStudent".equals(tblName) && isNew && saved != null) {
+        // 老师申报题目：新增题目后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）
+        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName)) && isNew && saved != null) {
             try {
                 JSONObject savedJson = FastJsonUtil.toJson(saved);
                 Integer relationId = savedJson.getInteger("id");
                 Integer internshipId = savedJson.getInteger("internshipId");
                 Integer createUserId = savedJson.getInteger("teacherId");
                 if (relationId != null && internshipId != null && createUserId != null) {
-                    iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId);
+                    iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tblName);
                 }
             } catch (Exception e) {
                 logger.warn("老师申报题目创建审核记录失败，不影响保存: {}", e.getMessage());
@@ -165,11 +222,11 @@ public class DataListServiceImpl extends Base implements IDataListService {
     @Override
     public Object deleteSomeNodes(String tblName, List<Integer> ids) {
         // 老师申报题目：删除题目时同步清理其 MainVerifyProcess 审核记录
-        if ("RelTeacherStudent".equals(tblName) && ids != null) {
+        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName)) && ids != null) {
             for (Integer relationId : ids) {
                 if (relationId != null) {
                     try {
-                        iInternshipService.deleteVerifyProcessByRelationIdAndTableName(relationId, "RelTeacherStudent");
+                        iInternshipService.deleteVerifyProcessByRelationIdAndTableName(relationId, tblName);
                     } catch (Exception e) {
                         logger.warn("删除题目时清理审核记录失败, relationId={}: {}", relationId, e.getMessage());
                     }
