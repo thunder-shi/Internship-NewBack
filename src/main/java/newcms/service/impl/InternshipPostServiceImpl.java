@@ -26,18 +26,18 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     @Resource
     private IVerifyProcessService iVerifyProcessService;
 
-    private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternship";
+    private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternshipPost";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
     private static final String TABLE_MAIN_INTERNSHIP_POST = "MainInternshipPost";
-    private static final String VIEW_VERIFY_PROCESS_REL_STU_INTERNSHIP = "ViewVerifyProcessRelStuInternship";
+    private static final String VIEW_VERIFY_PROCESS_REL_STU_INTERNSHIP = "ViewVerifyProcessRelStuInternshipPost";
 
     @Override
     public Object stuSelPost(Integer studentId, Integer oldPostId, Integer newPostId) {
-        Integer finalRelStuInternshipId = null;
+        Integer finalRelStuInternshipPostId = null;
         
         if (oldPostId != 0 && newPostId == 0) {
             // 情况一：取消岗位选择
-            JSONObject recordA = findRelStuInternshipRecord(studentId, oldPostId);
+            JSONObject recordA = findRelStuInternshipPostRecord(studentId, oldPostId);
             if (recordA == null) {
                 throw BaseResponse.moreInfoError.error("未找到对应的学生实习岗位选择记录");
             }
@@ -47,29 +47,29 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             return null;
         } else if (oldPostId != 0 && newPostId != 0) {
             // 情况二：更换岗位
-            JSONObject recordA = findRelStuInternshipRecord(studentId, oldPostId);
+            JSONObject recordA = findRelStuInternshipPostRecord(studentId, oldPostId);
             if (recordA == null) {
                 throw BaseResponse.moreInfoError.error("未找到对应的学生实习岗位选择记录");
             }
             Integer recordAId = recordA.getInteger("id");
             changePost(recordA, oldPostId, newPostId);
-            finalRelStuInternshipId = recordAId;
+            finalRelStuInternshipPostId = recordAId;
         } else if (oldPostId == 0 && newPostId != 0) {
             // 情况三：第一次选择岗位
             JSONObject recordA = selectPostFirstTime(studentId, newPostId);
-            finalRelStuInternshipId = recordA.getInteger("id");
+            finalRelStuInternshipPostId = recordA.getInteger("id");
         } else {
             throw BaseResponse.parameterInvalid.error("参数错误：oldPostId 和 newPostId 不能同时为 0");
         }
 
-        // 查询并返回 ViewVerifyProcessRelStuInternship 完整实体
-        return findViewVerifyProcessRelStuInternship(finalRelStuInternshipId);
+        // 查询并返回 ViewVerifyProcessRelStuInternshipPost 完整实体
+        return findViewVerifyProcessRelStuInternshipPost(finalRelStuInternshipPostId);
     }
 
     /**
-     * 查询 RelStuInternship 表，根据 studentId 和 internshipPostId 找到对应记录
+     * 查询 RelStuInternshipPost 表，根据 studentId 和 internshipPostId 找到对应记录
      */
-    private JSONObject findRelStuInternshipRecord(Integer studentId, Integer internshipPostId) {
+    private JSONObject findRelStuInternshipPostRecord(Integer studentId, Integer internshipPostId) {
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("studentId", studentId);
         searchKeys.put("internshipPostId", internshipPostId);
@@ -93,7 +93,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         // 1. 删除 MainVerifyProcess 记录
         deleteMainVerifyProcessRecord(recordAId);
 
-        // 2. 删除 RelStuInternship 记录
+        // 2. 删除 RelStuInternshipPost 记录
         iCommonService.deleteRecordByDelflag(TABLE_REL_STU_INTERNSHIP, recordAId);
 
         // 3. 更新 MainInternshipPost 的 nowPersonNum - 1
@@ -106,7 +106,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     private void changePost(JSONObject recordA, Integer oldPostId, Integer newPostId) {
         Integer recordAId = recordA.getInteger("id");
 
-        // 1. 修改 RelStuInternship 的 internshipPostId 为 newPostId
+        // 1. 修改 RelStuInternshipPost 的 internshipPostId 为 newPostId
         updateRelStuInternshipPostId(recordAId, newPostId);
 
         // 2. 修改 MainVerifyProcess 的 isAudit 为 0（已提交）
@@ -142,7 +142,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     }
 
     /**
-     * 更新 RelStuInternship 的 internshipPostId
+     * 更新 RelStuInternshipPost 的 internshipPostId
      */
     private void updateRelStuInternshipPostId(Integer recordAId, Integer newPostId) {
         JSONObject updateJson = new JSONObject();
@@ -220,10 +220,10 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
     /**
      * 第一次选择岗位
-     * @return 创建的 RelStuInternship 记录
+     * @return 创建的 RelStuInternshipPost 记录
      */
     private JSONObject selectPostFirstTime(Integer studentId, Integer newPostId) {
-        // 1. 新增 RelStuInternship 记录
+        // 1. 新增 RelStuInternshipPost 记录
         JSONObject newRelJson = new JSONObject();
         newRelJson.put("studentId", studentId);
         newRelJson.put("internshipPostId", newPostId);
@@ -300,9 +300,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     }
 
     /**
-     * 查询 ViewVerifyProcessRelStuInternship 视图，根据 relationId 找到对应记录
+     * 查询 ViewVerifyProcessRelStuInternshipPost 视图，根据 relationId 找到对应记录
      */
-    private Object findViewVerifyProcessRelStuInternship(Integer relationId) {
+    private Object findViewVerifyProcessRelStuInternshipPost(Integer relationId) {
         if (relationId == null) {
             return null;
         }

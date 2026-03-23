@@ -486,9 +486,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
-        if (isAudit != null && (isAudit == 2 || isAudit == 3) && Id != null) {
-            // 退回：立即在同一审核级别新建一条 isAudit=-1（保存未提交）的记录，
-            // 原退回记录保留作为历史，前端可查看完整退回原因链
+        if (isAudit != null && isAudit == 3 && Id != null) {
+            // 仅审核退回（isAudit=3）才新建 isAudit=-1 的记录，允许用户修改后重新提交
+            // 审核不通过（isAudit=2）流程直接终止，用户无法再修改
             createPendingRecordAfterBack(Id);
         }
 
