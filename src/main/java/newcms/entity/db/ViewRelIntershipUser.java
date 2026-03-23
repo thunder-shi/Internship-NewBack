@@ -23,7 +23,7 @@ public class ViewRelIntershipUser extends NameRemarkInfo {
      * 教师职务名称
      */
     private String jobName;
-
+    private Integer jobId;
     /**
      * 教师姓名
      */

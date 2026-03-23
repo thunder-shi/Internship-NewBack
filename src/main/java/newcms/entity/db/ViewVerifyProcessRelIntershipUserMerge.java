@@ -30,6 +30,7 @@ public class ViewVerifyProcessRelIntershipUserMerge extends BaseInfo {
     // 来自 view_base_user
     private String userName;
     private String jobName;
+    private Integer jobId;
     private String phone;
 
     // 来自 main_internship

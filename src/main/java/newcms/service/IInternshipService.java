@@ -68,6 +68,11 @@ public interface IInternshipService {
      */
     Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size, Sort sort);
 
+    /**
+     * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。
+     */
+    Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId);
+
     // /**
     //  * 获取当前进行中的实习项目
     //  * 根据流程类型代码查询当前时间范围内的实习项目

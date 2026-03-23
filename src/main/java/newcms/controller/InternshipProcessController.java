@@ -171,6 +171,29 @@ public class InternshipProcessController {
          );
      }
 
+    @Operation(
+            summary = "根据实习项目初始化师生关系和审核记录",
+            description = "按 internshipId 关联岗位和学生选择记录，创建 RelTeacherStudent，并同步创建 MainVerifyProcess"
+    )
+    @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object initTeacherStudentByInternshipId(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("initTeacherStudentByInternshipId", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
+        Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
+        String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
+        if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
+        }
+        return BaseResponse.ok(
+                iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId)
+        );
+    }
+
     // @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")
     // @PostMapping(value = "/getNowInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
     // public Object getNowInternship(@RequestBody JSONObject requestJson) {
