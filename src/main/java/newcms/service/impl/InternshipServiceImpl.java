@@ -486,13 +486,46 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
-        if (isAudit != null && isAudit == 3 && Id != null) {
-            // 仅审核退回（isAudit=3）才新建 isAudit=-1 的记录，允许用户修改后重新提交
-            // 审核不通过（isAudit=2）流程直接终止，用户无法再修改
-            createPendingRecordAfterBack(Id);
+        if (isAudit != null && (isAudit == 2 || isAudit == 3) && Id != null) {
+            // 判断是否为学生报名岗位
+            Object verifyObj = iCommonService.getOneRecordById("MainVerifyProcess", Id);
+            String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
+            boolean isStuPost = "RelStuInternshipPost".equals(tableName);
+
+            if (isStuPost) {
+                // 学生报名岗位：退回/未通过都直接减人数，不新建重新提交记录
+                Integer relationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
+                decreasePostPersonNumByRelation(relationId);
+            } else if (isAudit == 3) {
+                // 其他类型：退回时新建 isAudit=-1 的记录，允许用户修改后重新提交
+                createPendingRecordAfterBack(Id);
+            }
         }
 
         return saved;
+    }
+
+    /**
+     * 学生报名岗位被拒绝/退回时，根据 RelStuInternshipPost 的 relationId 减少对应岗位的当前人数
+     */
+    private void decreasePostPersonNumByRelation(Integer relationId) {
+        if (relationId == null) return;
+        Object relObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
+        if (relObj == null) return;
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer postId = relJson.getInteger("internshipPostId");
+        if (postId == null) return;
+
+        Object postObj = iCommonService.getOneRecordById("MainInternshipPost", postId);
+        if (postObj == null) return;
+        JSONObject postJson = FastJsonUtil.toJson(postObj);
+        Integer currentNum = postJson.getInteger("nowPersonNum");
+        if (currentNum == null || currentNum <= 0) return;
+
+        JSONObject updateJson = new JSONObject();
+        updateJson.put("id", postId);
+        updateJson.put("nowPersonNum", currentNum - 1);
+        iCommonService.saveOneRecord("MainInternshipPost", updateJson);
     }
 
     /**
