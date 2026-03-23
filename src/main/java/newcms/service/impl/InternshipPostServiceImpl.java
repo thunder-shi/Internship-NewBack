@@ -104,6 +104,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
      * 更换岗位
      */
     private void changePost(JSONObject recordA, Integer oldPostId, Integer newPostId) {
+        // 检查新岗位是否已满
+        checkPostCapacity(newPostId);
+
         Integer recordAId = recordA.getInteger("id");
 
         // 1. 修改 RelStuInternshipPost 的 internshipPostId 为 newPostId
@@ -179,6 +182,23 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     }
 
     /**
+     * 检查岗位是否已达最大可选人数
+     */
+    private void checkPostCapacity(Integer postId) {
+        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, postId);
+        if (postObj == null) {
+            throw BaseResponse.moreInfoError.error("未找到岗位记录，ID: " + postId);
+        }
+        JSONObject postJson = FastJsonUtil.toJson(postObj);
+        Integer nowPersonNum = postJson.getInteger("nowPersonNum");
+        Integer allPersonNum = postJson.getInteger("allPersonNum");
+        if (nowPersonNum == null) nowPersonNum = 0;
+        if (allPersonNum != null && allPersonNum > 0 && nowPersonNum >= allPersonNum) {
+            throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
+        }
+    }
+
+    /**
      * 减少岗位当前人数
      */
     private void decreasePostPersonNum(Integer postId) {
@@ -223,7 +243,10 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
      * @return 创建的 RelStuInternshipPost 记录
      */
     private JSONObject selectPostFirstTime(Integer studentId, Integer newPostId) {
-        // 1. 新增 RelStuInternshipPost 记录
+        // 1. 检查岗位是否已满
+        checkPostCapacity(newPostId);
+
+        // 2. 新增 RelStuInternshipPost 记录
         JSONObject newRelJson = new JSONObject();
         newRelJson.put("studentId", studentId);
         newRelJson.put("internshipPostId", newPostId);
@@ -231,29 +254,18 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         JSONObject recordA = FastJsonUtil.toJson(savedRelObj);
         Integer recordAId = recordA.getInteger("id");
 
-        // 2. 更新 MainInternshipPost 的 nowPersonNum + 1
-        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, newPostId);
-        if (postObj == null) {
-            throw BaseResponse.moreInfoError.error("未找到岗位记录，ID: " + newPostId);
-        }
-        JSONObject postJson = FastJsonUtil.toJson(postObj);
-        Integer currentNum = postJson.getInteger("nowPersonNum");
-        if (currentNum == null) {
-            currentNum = 0;
-        }
-        int newNum = currentNum + 1;
-        JSONObject updatePostJson = new JSONObject();
-        updatePostJson.put("id", newPostId);
-        updatePostJson.put("nowPersonNum", newNum);
-        iCommonService.saveOneRecord(TABLE_MAIN_INTERNSHIP_POST, updatePostJson);
+        // 3. 更新 MainInternshipPost 的 nowPersonNum + 1
+        increasePostPersonNum(newPostId);
 
-        // 获取 internshipId（实体B的internshipId）
+        // 4. 获取 internshipId
+        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, newPostId);
+        JSONObject postJson = FastJsonUtil.toJson(postObj);
         Integer internshipId = postJson.getInteger("internshipId");
         if (internshipId == null) {
             throw BaseResponse.moreInfoError.error("岗位记录缺少 internshipId");
         }
 
-        // 3. 创建 MainVerifyProcess 记录
+        // 5. 创建 MainVerifyProcess 记录
         createMainVerifyProcessForFirstSelection(recordAId, internshipId, studentId);
         
         return recordA;
@@ -263,7 +275,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
      * 为第一次选择岗位创建 MainVerifyProcess 记录
      */
     private void createMainVerifyProcessForFirstSelection(Integer relationId, Integer internshipId, Integer createUserId) {
-        // 使用 GetInternshipProcess 获取流程信息（C）
+        // 获取流程配置
         Object processObj = iVerifyProcessService.GetInternshipProcess(
                 internshipId, Constant.PROCESS_TYPE.EXTERNAL_STUDENT_SELECT_POST);
         JSONObject processJson = FastJsonUtil.toJson(processObj);
@@ -272,31 +284,49 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             throw BaseResponse.moreInfoError.error("未找到流程配置信息");
         }
 
-        // 从 MainInternship 获取当前审核级别
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) {
-            throw BaseResponse.moreInfoError.error("未找到实习项目记录");
-        }
-        JSONObject internshipJson = FastJsonUtil.toJson(internshipObj);
-        Integer currentVerifyTypeId = internshipJson.getInteger("currentVerifyTypeId");
-        if (currentVerifyTypeId == null) {
-            currentVerifyTypeId = 2; // 默认一级审核
-        }
-        Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(processJson, currentVerifyTypeId);
+        // 判断是否需要审核（verifyTypeId >= 2 表示需要审核）
+        Integer verifyTypeId = processJson.getInteger("verifyTypeId");
+        boolean needsVerify = verifyTypeId != null && verifyTypeId >= 2;
 
-        // 计算审核用户ID
-        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+        if (needsVerify) {
+            // 需要审核：从第一级（level=2）开始
+            Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(processJson, 2);
+            String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
 
-        // 创建 MainVerifyProcess 记录
-        JSONObject verifyJson = new JSONObject();
-        verifyJson.put("relationId", relationId);
-        verifyJson.put("processId", processId);
-        verifyJson.put("createUserId", createUserId);
-        verifyJson.put("verifyUserId", verifyUserId);
-        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT); // 0-已提交
-        verifyJson.put("reason", "");
-        verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
-        iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+            // 更新 RelStuInternshipPost 的 currentVerifyTypeId 为 2（第一级审核开始）
+            JSONObject updateEntityJson = new JSONObject();
+            updateEntityJson.put("id", relationId);
+            updateEntityJson.put("currentVerifyTypeId", 2);
+            iCommonService.saveOneRecord(TABLE_REL_STU_INTERNSHIP, updateEntityJson);
+
+            // 创建待审核记录
+            JSONObject verifyJson = new JSONObject();
+            verifyJson.put("relationId", relationId);
+            verifyJson.put("processId", processId);
+            verifyJson.put("createUserId", createUserId);
+            verifyJson.put("verifyUserId", verifyUserId);
+            verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT); // 0-已提交待审核
+            verifyJson.put("reason", "");
+            verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
+            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+        } else {
+            // 无需审核：直接通过（currentVerifyTypeId=2 > verifyTypeId=1，标记审核完成）
+            JSONObject updateEntityJson = new JSONObject();
+            updateEntityJson.put("id", relationId);
+            updateEntityJson.put("currentVerifyTypeId", 2);
+            iCommonService.saveOneRecord(TABLE_REL_STU_INTERNSHIP, updateEntityJson);
+
+            // 创建自动通过记录
+            JSONObject verifyJson = new JSONObject();
+            verifyJson.put("relationId", relationId);
+            verifyJson.put("processId", processId);
+            verifyJson.put("createUserId", createUserId);
+            verifyJson.put("verifyUserId", "系统自动通过");
+            verifyJson.put("isAudit", 1); // 直接通过
+            verifyJson.put("reason", "系统自动通过");
+            verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
+            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+        }
     }
 
     /**
