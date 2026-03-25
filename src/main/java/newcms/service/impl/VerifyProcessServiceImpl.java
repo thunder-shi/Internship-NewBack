@@ -100,6 +100,33 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                     }
                 }
             }
+
+            // (1.2) 收集该实习项目下所有岗位所属企业的 schoolId
+            //       学生报名岗位时，审核人可能是企业管理员，其 schoolId 与学生/学校不同
+            JSONObject postSearchKeys = new JSONObject();
+            postSearchKeys.put("internshipId", internshipId);
+            Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainInternshipPost", postSearchKeys, null, Sort.unsorted(), 1, 10000);
+            Set<Integer> postTypeIds = postPage.getContent().stream()
+                    .map(FastJsonUtil::toJson)
+                    .map(json -> json.getInteger("postTypeId"))
+                    .filter(id -> id != null)
+                    .collect(Collectors.toSet());
+            for (Integer postTypeId : postTypeIds) {
+                Object postTypeObj = iCommonService.getOneRecordById("ViewBasePostType", postTypeId);
+                if (postTypeObj != null) {
+                    Integer companyId = FastJsonUtil.toJson(postTypeObj).getInteger("companyId");
+                    if (companyId != null) {
+                        Object deptObj = iCommonService.getOneRecordById("ViewBaseDepartment", companyId);
+                        if (deptObj != null) {
+                            Integer companySchoolId = FastJsonUtil.toJson(deptObj).getInteger("schoolId");
+                            if (companySchoolId != null) {
+                                schoolIds.add(companySchoolId);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         logger.info("GetVerifyUserId: verifyRoleId={}, createUserId={}, internshipId={}, 搜索schoolIds={}",

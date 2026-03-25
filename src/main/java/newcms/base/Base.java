@@ -141,6 +141,36 @@ public class Base extends Constant {
                         String delimiter = valueStr.contains("|") ? "\\|" : ",";
                         list.add(root.get(field.getName()).in(Arrays.stream(valueStr.split(delimiter)).toArray()));
                     }
+                    // FIND_IN: 多值字段的集合交集匹配
+                    // 字段值形如 "10|15|20"（管道分隔），搜索值形如 "5,10,15"（逗号分隔）
+                    // 生成 SQL: FIND_IN_SET('5', REPLACE(field, '|', ',')) > 0 OR FIND_IN_SET('10', ...) OR ...
+                    else if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.FIND_IN)) {
+                        String valueStr = searchKeys.getString(field.getName());
+                        String delimiter = valueStr.contains("|") ? "\\|" : ",";
+                        String[] values = valueStr.split(delimiter);
+                        // 将字段中的 | 替换为 , 以配合 FIND_IN_SET
+                        Expression<String> replacedField = criteriaBuilder.function(
+                                "REPLACE", String.class,
+                                root.get(field.getName()),
+                                criteriaBuilder.literal("|"),
+                                criteriaBuilder.literal(",")
+                        );
+                        List<Predicate> orPredicates = new ArrayList<>();
+                        for (String val : values) {
+                            val = val.trim();
+                            if (!val.isEmpty()) {
+                                Expression<Integer> findInSet = criteriaBuilder.function(
+                                        "FIND_IN_SET", Integer.class,
+                                        criteriaBuilder.literal(val),
+                                        replacedField
+                                );
+                                orPredicates.add(criteriaBuilder.greaterThan(findInSet, 0));
+                            }
+                        }
+                        if (!orPredicates.isEmpty()) {
+                            list.add(criteriaBuilder.or(orPredicates.toArray(new Predicate[0])));
+                        }
+                    }
                     //NOT_IN
                     else if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.NOT_IN)) {
                         String valueStr = searchKeys.getString(field.getName());

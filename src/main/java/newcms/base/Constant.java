@@ -20,6 +20,7 @@ public class Constant {
     public static final String LIKE = "≈";
     public static final String IN = "()";
     public static final String NOT_IN = "!()";
+    public static final String FIND_IN = "fi()";
     public static final String RANGE = "<=>";
     /**
      * APPLICATION_NAME 项目名
