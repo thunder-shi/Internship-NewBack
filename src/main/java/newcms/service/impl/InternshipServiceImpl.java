@@ -348,18 +348,19 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @SuppressWarnings("unchecked")
     private List<Object> getStudentInternshipSelections(Integer internshipId) {
-        JSONObject postSearchKeys = new JSONObject();
-        postSearchKeys.put("internshipId", internshipId);
-        Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
-                "MainInternshipPost", postSearchKeys, null, Sort.unsorted(), 1, POST_PAGE_SIZE);
-        List<Object> postList = postPage.getContent();
-        if (postList == null || postList.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到实习岗位记录");
+        JSONObject postMergeSearchKeys = new JSONObject();
+        postMergeSearchKeys.put("internshipId", internshipId);
+        postMergeSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Page<Object> postMergePage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessInternshipPostMerge", postMergeSearchKeys, null, Sort.unsorted(), 1, POST_PAGE_SIZE);
+        List<Object> postMergeList = postMergePage.getContent();
+        if (postMergeList == null || postMergeList.isEmpty()) {
+            throw BaseResponse.moreInfoError.error("未找到审核已通过的实习岗位记录");
         }
 
-        List<Integer> postIds = postList.stream()
+        List<Integer> postIds = postMergeList.stream()
                 .map(FastJsonUtil::toJson)
-                .map(postJson -> postJson.getInteger("id"))
+                .map(this::parseInternshipPostIdFromInternshipPostMergeRow)
                 .filter(Objects::nonNull)
                 .distinct()
                 .collect(Collectors.toList());
@@ -367,17 +368,37 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.moreInfoError.error("未找到有效岗位ID");
         }
 
-        JSONObject relStuSearchKeys = new JSONObject();
-        relStuSearchKeys.put("internshipPostId", postIds.stream().map(String::valueOf).collect(Collectors.joining(",")));
-        Map<String, String> relStuRepMap = new HashMap<>();
-        relStuRepMap.put("internshipPostId", Constant.IN);
-        Page<Object> relStuPage = (Page<Object>) iCommonService.getSomeRecords(
-                "RelStuInternshipPost", relStuSearchKeys, relStuRepMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> relStuList = relStuPage.getContent();
-        if (relStuList == null || relStuList.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到学生岗位选择记录");
+        JSONObject mergeSearchKeys = new JSONObject();
+        mergeSearchKeys.put("internshipPostId", postIds.stream().map(String::valueOf).collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA)));
+        mergeSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Map<String, String> mergeRepMap = new HashMap<>();
+        mergeRepMap.put("internshipPostId", Constant.IN);
+        Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelStuInternshipPostMerge", mergeSearchKeys, mergeRepMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> mergeList = mergePage.getContent();
+        if (mergeList == null || mergeList.isEmpty()) {
+            throw BaseResponse.moreInfoError.error("未找到审核已通过的学生岗位选择记录");
         }
-        return relStuList;
+        return mergeList;
+    }
+
+    private Integer parseInternshipPostIdFromInternshipPostMergeRow(JSONObject row) {
+        if (row == null) {
+            return null;
+        }
+        Integer id = row.getInteger("internshipPostId");
+        if (id != null) {
+            return id;
+        }
+        String raw = row.getString("internshipPostId");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -427,7 +448,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int createdVerifyProcessCount = 0;
         for (Object relStuObj : relStuList) {
             JSONObject relStuJson = FastJsonUtil.toJson(relStuObj);
-            Integer relInternshipId = relStuJson.getInteger("id");
+            Integer relInternshipId = relStuJson.getInteger("relationId");
+            if (relInternshipId == null) {
+                relInternshipId = relStuJson.getInteger("id");
+            }
             if (relInternshipId == null) {
                 continue;
             }
