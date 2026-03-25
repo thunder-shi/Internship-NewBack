@@ -89,7 +89,7 @@ public class InternshipProcessController {
         return BaseResponse.ok(iVerifyProcessService.activateProcess(node));
     }
 
-     @Operation(summary = "根据角色和创建人获取审核人ID串", description = "返回同校、指定审核角色下的所有审核人ID，使用竖线分隔，如：12|14|17")
+     @Operation(summary = "根据角色和创建人获取审核人ID串", description = "返回同校、指定审核角色下的所有审核人ID，使用竖线分隔，如：12|14|17。企业用户等无学校归属的用户需传 internshipId 以定位对应学校。")
      @PostMapping(value = "/getVerifyUserIds", consumes = MediaType.APPLICATION_JSON_VALUE)
      public Object getVerifyUserIds(@RequestBody JSONObject requestJson) {
          LogUtil.loggerRecord("getVerifyUserIds", requestJson);
@@ -99,11 +99,13 @@ public class InternshipProcessController {
          JSONObject node = requestJson.getJSONObject("node");
          Integer verifyRoleId = node != null ? node.getInteger("verifyRoleId") : requestJson.getInteger("verifyRoleId");
          Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
+         Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
          if (createUserId == null) {
              throw BaseResponse.parameterInvalid.error("createUserId 不能为空");
          }
          // verifyRoleId 允许为 null/0，此时服务方法会按约定返回空字符串
-         String verifyUserIds = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+         // internshipId 可选，企业用户等无 schoolId 的用户需传此参数以回落到实习项目所属学校
+         String verifyUserIds = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
          return BaseResponse.ok(verifyUserIds);
      }
 
