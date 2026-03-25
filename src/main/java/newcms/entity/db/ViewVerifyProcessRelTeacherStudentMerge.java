@@ -27,15 +27,19 @@ public class ViewVerifyProcessRelTeacherStudentMerge extends BaseInfo {
 
     // 来自 main_internship
     private String internshipName;
+    private String internshipPostName;
 
     // 用户姓名
     private String teacherName;
     private String createUserName;
     private String verifyUserName;
-
+    private String studentName;
+    private Integer jobId;
     // 来自 view_rel_process_internship
     private Integer currentVerifyTypeId;
     private String currentVerifyTypeName;
+    private Integer processTypeId;
+    private Integer verifyTypeId;
 
     // 计算字段
     private String currentRoleName;
