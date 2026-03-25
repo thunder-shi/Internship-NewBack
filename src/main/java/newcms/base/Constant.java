@@ -114,6 +114,16 @@ public class Constant {
         public static final int BACK = 3; public static final String BACKNAME = "审核退回";
     }
 
+    /**
+     * 实习项目下初始化师生关联时的导师类型（initTeacherStudentByInternshipId 等接口）。
+     */
+    public static final class TUTOR_ASSIGN_KIND {
+        /** 校内导师：自动按负载均衡分配 teacherId，并支持已有合并视图时的待审核重分配 */
+        public static final int INTERNAL = 1;
+        /** 企业导师：仅创建 RelTeacherStudent 与审核记录，teacherId 留空，由后续接口手动指定 */
+        public static final int ENTERPRISE = 2;
+    }
+
     // 实习流程类型
     public static final class PROCESS_TYPE {
         public static final String INTERNSHIP_PLAN_MAKE = "INTERNSHIP_PLAN_MAKE"; // 实习计划制定

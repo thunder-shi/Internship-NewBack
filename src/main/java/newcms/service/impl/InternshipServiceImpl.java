@@ -249,8 +249,21 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId) {
+    public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
+                                                    Integer tutorAssignKind) {
         validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
+        int kind = tutorAssignKind == null ? Constant.TUTOR_ASSIGN_KIND.INTERNAL : tutorAssignKind;
+        if (kind != Constant.TUTOR_ASSIGN_KIND.INTERNAL && kind != Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
+            throw BaseResponse.parameterInvalid.error("tutorAssignKind 无效，可选：1=校内导师 2=企业导师");
+        }
+
+        if (kind == Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
+            List<Object> relStuList = getStudentInternshipSelections(internshipId);
+            int[] createdCounts = createTeacherStudentAndVerifyRecords(
+                    internshipId, processId, createUserId, verifyUserId, relStuList, null, false);
+            return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
+        }
+
         List<Integer> teacherIds = getTeacherIdsForAssignment();
 
         if (hasVerifyTeacherStudentMergeData(internshipId)) {
@@ -261,8 +274,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         List<Object> relStuList = getStudentInternshipSelections(internshipId);
         Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
         int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                internshipId, processId, createUserId, verifyUserId, relStuList, teacherLoadMap
-        );
+                internshipId, processId, createUserId, verifyUserId, relStuList, teacherLoadMap, true);
         return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
     }
 
@@ -443,7 +455,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     private int[] createTeacherStudentAndVerifyRecords(Integer internshipId, Integer processId, Integer createUserId,
                                                        String verifyUserId, List<Object> relStuList,
-                                                       Map<Integer, Integer> teacherLoadMap) {
+                                                       Map<Integer, Integer> teacherLoadMap,
+                                                       boolean assignInternalTeacher) {
         int createdRelTeacherStudentCount = 0;
         int createdVerifyProcessCount = 0;
         for (Object relStuObj : relStuList) {
@@ -456,11 +469,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 continue;
             }
 
-            Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
-            teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
-
             JSONObject relTeacherStudentJson = new JSONObject();
-            relTeacherStudentJson.put("teacherId", selectedTeacherId);
+            if (assignInternalTeacher) {
+                Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+                teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
+                relTeacherStudentJson.put("teacherId", selectedTeacherId);
+            }
             relTeacherStudentJson.put("relInternshipId", relInternshipId);
             relTeacherStudentJson.put("internshipId", internshipId);
             Object savedRelTeacherStudent = iCommonService.saveOneRecord("RelTeacherStudent", relTeacherStudentJson);

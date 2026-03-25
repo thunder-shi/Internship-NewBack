@@ -70,8 +70,12 @@ public interface IInternshipService {
 
     /**
      * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。
+     *
+     * @param tutorAssignKind 导师类型，见 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND}；
+     *                        传 {@code null} 时与 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND#INTERNAL} 相同语义（校内导师）
      */
-    Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId);
+    Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
+                                            Integer tutorAssignKind);
 
     // /**
     //  * 获取当前进行中的实习项目

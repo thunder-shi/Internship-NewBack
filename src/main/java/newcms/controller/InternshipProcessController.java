@@ -173,7 +173,9 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "根据实习项目初始化师生关系和审核记录",
-            description = "按 internshipId 关联岗位和学生选择记录，创建 RelTeacherStudent，并同步创建 MainVerifyProcess"
+            description = "按 internshipId 关联岗位和学生选择记录，创建 RelTeacherStudent，并同步创建 MainVerifyProcess。"
+                    + "tutorAssignKind：1=校内导师（自动均衡分配 teacherId，支持待审核重分配）；"
+                    + "2=企业导师（teacherId 留空，后续手动分配）。缺省为 1。"
     )
     @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object initTeacherStudentByInternshipId(@RequestBody JSONObject requestJson) {
@@ -186,11 +188,13 @@ public class InternshipProcessController {
         Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
         Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
         String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
+        Integer tutorAssignKind = node != null ? node.getInteger("tutorAssignKind") : requestJson.getInteger("tutorAssignKind");
         if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
         }
         return BaseResponse.ok(
-                iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId)
+                iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
+                        tutorAssignKind)
         );
     }
 
