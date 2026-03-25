@@ -269,7 +269,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
         }
 
-        List<Integer> teacherIds = getTeacherIdsForAssignment();
+        List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
 
         if (hasVerifyTeacherStudentMergeData(internshipId)) {
             int updatedPendingTeacherCount = reassignTeachersForPendingRecords(internshipId, teacherIds);
@@ -358,19 +358,21 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Integer> getTeacherIdsForAssignment() {
+    private List<Integer> getTeacherIdsForAssignment(Integer internshipId) {
         JSONObject teacherSearchKeys = new JSONObject();
+        teacherSearchKeys.put("internshipId", internshipId);
         teacherSearchKeys.put("jobId", TEACHER_JOB_ID);
+        teacherSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
         Page<Object> teacherPage = (Page<Object>) iCommonService.getSomeRecords(
-                "BaseUser", teacherSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Integer> teacherIds = teacherPage.getContent().stream()
                 .map(FastJsonUtil::toJson)
-                .map(teacherJson -> teacherJson.getInteger("id"))
+                .map(teacherJson -> teacherJson.getInteger("userId"))
                 .filter(Objects::nonNull)
                 .distinct()
                 .collect(Collectors.toList());
         if (teacherIds.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到可分配教师（BaseUser.jobId=4）");
+            throw BaseResponse.moreInfoError.error("未找到审核通过的可分配校内导师（ViewVerifyProcessRelIntershipUserMerge.jobId=3, isAudit=PASS）");
         }
         return teacherIds;
     }
