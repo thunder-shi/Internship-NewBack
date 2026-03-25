@@ -291,7 +291,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         if (needsVerify) {
             // 需要审核：从第一级（level=2）开始
             Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(processJson, 2);
-            String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+            String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
 
             // 更新 RelStuInternshipPost 的 currentVerifyTypeId 为 2（第一级审核开始）
             JSONObject updateEntityJson = new JSONObject();

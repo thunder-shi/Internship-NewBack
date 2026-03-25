@@ -146,7 +146,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             isAudit = 1;
         } else {
             // 需要审核：获取审核用户ID字符串，状态为未提交
-            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId, internshipId);
             isAudit = -1;
         }
 
@@ -576,7 +576,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         // 5. 重新计算回退后级别的审核人
         Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentVerifyTypeId);
-        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId);
+        Integer internshipIdForBack = relJson.getInteger("internshipId");
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipIdForBack);
 
         // 5. 新建待提交记录（isAudit=-1）
         JSONObject newVerifyJson = new JSONObject();
@@ -698,7 +699,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int isAudit;
         if (needsVerify) {
             Integer verifyFirstRoleId = processJson.getInteger("verifyFirstRoleId");
-            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId);
+            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId, internshipId);
             isAudit = Constant.AUDIT_STATUS.SAVE; // -1 保存未提交
         } else {
             verifyUserId = "系统自动通过";
