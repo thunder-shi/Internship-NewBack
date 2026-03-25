@@ -22,7 +22,7 @@ public class ViewVerifyProcessRelTeacherStudentMerge extends BaseInfo {
     private String name;
     private Integer teacherId;
     private Integer internshipId;
-    private Integer stuId;
+    private Integer relInternshipId;
     private String remarks;
 
     // 来自 main_internship

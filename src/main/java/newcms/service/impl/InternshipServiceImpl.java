@@ -372,7 +372,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Map<String, String> relStuRepMap = new HashMap<>();
         relStuRepMap.put("internshipPostId", Constant.IN);
         Page<Object> relStuPage = (Page<Object>) iCommonService.getSomeRecords(
-                "RelStuInternship", relStuSearchKeys, relStuRepMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                "RelStuInternshipPost", relStuSearchKeys, relStuRepMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Object> relStuList = relStuPage.getContent();
         if (relStuList == null || relStuList.isEmpty()) {
             throw BaseResponse.moreInfoError.error("未找到学生岗位选择记录");
