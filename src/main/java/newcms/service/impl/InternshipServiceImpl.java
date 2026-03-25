@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class InternshipServiceImpl extends Base implements IInternshipService {
-    private static final int TEACHER_JOB_ID = 4;
+    private static final int TEACHER_JOB_ID = 3;
     private static final int LARGE_PAGE_SIZE = 100000;
     private static final int POST_PAGE_SIZE = 10000;
 
@@ -250,17 +250,21 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                                    Integer tutorAssignKind) {
+                                                    Integer tutorAssignKind, Integer currentVerifyTypeId) {
         validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
         int kind = tutorAssignKind == null ? Constant.TUTOR_ASSIGN_KIND.INTERNAL : tutorAssignKind;
         if (kind != Constant.TUTOR_ASSIGN_KIND.INTERNAL && kind != Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
             throw BaseResponse.parameterInvalid.error("tutorAssignKind 无效，可选：1=校内导师 2=企业导师");
         }
+        int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
 
         if (kind == Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
             List<Object> relStuList = getStudentInternshipSelections(internshipId);
             int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                    internshipId, processId, createUserId, verifyUserId, relStuList, null, false);
+                    internshipId, processId, createUserId, verifyUserId, relStuList, null, false, verifyType);
             return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
         }
 
@@ -274,7 +278,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         List<Object> relStuList = getStudentInternshipSelections(internshipId);
         Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
         int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                internshipId, processId, createUserId, verifyUserId, relStuList, teacherLoadMap, true);
+                internshipId, processId, createUserId, verifyUserId, relStuList, teacherLoadMap, true, verifyType);
         return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
     }
 
@@ -306,6 +310,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private boolean hasVerifyTeacherStudentMergeData(Integer internshipId) {
         JSONObject viewSearchKeys = new JSONObject();
         viewSearchKeys.put("internshipId", internshipId);
+        // 只判断“校内导师”记录是否存在，避免企业导师初始化后导致校内流程误走重分配分支
+        viewSearchKeys.put("jobId", TEACHER_JOB_ID);
         Page<Object> verifyMergePage = (Page<Object>) iCommonService.getSomeRecords(
                 "ViewVerifyProcessRelTeacherStudentMerge", viewSearchKeys, null, Sort.unsorted(), 1, 1);
         return verifyMergePage.getContent() != null && !verifyMergePage.getContent().isEmpty();
@@ -316,6 +322,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         JSONObject pendingVerifySearchKeys = new JSONObject();
         pendingVerifySearchKeys.put("internshipId", internshipId);
         pendingVerifySearchKeys.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        // 只重分配“校内导师(jobId=3)”的待审核记录，避免把企业导师(teacherId=0/或jobId=4)串改为校内导师
+        pendingVerifySearchKeys.put("jobId", TEACHER_JOB_ID);
         Page<Object> pendingVerifyPage = (Page<Object>) iCommonService.getSomeRecords(
                 "ViewVerifyProcessRelTeacherStudentMerge", pendingVerifySearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Object> pendingVerifyList = pendingVerifyPage.getContent();
@@ -456,7 +464,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private int[] createTeacherStudentAndVerifyRecords(Integer internshipId, Integer processId, Integer createUserId,
                                                        String verifyUserId, List<Object> relStuList,
                                                        Map<Integer, Integer> teacherLoadMap,
-                                                       boolean assignInternalTeacher) {
+                                                       boolean assignInternalTeacher,
+                                                       int currentVerifyTypeId) {
         int createdRelTeacherStudentCount = 0;
         int createdVerifyProcessCount = 0;
         for (Object relStuObj : relStuList) {
@@ -475,6 +484,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
                 relTeacherStudentJson.put("teacherId", selectedTeacherId);
             }
+            relTeacherStudentJson.put("currentVerifyTypeId", currentVerifyTypeId);
             relTeacherStudentJson.put("relInternshipId", relInternshipId);
             relTeacherStudentJson.put("internshipId", internshipId);
             Object savedRelTeacherStudent = iCommonService.saveOneRecord("RelTeacherStudent", relTeacherStudentJson);

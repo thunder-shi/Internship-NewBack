@@ -73,9 +73,10 @@ public interface IInternshipService {
      *
      * @param tutorAssignKind 导师类型，见 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND}；
      *                        传 {@code null} 时与 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND#INTERNAL} 相同语义（校内导师）
+     * @param currentVerifyTypeId 新建 RelTeacherStudent 的 currentVerifyTypeId；不传默认 1
      */
     Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                            Integer tutorAssignKind);
+                                            Integer tutorAssignKind, Integer currentVerifyTypeId);
 
     // /**
     //  * 获取当前进行中的实习项目

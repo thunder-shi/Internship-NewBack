@@ -191,12 +191,13 @@ public class InternshipProcessController {
         Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
         String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
         Integer tutorAssignKind = node != null ? node.getInteger("tutorAssignKind") : requestJson.getInteger("tutorAssignKind");
+        Integer currentVerifyTypeId = node != null ? node.getInteger("currentVerifyTypeId") : requestJson.getInteger("currentVerifyTypeId");
         if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
         }
         return BaseResponse.ok(
                 iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
-                        tutorAssignKind)
+                        tutorAssignKind, currentVerifyTypeId)
         );
     }
 
