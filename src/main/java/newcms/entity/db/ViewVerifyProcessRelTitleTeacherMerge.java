@@ -36,6 +36,9 @@ public class ViewVerifyProcessRelTitleTeacherMerge extends BaseInfo {
     @Column(name = "m_internship_id")
     private Integer mInternshipId;
 
+    @Column(name = "is_limit")
+    private Integer isLimit;
+
     // 计算字段
     private String currentRoleName;
     private Boolean isAllVerified;

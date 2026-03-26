@@ -50,17 +50,39 @@ public class DataListServiceImpl extends Base implements IDataListService {
         if ("MainVerifyProcess".equals(tblName) && searchKeys != null) {
             Integer relationId = searchKeys.getInteger("relationId");
             String tableName = searchKeys.getString("tableName");
-            if (relationId != null && ("RelTitleTeacher".equals(tableName) || "RelTeacherStudent".equals(tableName))) {
+            if (relationId != null && ("RelTitleTeacher".equals(tableName) || "RelTeacherStudent".equals(tableName)
+                    || "RelTitleStudent".equals(tableName))) {
                 JSONObject pageJson = FastJsonUtil.toJson(rawRet);
                 if (pageJson != null && pageJson.getJSONArray("content") != null && pageJson.getJSONArray("content").isEmpty()) {
-                    Object relationObj = iCommonService.getOneRecordById(tableName, relationId);
-                    if (relationObj != null) {
-                        JSONObject relationJson = FastJsonUtil.toJson(relationObj);
-                        Integer internshipId = relationJson.getInteger("internshipId");
-                        Integer createUserId = relationJson.getInteger("teacherId");
-                        if (internshipId != null && createUserId != null) {
-                            iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tableName);
-                            rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                    if ("RelTitleStudent".equals(tableName)) {
+                        Object relStuObj = iCommonService.getOneRecordById(tableName, relationId);
+                        if (relStuObj != null) {
+                            JSONObject relStuJson = FastJsonUtil.toJson(relStuObj);
+                            Integer titleId = relStuJson.getInteger("titleId");
+                            Integer stuId = relStuJson.getInteger("stuId");
+                            if (titleId != null && stuId != null) {
+                                Object titleObj = iCommonService.getOneRecordById("RelTitleTeacher", titleId);
+                                if (titleObj != null) {
+                                    JSONObject titleJson = FastJsonUtil.toJson(titleObj);
+                                    Integer internshipId = titleJson.getInteger("internshipId");
+                                    if (internshipId != null) {
+                                        iInternshipService.createFirstVerifyProcessForRelTeacherStudent(
+                                                relationId, internshipId, stuId, tableName);
+                                        rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Object relationObj = iCommonService.getOneRecordById(tableName, relationId);
+                        if (relationObj != null) {
+                            JSONObject relationJson = FastJsonUtil.toJson(relationObj);
+                            Integer internshipId = relationJson.getInteger("internshipId");
+                            Integer createUserId = relationJson.getInteger("teacherId");
+                            if (internshipId != null && createUserId != null) {
+                                iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tableName);
+                                rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                            }
                         }
                     }
                 }
@@ -95,6 +117,39 @@ public class DataListServiceImpl extends Base implements IDataListService {
                     if (verifyPage != null && verifyPage.getContent() != null && verifyPage.getContent().isEmpty()) {
                         iInternshipService.createFirstVerifyProcessForRelTeacherStudent(
                                 relationId, internshipId, teacherId, "RelTitleTeacher");
+                        anyCreated = true;
+                    }
+                }
+                if (anyCreated) {
+                    rawRet = iCommonService.getSomeRecords(tblName, searchKeys, regMap, sort, page, size);
+                }
+            }
+        }
+        // 学生选题：view_rel_title_student 有数据但可能未建 MainVerifyProcess，补建后便于老师审核列表
+        if ("ViewRelTitleStudent".equals(tblName)) {
+            JSONObject pageJson = FastJsonUtil.toJson(rawRet);
+            if (pageJson != null && pageJson.getJSONArray("content") != null) {
+                boolean anyCreated = false;
+                for (Object o : pageJson.getJSONArray("content")) {
+                    JSONObject row = FastJsonUtil.toJson(o);
+                    if (row == null) {
+                        continue;
+                    }
+                    Integer relationId = row.getInteger("id");
+                    Integer internshipId = row.getInteger("internshipId");
+                    Integer stuId = row.getInteger("stuId");
+                    if (relationId == null || internshipId == null || stuId == null) {
+                        continue;
+                    }
+                    JSONObject verifySearch = new JSONObject();
+                    verifySearch.put("relationId", relationId);
+                    verifySearch.put("tableName", "RelTitleStudent");
+                    @SuppressWarnings("unchecked")
+                    Page<Object> verifyPage = (Page<Object>) iCommonService.getSomeRecords(
+                            "MainVerifyProcess", verifySearch, null, Sort.unsorted(), 1, 10);
+                    if (verifyPage != null && verifyPage.getContent() != null && verifyPage.getContent().isEmpty()) {
+                        iInternshipService.createFirstVerifyProcessForRelTeacherStudent(
+                                relationId, internshipId, stuId, "RelTitleStudent");
                         anyCreated = true;
                     }
                 }
@@ -185,18 +240,34 @@ public class DataListServiceImpl extends Base implements IDataListService {
         }
         Object saved = iCommonService.saveOneRecord(tblName, node);
 
-        // 老师申报题目：新增题目后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）
-        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName)) && isNew && saved != null) {
+        // 老师申报题目 / 学生选题：新增后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）
+        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName) || "RelTitleStudent".equals(tblName)) && isNew && saved != null) {
             try {
                 JSONObject savedJson = FastJsonUtil.toJson(saved);
                 Integer relationId = savedJson.getInteger("id");
-                Integer internshipId = savedJson.getInteger("internshipId");
-                Integer createUserId = savedJson.getInteger("teacherId");
-                if (relationId != null && internshipId != null && createUserId != null) {
-                    iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tblName);
+                if ("RelTitleStudent".equals(tblName)) {
+                    Integer titleId = savedJson.getInteger("titleId");
+                    Integer stuId = savedJson.getInteger("stuId");
+                    if (relationId != null && titleId != null && stuId != null) {
+                        Object titleObj = iCommonService.getOneRecordById("RelTitleTeacher", titleId);
+                        if (titleObj != null) {
+                            JSONObject titleJson = FastJsonUtil.toJson(titleObj);
+                            Integer internshipId = titleJson.getInteger("internshipId");
+                            if (internshipId != null) {
+                                iInternshipService.createFirstVerifyProcessForRelTeacherStudent(
+                                        relationId, internshipId, stuId, tblName);
+                            }
+                        }
+                    }
+                } else {
+                    Integer internshipId = savedJson.getInteger("internshipId");
+                    Integer createUserId = savedJson.getInteger("teacherId");
+                    if (relationId != null && internshipId != null && createUserId != null) {
+                        iInternshipService.createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, createUserId, tblName);
+                    }
                 }
             } catch (Exception e) {
-                logger.warn("老师申报题目创建审核记录失败，不影响保存: {}", e.getMessage());
+                logger.warn("创建选题/师生关联审核记录失败，不影响保存: {}", e.getMessage());
             }
         }
 
@@ -221,8 +292,8 @@ public class DataListServiceImpl extends Base implements IDataListService {
      */
     @Override
     public Object deleteSomeNodes(String tblName, List<Integer> ids) {
-        // 老师申报题目：删除题目时同步清理其 MainVerifyProcess 审核记录
-        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName)) && ids != null) {
+        // 老师申报题目 / 学生选题：删除时同步清理其 MainVerifyProcess 审核记录
+        if (("RelTeacherStudent".equals(tblName) || "RelTitleTeacher".equals(tblName) || "RelTitleStudent".equals(tblName)) && ids != null) {
             for (Integer relationId : ids) {
                 if (relationId != null) {
                     try {

@@ -7,7 +7,7 @@ import lombok.EqualsAndHashCode;
 import newcms.entity.base.NameRemarkInfo;
 
 /**
- * 教师职务关联视图
+ * 教师题目关联视图
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -66,4 +66,7 @@ public class ViewRelTitleTeacher extends NameRemarkInfo {
      */
     @Column(name = "verify_process_id")
     private Integer verifyProcessId;
+
+    @Column(name = "is_limit")
+    private Integer isLimit;
 }

@@ -30,5 +30,9 @@ public class ViewVerifyProcessRelTitleTeacher extends NameRemarkInfo {
     @Column(name = "m_internship_id")
     private Integer mInternshipId;
 
+    @Column(name = "is_limit")
+    private Integer isLimit;
+
+
     private String currentVerifyTypeName;
 }

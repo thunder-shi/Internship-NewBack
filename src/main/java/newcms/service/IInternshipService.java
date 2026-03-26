@@ -45,7 +45,8 @@ public interface IInternshipService {
     Object auditProcess(JSONObject node);
 
     /**
-     * 老师申报题目：新增关联记录后创建首条 MainVerifyProcess。
+     * 老师申报题目 / 师生互选-学生选题：新增关联记录后创建首条 MainVerifyProcess。
+     * RelTitleTeacher、RelTeacherStudent 走「老师申报题目」流程；RelTitleStudent 走 INTERNAL_STUDENT_TEACHER_MATCH。
      * 需审核时 isAudit=-1（保存未提交），无需审核时 isAudit=1（直接通过）。
      */
     void createFirstVerifyProcessForRelTeacherStudent(Integer relationId, Integer internshipId, Integer createUserId, String tableName);

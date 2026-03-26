@@ -666,6 +666,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     private static final String TABLE_REL_TEACHER_STUDENT = "RelTeacherStudent";
     private static final String TABLE_REL_TITLE_TEACHER = "RelTitleTeacher";
+    private static final String TABLE_REL_TITLE_STUDENT = "RelTitleStudent";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
 
     @Override
@@ -677,13 +678,19 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         String targetTableName = TABLE_REL_TEACHER_STUDENT;
         if (TABLE_REL_TITLE_TEACHER.equals(tableName)) {
             targetTableName = TABLE_REL_TITLE_TEACHER;
+        } else if (TABLE_REL_TITLE_STUDENT.equals(tableName)) {
+            targetTableName = TABLE_REL_TITLE_STUDENT;
         } else if (tableName != null && !TABLE_REL_TEACHER_STUDENT.equals(tableName)) {
             logger.warn("createFirstVerifyProcessForRelTeacherStudent 未识别 tableName={}, 使用默认 {}", tableName, TABLE_REL_TEACHER_STUDENT);
         }
-        // 1. 获取「老师申报题目」流程配置（ViewRelProcessInternship 的 id 即 RelProcessInternship.id）
-        Object processObj = iVerifyProcessService.GetInternshipProcess(internshipId, Constant.PROCESS_TYPE.INTERNAL_TEACHER_DECLARE_TOPIC);
+        String processTypeCode = Constant.PROCESS_TYPE.INTERNAL_TEACHER_DECLARE_TOPIC;
+        if (TABLE_REL_TITLE_STUDENT.equals(targetTableName)) {
+            processTypeCode = Constant.PROCESS_TYPE.INTERNAL_STUDENT_TEACHER_MATCH;
+        }
+        // 1. 获取流程配置（ViewRelProcessInternship 的 id 即 RelProcessInternship.id）
+        Object processObj = iVerifyProcessService.GetInternshipProcess(internshipId, processTypeCode);
         if (processObj == null) {
-            logger.warn("未找到老师申报题目流程配置, internshipId={}", internshipId);
+            logger.warn("未找到实习流程配置, internshipId={}, processTypeCode={}", internshipId, processTypeCode);
             return;
         }
         JSONObject processJson = FastJsonUtil.toJson(processObj);

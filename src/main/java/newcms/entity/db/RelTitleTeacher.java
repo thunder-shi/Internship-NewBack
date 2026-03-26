@@ -18,4 +18,7 @@ public class RelTitleTeacher extends NameRemarkInfo {
 
     @Column(columnDefinition = "integer default '1' comment '当前处在的审核级别'")
     private Integer currentVerifyTypeId = 1;
+
+    @Column(columnDefinition = "smallint not null comment '是否限选'")
+    private Integer isLimit;
 }
