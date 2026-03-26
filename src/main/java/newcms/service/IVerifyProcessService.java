@@ -25,6 +25,20 @@ public interface IVerifyProcessService {
     String GetVerifyUserId(Integer verifyRoleId, Integer createUserId);
 
     /**
+     * 根据审核角色ID和当前用户ID获取审核用户ID字符串（带 internshipId 回落）
+     * <p>
+     * 当 createUserId 对应的用户没有 schoolId（如企业用户）时，
+     * 通过 internshipId 查找实习项目创建者的 schoolId 作为回落，
+     * 确保教务处管理员等校级角色能审核企业提交的记录。
+     * </p>
+     * @param verifyRoleId 审核角色ID
+     * @param createUserId 当前创建用户ID
+     * @param internshipId 实习项目ID（用于回落查找学校，可为 null）
+     * @return 审核用户ID字符串，用竖线分隔（格式：12|14|17）
+     */
+    String GetVerifyUserId(Integer verifyRoleId, Integer createUserId, Integer internshipId);
+
+    /**
      * 刷新指定用户相关的待审核记录
      * 当特定用户的角色或部门发生变更时调用
      *

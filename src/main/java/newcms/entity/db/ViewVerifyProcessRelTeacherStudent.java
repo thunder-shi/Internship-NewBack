@@ -46,8 +46,8 @@ public class ViewVerifyProcessRelTeacherStudent extends BaseInfo {
     @jakarta.persistence.Column(columnDefinition = "int unsigned comment '外键，关联表16（实习）'")
     private Integer internshipId;
 
-    @jakarta.persistence.Column(columnDefinition = "int unsigned comment '外键，关联表1（学生）'")
-    private Integer stuId;
+    // @jakarta.persistence.Column(columnDefinition = "int unsigned comment '外键，关联表1（学生）'")
+    // private Integer stuId;
 
     @jakarta.persistence.Column(columnDefinition = "int unsigned comment '外键，关联表11（实习批次）'")
     private Integer relInternshipId;

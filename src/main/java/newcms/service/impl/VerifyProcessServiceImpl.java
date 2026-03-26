@@ -59,65 +59,118 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId) {
+        return GetVerifyUserId(verifyFirstRoleId, createUserId, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId, Integer internshipId) {
         if (verifyFirstRoleId == null || verifyFirstRoleId == 0) {
-            // 如果没有审核角色ID（null 或 0 均视为未配置），返回空字符串
             return "";
         }
         if (createUserId == null) {
             throw BaseResponse.parameterInvalid.error("创建用户ID不能为空");
         }
 
-        // (1) 获取当前用户的 schoolId
+        // (1) 获取提交人的 schoolId
         Object currentUserObj = iCommonService.getOneRecordById("ViewBaseUser", createUserId);
         if (currentUserObj == null) {
             throw BaseResponse.moreInfoError.error("未找到当前用户信息");
         }
-        JSONObject currentUserJson = FastJsonUtil.toJson(currentUserObj);
-        Integer schoolId = currentUserJson.getInteger("schoolId");
-        
-        if (schoolId == null) {
-            // 如果当前用户没有 schoolId，返回空字符串
+        Integer userSchoolId = FastJsonUtil.toJson(currentUserObj).getInteger("schoolId");
+
+        // (1.1) 收集需要搜索的 schoolId 集合
+        //       企业用户的 schoolId 与学校不同，需要同时搜索两边，让每条审核记录自动匹配正确的审核人
+        Set<Integer> schoolIds = new java.util.LinkedHashSet<>();
+        if (userSchoolId != null) {
+            schoolIds.add(userSchoolId);
+        }
+        if (internshipId != null) {
+            Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+            if (internshipObj != null) {
+                Integer creatorId = FastJsonUtil.toJson(internshipObj).getInteger("creatorId");
+                if (creatorId != null) {
+                    Object creatorObj = iCommonService.getOneRecordById("ViewBaseUser", creatorId);
+                    if (creatorObj != null) {
+                        Integer creatorSchoolId = FastJsonUtil.toJson(creatorObj).getInteger("schoolId");
+                        if (creatorSchoolId != null) {
+                            schoolIds.add(creatorSchoolId);
+                        }
+                    }
+                }
+            }
+
+            // (1.2) 收集该实习项目下所有岗位所属企业的 schoolId
+            //       学生报名岗位时，审核人可能是企业管理员，其 schoolId 与学生/学校不同
+            JSONObject postSearchKeys = new JSONObject();
+            postSearchKeys.put("internshipId", internshipId);
+            Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainInternshipPost", postSearchKeys, null, Sort.unsorted(), 1, 10000);
+            Set<Integer> postTypeIds = postPage.getContent().stream()
+                    .map(FastJsonUtil::toJson)
+                    .map(json -> json.getInteger("postTypeId"))
+                    .filter(id -> id != null)
+                    .collect(Collectors.toSet());
+            for (Integer postTypeId : postTypeIds) {
+                Object postTypeObj = iCommonService.getOneRecordById("ViewBasePostType", postTypeId);
+                if (postTypeObj != null) {
+                    Integer companyId = FastJsonUtil.toJson(postTypeObj).getInteger("companyId");
+                    if (companyId != null) {
+                        Object deptObj = iCommonService.getOneRecordById("ViewBaseDepartment", companyId);
+                        if (deptObj != null) {
+                            Integer companySchoolId = FastJsonUtil.toJson(deptObj).getInteger("schoolId");
+                            if (companySchoolId != null) {
+                                schoolIds.add(companySchoolId);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        logger.info("GetVerifyUserId: verifyRoleId={}, createUserId={}, internshipId={}, 搜索schoolIds={}",
+                verifyFirstRoleId, createUserId, internshipId, schoolIds);
+
+        if (schoolIds.isEmpty()) {
+            logger.warn("GetVerifyUserId: createUserId={} 无法确定任何 schoolId", createUserId);
             return "";
         }
 
-        // (2) 查找 ViewBaseUser 中所有 schoolId 相同的用户，获取他们的 id 列表
-        JSONObject schoolSearchKeys = new JSONObject();
-        schoolSearchKeys.put("schoolId", schoolId);
-        Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
-        List<Object> schoolUserList = schoolUserPage.getContent();
-        Set<Integer> schoolUserIds = schoolUserList.stream()
-                .map(user -> {
-                    JSONObject userJson = FastJsonUtil.toJson(user);
-                    return userJson.getInteger("id");
-                })
-                .filter(id -> id != null)
-                .collect(Collectors.toSet());
+        // (2) 查找所有相关 schoolId 下的用户 ID（合并）
+        Set<Integer> candidateUserIds = new java.util.HashSet<>();
+        for (Integer sid : schoolIds) {
+            JSONObject schoolSearchKeys = new JSONObject();
+            schoolSearchKeys.put("schoolId", sid);
+            Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
+            schoolUserPage.getContent().stream()
+                    .map(user -> FastJsonUtil.toJson(user).getInteger("id"))
+                    .filter(id -> id != null)
+                    .forEach(candidateUserIds::add);
+        }
 
-        if (schoolUserIds.isEmpty()) {
+        if (candidateUserIds.isEmpty()) {
             return "";
         }
 
-        // (3) 查找 RelUserRole 中所有 roleId = verifyFirstRoleId 的记录
+        // (3) 查找拥有该审核角色的用户
         JSONObject roleSearchKeys = new JSONObject();
         roleSearchKeys.put("roleId", verifyFirstRoleId);
         Page<Object> userRolePage = (Page<Object>) iCommonService.getSomeRecords(
                 "RelUserRole", roleSearchKeys, null, Sort.unsorted(), 1, 10000);
         List<Object> userRoleList = userRolePage.getContent();
 
-        // (4) 筛选出 userId 在 schoolUserIds 中的记录，并提取 userId
+        // (4) 取交集：候选用户（企业+学校） ∩ 拥有审核角色
         List<Integer> verifyUserIds = userRoleList.stream()
-                .map(role -> {
-                    JSONObject roleJson = FastJsonUtil.toJson(role);
-                    return roleJson.getInteger("userId");
-                })
-                .filter(userId -> userId != null && schoolUserIds.contains(userId))
+                .map(role -> FastJsonUtil.toJson(role).getInteger("userId"))
+                .filter(userId -> userId != null && candidateUserIds.contains(userId))
                 .distinct()
                 .collect(Collectors.toList());
 
-        // (5) 将 userId 用竖线连接成字符串
+        logger.info("GetVerifyUserId: roleId={}, 候选用户数={}, 匹配审核人={}",
+                verifyFirstRoleId, candidateUserIds.size(), verifyUserIds);
+
         if (verifyUserIds.isEmpty()) {
             return "";
         }
@@ -210,9 +263,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 if (isAudit != null && (isAudit == -1 || isAudit == 0)) {
                     Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentLevel);
                     if (verifyRoleId != null && verifyRoleId != 0) {
-                        String cacheKey = verifyRoleId + ":" + record.getCreateUserId();
+                        Integer internshipId = relJson.getInteger("internshipId");
+                        String cacheKey = verifyRoleId + ":" + record.getCreateUserId() + ":" + internshipId;
                         String newVerifyUserId = verifyUserIdCache.computeIfAbsent(cacheKey,
-                                k -> GetVerifyUserId(verifyRoleId, record.getCreateUserId()));
+                                k -> GetVerifyUserId(verifyRoleId, record.getCreateUserId(), internshipId));
                         String oldVerifyUserId = record.getVerifyUserId();
 
                         if (!newVerifyUserId.equals(oldVerifyUserId)) {
@@ -269,7 +323,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         // iCommonService.saveOneRecord("RelProcessInternship", relJson);
         // 计算审核人
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
-        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId) : "系统自动通过";
+        Integer internshipId = relJson.getInteger("internshipId");
+        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId, internshipId) : "系统自动通过";
         // 创建审核记录
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", relationId);
@@ -367,7 +422,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         if (nextLevel <= verifyTypeId) {
             // 还有下一级审核：创建新审核记录
             Integer nextVerifyRoleId = getVerifyRoleIdByLevel(relJson, nextLevel);
-            String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId);
+            Integer internshipIdForVerify = relJson.getInteger("internshipId");
+            String nextVerifyUserId = GetVerifyUserId(nextVerifyRoleId, createUserId, internshipIdForVerify);
             // 创建下一级审核记录
             JSONObject nextVerifyJson = new JSONObject();
             nextVerifyJson.put("relationId", relationId);
@@ -445,7 +501,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             if (isAudit != null && (isAudit == -1 || isAudit == 0)) {
                 Integer verifyRoleId = getVerifyRoleIdByLevel(relJson, currentLevel);
                 if (verifyRoleId != null && verifyRoleId != 0) {
-                    String newVerifyUserId = GetVerifyUserId(verifyRoleId, createUserId);
+                    Integer internshipIdForRefresh = relJson.getInteger("internshipId");
+                    String newVerifyUserId = GetVerifyUserId(verifyRoleId, createUserId, internshipIdForRefresh);
                     String oldVerifyUserId = recordJson.getString("verifyUserId");
 
                     if (!newVerifyUserId.equals(oldVerifyUserId)) {

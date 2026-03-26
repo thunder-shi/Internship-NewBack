@@ -6,6 +6,7 @@ import newcms.utils.EncryptUtil;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.GeneralUtil;
 import newcms.utils.LogUtil;
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
@@ -98,6 +99,42 @@ public class DataListController extends CommonController {
       String key = encryptUtil.getKeyWord(requestJson.getString("keyWords"));
       JSONObject node = requestJson.getJSONObject("node");
       return BaseResponse.ok(iDataListService.editOneNode(key, node));
+    }
+
+    /**
+     * 批量编辑/新增。keyWords 经 {@link EncryptUtil#getKeyWord} 解密得到表名。<br>
+     * nodes：可为明文 JSON 数组字符串（trim 后以 {@code [} 开头则不再走解密）；或与 searchKey 相同传**加密字符串**，解密后为 JSON 数组；也支持明文 {@link JSONArray}。<br>
+     * 路径：dataList/editManyNodes
+     */
+    @PostMapping(value = "/editManyNodes", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object editManyNodes(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("editManyNodes", requestJson);
+        String key = encryptUtil.getKeyWord(requestJson.getString("keyWords"));
+        Object nodesRaw = requestJson.get("nodes");
+        JSONArray nodesArr;
+        if (nodesRaw instanceof String) {
+            String nodesStr = ((String) nodesRaw).trim();
+            // 前端常把数组序列化成字符串传入；若以 [ 开头则为明文，勿对整段调用 getKeyWord（会报 keyWord 格式错误）
+            if (nodesStr.startsWith("[")) {
+                nodesArr = JSONArray.parseArray(nodesStr);
+            } else {
+                nodesArr = JSONArray.parseArray(encryptUtil.getKeyWord(nodesStr));
+            }
+        } else {
+            nodesArr = requestJson.getJSONArray("nodes");
+        }
+        if (nodesArr == null || nodesArr.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("nodes 不能为空");
+        }
+        List<JSONObject> nodes = new ArrayList<>(nodesArr.size());
+        for (int i = 0; i < nodesArr.size(); i++) {
+            JSONObject item = nodesArr.getJSONObject(i);
+            if (item == null) {
+                throw BaseResponse.parameterInvalid.error("nodes 中存在空项或非对象");
+            }
+            nodes.add(item);
+        }
+        return BaseResponse.ok(iDataListService.editManyNodes(key, nodes));
     }
 
     @PostMapping(value = "/changeTwoNodes", consumes = MediaType.APPLICATION_JSON_VALUE)
