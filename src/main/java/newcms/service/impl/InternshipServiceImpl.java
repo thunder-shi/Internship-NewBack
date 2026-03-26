@@ -263,6 +263,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         if (kind == Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
+            ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, ENTERPRISE_TUTOR_JOB_ID);
             List<Object> relStuList = getStudentInternshipSelections(internshipId);
             int[] createdCounts = createTeacherStudentAndVerifyRecords(
                     internshipId, processId, createUserId, verifyUserId, relStuList, null, false, verifyType);
@@ -322,6 +323,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
         }
 
+        ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, ENTERPRISE_TUTOR_JOB_ID);
+
         // 1) 当前应覆盖的学生集合（岗位审核通过 + 学生选岗审核通过）
         List<Object> relStuList = getStudentInternshipSelections(internshipId);
 
@@ -359,6 +362,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @SuppressWarnings("unchecked")
     private List<Integer> getTeacherIdsForAssignment(Integer internshipId) {
+        // 师生合并视图中 isAudit=NOTPASS 时，按 relationId+processId+tableName 在 MainVerifyProcess 补建 SAVE（待提交）。
+        // 退回由其他接口处理，此处不处理 BACK。
+        ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, TEACHER_JOB_ID);
+
         JSONObject teacherSearchKeys = new JSONObject();
         teacherSearchKeys.put("internshipId", internshipId);
         teacherSearchKeys.put("jobId", TEACHER_JOB_ID);
@@ -375,6 +382,106 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.moreInfoError.error("未找到审核通过的可分配校内导师（ViewVerifyProcessRelIntershipUserMerge.jobId=3, isAudit=PASS）");
         }
         return teacherIds;
+    }
+
+    /**
+     * 从 ViewVerifyProcessRelTeacherStudentMerge 筛选本实习、指定导师类型（视图 jobId，如校内=3、企业=4）、审核未通过(NOTPASS) 的行，
+     * 按 relationId、processId、tableName 去重后，若 MainVerifyProcess 仍需补单则插入 isAudit=SAVE。
+     */
+    @SuppressWarnings("unchecked")
+    private void ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(Integer internshipId, int mergeJobId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.NOTPASS);
+        sk.put("jobId", mergeJobId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelTeacherStudentMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> rows = page.getContent();
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        Set<String> seen = new HashSet<>();
+        for (Object row : rows) {
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer relationId = j.getInteger("relationId");
+            Integer processId = j.getInteger("processId");
+            Integer createUserId = j.getInteger("createUserId");
+            String tableName = j.getString("tableName");
+            if (relationId == null || processId == null || createUserId == null) {
+                continue;
+            }
+            if (tableName == null || tableName.isEmpty()) {
+                tableName = TABLE_REL_TEACHER_STUDENT;
+            }
+            String dedupe = relationId + "_" + processId + "_" + tableName;
+            if (!seen.add(dedupe)) {
+                continue;
+            }
+            if (!needsNewPendingSubmitVerifyRecord(relationId, processId, tableName)) {
+                continue;
+            }
+            createPendingSubmitVerifyRecord(internshipId, relationId, processId, createUserId, tableName);
+        }
+    }
+
+    /**
+     * 判断是否需要为「审核不通过」补建待提交记录：<br>
+     * 若 MainVerifyProcess 最新一条已是 SAVE/SUBMIT/PASS/BACK，则不建（退回走其他接口）；<br>
+     * 若最新一条为 NOTPASS（或无任何记录），则建。
+     */
+    @SuppressWarnings("unchecked")
+    private boolean needsNewPendingSubmitVerifyRecord(Integer relationId, Integer processId, String tableName) {
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("processId", processId);
+        sk.put("tableName", tableName);
+        Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null,
+                Sort.by(Sort.Direction.DESC, "id"), 1, 1);
+        List<Object> list = vpPage.getContent();
+        if (list == null || list.isEmpty()) {
+            return true;
+        }
+        Integer isAudit = FastJsonUtil.toJson(list.get(0)).getInteger("isAudit");
+        if (isAudit == null) {
+            return true;
+        }
+        if (isAudit.equals(Constant.AUDIT_STATUS.SAVE) || isAudit.equals(Constant.AUDIT_STATUS.SUBMIT)) {
+            return false;
+        }
+        if (isAudit.equals(Constant.AUDIT_STATUS.PASS)) {
+            return false;
+        }
+        if (isAudit.equals(Constant.AUDIT_STATUS.BACK)) {
+            return false;
+        }
+        return isAudit.equals(Constant.AUDIT_STATUS.NOTPASS);
+    }
+
+    private void createPendingSubmitVerifyRecord(Integer internshipId, Integer relationId, Integer processId,
+                                                Integer createUserId, String tableName) {
+        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+        if (relObj == null) {
+            logger.warn("补建待提交审核失败：未找到流程配置 processId={}", processId);
+            return;
+        }
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(relJson, 2);
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", processId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("verifyUserId", verifyUserId);
+        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", tableName);
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+        logger.info("已补建待提交审核记录 tableName={}, relationId={}, processId={}, createUserId={}",
+                tableName, relationId, processId, createUserId);
     }
 
     @SuppressWarnings("unchecked")
