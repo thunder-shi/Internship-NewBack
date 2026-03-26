@@ -38,11 +38,13 @@ public interface IInternshipService {
     // ========================= 推进审核步骤 =========================
 
     /**
-     * 推进审核步骤
-     * @param node
-     * @return 保存后的审核信息
+     * 推进审核步骤。{@code node} 可为单条 {@link com.alibaba.fastjson.JSONObject}、
+     * {@link com.alibaba.fastjson.JSONArray}，或为二者的 JSON 字符串（如 {@code "[{\"id\":1},...]"}）。
+     *
+     * @param node 单条审核节点、节点数组或对应 JSON 文本
+     * @return 单条时为保存后的实体；数组或与顺序一致的保存结果列表
      */
-    Object auditProcess(JSONObject node);
+    Object auditProcess(Object node);
 
     /**
      * 老师申报题目：新增关联记录后创建首条 MainVerifyProcess。

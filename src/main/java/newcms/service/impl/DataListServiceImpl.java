@@ -213,6 +213,21 @@ public class DataListServiceImpl extends Base implements IDataListService {
         return saved;
     }
 
+    @Override
+    public List<Object> editManyNodes(String tblName, List<JSONObject> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("nodes 不能为空");
+        }
+        List<Object> results = new ArrayList<>(nodes.size());
+        for (JSONObject node : nodes) {
+            if (node == null) {
+                throw BaseResponse.parameterInvalid.error("nodes 中存在空项");
+            }
+            results.add(editOneNode(tblName, node));
+        }
+        return results;
+    }
+
     /**
      * 删除某些节点
      * @param tblName

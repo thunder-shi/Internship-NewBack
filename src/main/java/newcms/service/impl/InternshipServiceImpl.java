@@ -1,5 +1,6 @@
 package newcms.service.impl;
 
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
@@ -757,8 +758,53 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     // ==================== 实习计划流程（需要审核） ====================
 
+    /**
+     * 支持 node 为 Fastjson 对象/数组，或前端传来的 JSON 字符串（如 {@code "[{...},{...}]"} ）。
+     */
+    private Object unwrapAuditProcessNodeArg(Object node) {
+        if (!(node instanceof String raw)) {
+            return node;
+        }
+        String t = raw.trim();
+        if (t.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("node 不能为空");
+        }
+        if (t.startsWith("[")) {
+            return JSONArray.parseArray(t);
+        }
+        if (t.startsWith("{")) {
+            return JSONObject.parseObject(t);
+        }
+        throw BaseResponse.parameterInvalid.error("node 字符串须为 JSON 对象或 JSON 数组");
+    }
+
     @Override
-    public Object auditProcess(JSONObject node) {
+    public Object auditProcess(Object node) {
+        node = unwrapAuditProcessNodeArg(node);
+        if (node instanceof JSONArray nodesArr) {
+            if (nodesArr.isEmpty()) {
+                throw BaseResponse.parameterInvalid.error("node 数组不能为空");
+            }
+            List<Object> results = new ArrayList<>(nodesArr.size());
+            for (int i = 0; i < nodesArr.size(); i++) {
+                Object el = nodesArr.get(i);
+                if (!(el instanceof JSONObject)) {
+                    throw BaseResponse.parameterInvalid.error("node 数组元素须为对象");
+                }
+                results.add(auditProcessOne((JSONObject) el));
+            }
+            return results;
+        }
+        if (node instanceof JSONObject) {
+            return auditProcessOne((JSONObject) node);
+        }
+        throw BaseResponse.parameterInvalid.error("node 须为 JSON 对象或 JSON 数组");
+    }
+
+    /**
+     * 单条审核推进（原 auditProcess 逻辑）。
+     */
+    private Object auditProcessOne(JSONObject node) {
         Integer isAudit = node.getInteger("isAudit");
         Integer Id = node.getInteger("id");
         if (isAudit != null && isAudit == 1 && Id != null) {

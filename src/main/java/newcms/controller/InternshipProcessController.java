@@ -78,7 +78,10 @@ public class InternshipProcessController {
     @PostMapping(value = "/auditProcess", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object auditProcess(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("auditProcess", requestJson);
-        JSONObject node = requestJson.getJSONObject("node");
+        Object node = requestJson.get("node");
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node 不能为空");
+        }
         return BaseResponse.ok(iInternshipService.auditProcess(node));
     }
 
