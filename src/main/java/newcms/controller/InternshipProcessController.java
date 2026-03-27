@@ -114,7 +114,7 @@ public class InternshipProcessController {
 
      @Operation(
              summary = "获取实习项目可选用户列表",
-             description = "根据 internshipId 和 jobId 查询 BaseUser 中尚未在 RelIntershipUser 中关联的用户"
+            description = "根据 internshipId 和 jobCode 查询 viewBaseUser 中尚未在 RelIntershipUser 中关联的用户"
      )
      @PostMapping(value = "/getAvailableUsersForInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
      public Object getAvailableUsersForInternship(@RequestBody JSONObject requestJson) {
@@ -130,14 +130,14 @@ public class InternshipProcessController {
              throw BaseResponse.parameterInvalid.error("searchKey 不能为空");
          }
 
-         Integer internshipId = searchKey.getInteger("internshipId");
-         Integer jobId = searchKey.getInteger("jobId");
+        Integer internshipId = searchKey.getInteger("internshipId");
+        String jobCode = searchKey.getString("jobCode");
 
          if (internshipId == null) {
              throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
          }
-         if (jobId == null) {
-             throw BaseResponse.parameterInvalid.error("jobId 不能为空");
+        if (jobCode == null || jobCode.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("jobCode 不能为空");
          }
 
          // 分页信息：优先从 node.pageInfo 取值
@@ -172,7 +172,7 @@ public class InternshipProcessController {
          }
 
          return BaseResponse.ok(
-                 iInternshipService.getAvailableUsersForInternship(internshipId, jobId, page, size, sort)
+                iInternshipService.getAvailableUsersForInternship(internshipId, jobCode, page, size, sort)
          );
      }
 

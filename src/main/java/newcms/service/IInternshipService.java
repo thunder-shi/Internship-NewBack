@@ -59,17 +59,17 @@ public interface IInternshipService {
     void deleteVerifyProcessByRelationIdAndTableName(Integer relationId, String tableName);
 
     /**
-     * 根据实习项目和职务获取可选用户列表（带分页）
-     * 从 BaseUser 中筛选出 jobId 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
+     * 根据实习项目和岗位编码获取可选用户列表（带分页）
+     * 从 ViewBaseUser 中筛选出 jobCode 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
      *
      * @param internshipId 实习项目ID
-     * @param jobId        职务/身份ID
+     * @param jobCode      岗位编码
      * @param page         页码（从1开始）
      * @param size         每页数量
      * @param sort         排序规则
      * @return 可选用户分页结果
      */
-    Object getAvailableUsersForInternship(Integer internshipId, Integer jobId, Integer page, Integer size, Sort sort);
+    Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer page, Integer size, Sort sort);
 
     /**
      * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。

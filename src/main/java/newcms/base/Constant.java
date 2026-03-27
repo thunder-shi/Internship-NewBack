@@ -107,6 +107,18 @@ public class Constant {
         public static final int SCHOOL_TEACHER = 7; // 学校教师
         public static final int STUDENT = 8; // 学生
     }
+
+    // 用户身份类型编码（与前端 USER_JOB_CODE 保持一致）
+    public static final class USER_JOB_CODE {
+        public static final String SUPER_ADMIN = "SUPER_ADMIN";
+        public static final String STUDENT = "STUDENT";
+        public static final String COMPANY_TUTOR = "COMPANY_TUTOR";
+        public static final String COMPANY_ADMIN = "COMPANY_ADMIN";
+        public static final String SCHOOL_TEACHER = "SCHOOL_TEACHER";
+        public static final String SCHOOL_ADMIN = "SCHOOL_ADMIN";
+        public static final String DEPARTMENT_ADMIN = "DEPARTMENT_ADMIN";
+        public static final String ACADEMIC_AFFAIRS_ADMIN = "ACADEMIC_AFFAIRS_ADMIN";
+    }
     public static final class AUDIT_STATUS {
         public static final int SAVE = -1; public static final String SAVENAME = "保存未提交";
         public static final int SUBMIT = 0; public static final String SUBMITNAME = "提交待审核";
@@ -152,6 +164,8 @@ public class Constant {
         public static final int FOUR_VERIFYS = 5; // 四级审核
         public static final int FIVE_VERIFYS = 6; // 五级审核
     }
+
+    
 
 
 }

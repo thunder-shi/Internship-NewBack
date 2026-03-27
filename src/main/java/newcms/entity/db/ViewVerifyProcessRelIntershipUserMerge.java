@@ -31,6 +31,7 @@ public class ViewVerifyProcessRelIntershipUserMerge extends BaseInfo {
     private String userName;
     private String jobName;
     private Integer jobId;
+    private String jobCode;
     private String phone;
     private String account;
 
