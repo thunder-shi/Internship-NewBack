@@ -64,12 +64,13 @@ public interface IInternshipService {
      *
      * @param internshipId 实习项目ID
      * @param jobCode      岗位编码
+     * @param departmentId 部门ID（可选）
      * @param page         页码（从1开始）
      * @param size         每页数量
      * @param sort         排序规则
      * @return 可选用户分页结果
      */
-    Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer page, Integer size, Sort sort);
+    Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer departmentId, Integer page, Integer size, Sort sort);
 
     /**
      * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。

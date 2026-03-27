@@ -196,7 +196,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer page, Integer size, Sort sort) {
+    public Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer departmentId, Integer page, Integer size, Sort sort) {
         if (internshipId == null || jobCode == null || jobCode.trim().isEmpty()) {
             throw BaseResponse.parameterInvalid.error("internshipId 和 jobCode 不能为空");
         }
@@ -215,22 +215,31 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         );
 
         List<Object> relList = relPage.getContent();
-        List<Integer> usedUserIds = relList.stream()
+        Set<Integer> usedUserIdSet = relList.stream()
                 .map(FastJsonUtil::toJson)
                 .map(json -> json.getInteger("userId"))
                 .filter(Objects::nonNull)
-                .collect(Collectors.toList());
+                .collect(Collectors.toSet());
+
+        // 学生额外约束：如果已在任意项目的审核合并视图中处于“待提交/已提交”，则不能再被其他项目选择。
+        if (Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+            usedUserIdSet.addAll(getLockedStudentUserIdsFromVerifyMerge());
+        }
 
         // 2. 组装 ViewBaseUser 的查询条件：
         //    - jobCode = 前端传入 jobCode
+        //    - departmentId = 前端可选传入 departmentId
         //    - id NOT IN (已关联且未删除的 userId 列表)
         JSONObject userSearchKeys = new JSONObject();
         userSearchKeys.put("jobCode", jobCode);
+        if (departmentId != null) {
+            userSearchKeys.put("departmentId", departmentId);
+        }
 
         Map<String, String> repMap = new HashMap<>();
 
-        if (!usedUserIds.isEmpty()) {
-            String idStr = usedUserIds.stream()
+        if (!usedUserIdSet.isEmpty()) {
+            String idStr = usedUserIdSet.stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
             userSearchKeys.put("id", idStr);
@@ -248,6 +257,28 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 pageNum,
                 pageSize
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<Integer> getLockedStudentUserIdsFromVerifyMerge() {
+        Set<Integer> lockedUserIds = new HashSet<>();
+        for (int status : new int[]{Constant.AUDIT_STATUS.SAVE, Constant.AUDIT_STATUS.SUBMIT}) {
+            JSONObject verifySearchKeys = new JSONObject();
+            verifySearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
+            verifySearchKeys.put("isAudit", status);
+            Page<Object> verifyPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewVerifyProcessRelIntershipUserMerge", verifySearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+            List<Object> verifyList = verifyPage.getContent();
+            if (verifyList == null || verifyList.isEmpty()) {
+                continue;
+            }
+            lockedUserIds.addAll(verifyList.stream()
+                    .map(FastJsonUtil::toJson)
+                    .map(json -> json.getInteger("userId"))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet()));
+        }
+        return lockedUserIds;
     }
 
     @Override
