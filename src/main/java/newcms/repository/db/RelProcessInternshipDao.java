@@ -26,4 +26,6 @@ public interface RelProcessInternshipDao extends BaseDao<RelProcessInternship, I
      */
     // @Query("SELECT r FROM RelProcessInternship r WHERE r.startTime IS NOT NULL AND r.startTime <= ?1 AND r.isDeleted = false")
     // List<RelProcessInternship> findStartedProcesses(LocalDateTime now);
+
+    List<RelProcessInternship> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
 }

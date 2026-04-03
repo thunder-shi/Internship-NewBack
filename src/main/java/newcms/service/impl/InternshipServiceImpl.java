@@ -838,6 +838,40 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private Object auditProcessOne(JSONObject node) {
         Integer isAudit = node.getInteger("isAudit");
         Integer Id = node.getInteger("id");
+
+        // 提前读取记录以判断 tableName（save 不会改变 tableName，提前读不影响逻辑）
+        Object verifyObj = Id != null ? iCommonService.getOneRecordById("MainVerifyProcess", Id) : null;
+        String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
+
+        // 日志审核：单级直审，跳过多级流程
+        if ("MainDiary".equals(tableName)) {
+            Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
+            JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
+            Integer diaryId = verifyJson.getInteger("relationId");
+            String reason = node.getString("reason");
+            // 将审核意见写回 MainDiary.remark（仅有内容时写入，不覆盖旧意见）
+            if (isAudit != null && isAudit >= 1 && diaryId != null
+                    && reason != null && !reason.isEmpty()) {
+                JSONObject updateDiary = new JSONObject();
+                updateDiary.put("id", diaryId);
+                updateDiary.put("remark", reason);
+                iCommonService.saveOneRecord("MainDiary", updateDiary);
+            }
+            // 退回时新建 isAudit=-1 记录，让学生可以重新提交
+            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && diaryId != null) {
+                JSONObject newVerify = new JSONObject();
+                newVerify.put("relationId", diaryId);
+                newVerify.put("processId", 0);
+                newVerify.put("createUserId", verifyJson.getInteger("createUserId"));
+                newVerify.put("verifyUserId", verifyJson.getString("verifyUserId"));
+                newVerify.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+                newVerify.put("reason", "");
+                newVerify.put("tableName", "MainDiary");
+                iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
+            }
+            return saved;
+        }
+
         if (isAudit != null && isAudit == 1 && Id != null) {
             // 审核通过：推进到下一级
             iVerifyProcessService.onVerifyProcessApproved(Id);
@@ -847,9 +881,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
         if (isAudit != null && (isAudit == 2 || isAudit == 3) && Id != null) {
-            // 判断是否为学生报名岗位
-            Object verifyObj = iCommonService.getOneRecordById("MainVerifyProcess", Id);
-            String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
             boolean isStuPost = "RelStuInternshipPost".equals(tableName);
 
             if (isStuPost) {
