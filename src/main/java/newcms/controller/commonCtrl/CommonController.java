@@ -4,24 +4,24 @@ package newcms.controller.commonCtrl;
 import newcms.annotation.PathRestController;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
-// import newcms.base.Constant;
-// import newcms.entity.db.SysOssFile;
+import newcms.base.Constant;
+import newcms.entity.db.SysOssFile;
+import newcms.repository.db.SysOssFileDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.utils.EncryptUtil;
-// import newcms.utils.FileUtil;
-// import newcms.utils.MinIOUtils;
+import newcms.utils.MinIOUtils;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.util.ObjectUtils;
 import org.springframework.web.bind.annotation.*;
-// import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.Resource;
-// import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.*;
 // import java.util.stream.Collectors;
 
@@ -41,8 +41,11 @@ public class CommonController extends Base {
     protected IDataTreeService iDataTreeService;
     @Resource
     protected IDataListService iDataListService;
-    // @Resource
-    // private MinIOUtils minIOUtils;
+    @Resource
+    private MinIOUtils minIOUtils;
+
+    @Resource
+    private SysOssFileDao sysOssFileDao;
 
 
     public String getRandomString(int length){
@@ -140,39 +143,61 @@ public class CommonController extends Base {
         return BaseResponse.ok(iCommonService.deleteRecordsByDelflag(tblName));
     }
 
-//     @PostMapping(value = "/minio/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-//     public Object miniUpload(@RequestParam MultipartFile[] files, @RequestParam Integer userId, @RequestParam Integer relId, @RequestParam Integer type) {
-//         List<Object> resList = new ArrayList<>();
-//         try {
-//             Object fileInfo = minIOUtils.upload(Constant.BUCKET_NAME, files, type, relId);
-//             resList.add(fileInfo);
-// //            for (MultipartFile file : files) {
-// //                Object fileInfo = minIOUtils.upload(Constant.BUCKET_NAME, file, type, relId);
-// //                resList.add(fileInfo);
-// //            }
-//         } catch (Exception ex) {
-//             logger.error("error", ex);
-//         }
-//         return BaseResponse.ok(resList);
-//     }
+    /**
+     * 上传文件到 MinIO，保存元信息到 sys_oss_file。
+     * 参数：files（multipart），relationIds（关联业务记录ID），tableName（关联表名，如 MainDiary）
+     */
+    @PostMapping(value = "/minio/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Object miniUpload(@RequestParam MultipartFile[] files,
+                             @RequestParam Integer relationIds,
+                             @RequestParam String tableName) {
+        try {
+            return BaseResponse.ok(minIOUtils.upload(files, relationIds, tableName, getLoginUserId()));
+        } catch (Exception ex) {
+            logger.error("MinIO 上传失败", ex);
+            throw BaseResponse.moreInfoError.error("文件上传失败: " + ex.getMessage());
+        }
+    }
 
-    // @PostMapping(value = "/minio/downloadFile", consumes = MediaType.APPLICATION_JSON_VALUE)
-    // public Object downloadFile(@RequestBody JSONObject requestJson, HttpServletResponse response) {
-    //     Integer id = requestJson.getInteger("id");
-    //     SysOssFile ossFile = sysOssFileDao.getByIdAndIsDeletedFalse(id);
-    //     minIOUtils.download(ossFile.getBucketName(), ossFile.getOssPath(), ossFile.getName(), response);
-    //     return BaseResponse.ok;
-    // }
+    /**
+     * 文件内联预览（图片、PDF 等），可作为 <img src> 或 <embed src> 的地址。
+     * GET /common/minio/file/{id}
+     */
+    @GetMapping(value = "/minio/file/{id}")
+    public void previewFile(@PathVariable Integer id, HttpServletResponse response) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
+                ossFile.getFileName(), true, response);
+    }
 
+    /**
+     * 强制下载文件（触发浏览器另存为）。
+     * GET /common/minio/download/{id}
+     */
+    @GetMapping(value = "/minio/download/{id}")
+    public void downloadFile(@PathVariable Integer id, HttpServletResponse response) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
+                ossFile.getFileName(), false, response);
+    }
 
-    // @DeleteMapping(value = "/minio/deleteFile")
-    // public Object deleteMinioByIds(@RequestParam Integer[] ossFileIds) {
-    //     List<SysOssFile> ossFiles = sysOssFileDao.findByIdIn(Arrays.asList(ossFileIds));
-    //     List<String> ossPaths = ossFiles.stream().map(x -> x.getOssPath()).collect(Collectors.toList());
-    //     if (!ObjectUtils.isEmpty(ossPaths)) {
-    //         minIOUtils.removeObjectsResult(Constant.BUCKET_NAME, ossPaths);
-    //     }
-    //     sysOssFileDao.updateByIds(Arrays.asList(ossFileIds));
-    //     return BaseResponse.ok;
-    // }
+    /**
+     * 批量删除文件（MinIO 对象 + 数据库软删除），传 ossFileIds 数组
+     */
+    @DeleteMapping(value = "/minio/deleteFile")
+    public Object deleteMinioByIds(@RequestParam Integer[] ossFileIds) {
+        List<Integer> ids = Arrays.asList(ossFileIds);
+        List<SysOssFile> ossFiles = sysOssFileDao.getByIdInAndIsDeletedFalse(ids);
+        List<String> ossPaths = ossFiles.stream()
+                .filter(f -> f.getOssPath() != null)
+                .map(SysOssFile::getOssPath)
+                .collect(java.util.stream.Collectors.toList());
+        if (!ObjectUtils.isEmpty(ossPaths)) {
+            minIOUtils.removeObjects(Constant.BUCKET_NAME, ossPaths);
+        }
+        sysOssFileDao.updateByIds(ids);
+        return BaseResponse.ok(null);
+    }
 }

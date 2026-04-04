@@ -12,37 +12,20 @@ import java.util.Optional;
 @Repository
 public interface SysOssFileDao extends BaseDao<SysOssFile, Integer> {
 
-    /**
-     * 跟据文件id查询
-     * @param fileIds
-     * @return
-     */
     List<SysOssFile> getByIdInAndIsDeletedFalse(Iterable<Integer> fileIds);
 
     Optional<SysOssFile> findByIdAndIsDeletedFalse(Integer fileId);
 
-    SysOssFile findByRelationIdAndTypeAndTableNameAndIsDeletedFalse(Integer relationId, Integer type, String tabName);
+    /** 按业务记录 + 表名查询该记录下的所有文件 */
+    List<SysOssFile> findByRelationIdsAndTableNameAndIsDeletedFalse(Integer relationIds, String tableName);
 
-    List<SysOssFile> findByRelationIdAndTypeAndIsDeletedFalse(Integer userId, int i);
+    /** 按业务记录查询所有文件（不限表） */
+    List<SysOssFile> findByRelationIdsAndIsDeletedFalse(Integer relationIds);
+
+    /** 批量按业务记录查询 */
+    List<SysOssFile> findByRelationIdsInAndIsDeletedFalse(List<Integer> relationIds);
 
     @Modifying
-    @Query(nativeQuery = true,value = "update SYS_OSS_FILE SET IS_DELETED = 1 where ID in ?1")
+    @Query(nativeQuery = true, value = "update sys_oss_file set is_deleted = 1 where id in ?1")
     void updateByIds(List<Integer> ids);
-
-
-    @Query(nativeQuery = true,value = "select * from SYS_OSS_FILE where IS_DELETED = 0 and RELATION_ID = ?1 and TYPE = ?2")
-    List<SysOssFile> findByFlowCaseIdAndType(Integer flowCaseId,Integer type);
-
-    List<SysOssFile> findByFileIdentifierAndIsDeletedFalse(String identifier);
-
-    SysOssFile findByFileIdentifierAndRelationIdAndTypeAndIsDeletedFalse(String identifier,Integer relationId,Integer type);
-    List<SysOssFile> findByTypeAndIsDeletedFalse(Integer type);
-
-    List<SysOssFile> findByFileIdentifierAndTypeAndIsDeletedFalse(String identifier, Integer type);
-
-    List<SysOssFile> findByRelationIdInAndTypeAndIsDeletedFalse(List<Integer> relationIds, Integer type);
-
-    @Query(nativeQuery = true,value = "select * from SYS_OSS_FILE where IS_DELETED = 0 and TYPE = 1 and RELATION_ID = ?1")
-    List<SysOssFile> getImages(Integer relationId);
-
 }

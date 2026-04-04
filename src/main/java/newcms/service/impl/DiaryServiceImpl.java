@@ -49,6 +49,12 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     @Resource
     private ViewRelStuInternshipPostDao viewRelStuInternshipPostDao;
 
+    @Resource
+    private ViewVerifyProcessRelStuInternshipPostMergeDao viewVerifyProcessRelStuInternshipPostMergeDao;
+
+    @Resource
+    private ViewBaseUserDao viewBaseUserDao;
+
     // ==================== 提交日志 ====================
 
     @Override
@@ -209,26 +215,84 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         return result;
     }
 
+    // ==================== 总期数（老师端期数选择器） ====================
+
+    @Override
+    public int getInternshipPeriodCount(Integer internshipId) {
+        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
+        if (internshipObj == null) throw BaseResponse.parameterInvalid.error("实习项目不存在");
+        String cron = FastJsonUtil.toJson(internshipObj).getString("cron");
+
+        List<RelProcessInternship> processes = relProcessInternshipDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+        if (processes.isEmpty()) return 0;
+        LocalDateTime startTime = processes.stream()
+                .map(RelProcessInternship::getStartTime)
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+        if (startTime == null) return 0;
+        return calcTotalPeriods(startTime, cron);
+    }
+
     // ==================== 学生列表（老师视角） ====================
 
     @Override
-    public Object getPeriodStudents(Integer internshipId, Integer periodIndex) {
+    public Object getPeriodStudents(Integer internshipId, Integer periodIndex, Integer userId) {
         List<JSONObject> result = new ArrayList<>();
 
-        // 校外路径：通过岗位 → 学生报名记录
+        // 预加载 teacher-student 映射（两条路径都用：校外取 teacherName，校内做 userId 过滤）
+        List<ViewRelTitleTeacherStudent> allTitleStudents =
+                viewRelTitleTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+        // stuId → ViewRelTitleTeacherStudent（校外取 teacherName 用）
+        Map<Integer, ViewRelTitleTeacherStudent> stuIdToTitle = new HashMap<>();
+        for (ViewRelTitleTeacherStudent t : allTitleStudents) {
+            if (t.getStuId() != null) stuIdToTitle.put(t.getStuId(), t);
+        }
+        // userId 过滤时允许的 stuId 集合
+        Set<Integer> allowedStuIds = null;
+        if (userId != null) {
+            allowedStuIds = allTitleStudents.stream()
+                    .filter(t -> userId.equals(t.getTeacherId()))
+                    .map(ViewRelTitleTeacherStudent::getStuId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+        }
+        final Set<Integer> finalAllowedStuIds = allowedStuIds;
+
+        // 校外路径：岗位 → 学生报名记录（有岗位即视为校外项目，直接 return）
         List<MainInternshipPost> posts = mainInternshipPostDao.findByInternshipIdAndIsDeletedFalse(internshipId);
         if (!posts.isEmpty()) {
             List<Integer> postIds = posts.stream().map(MainInternshipPost::getId).collect(Collectors.toList());
             List<RelStuInternshipPost> relStuPosts =
                     relStuInternshipPostDao.findByInternshipPostIdInAndIsDeletedFalse(postIds);
 
+            // userId 过滤：只保留该老师名下的学生
+            if (finalAllowedStuIds != null) {
+                relStuPosts = relStuPosts.stream()
+                        .filter(r -> finalAllowedStuIds.contains(r.getStudentId()))
+                        .collect(Collectors.toList());
+            }
+
+            // 只保留岗位选择已审核通过（isAllVerified=true）的学生
+            if (!relStuPosts.isEmpty()) {
+                List<Integer> candidatePostIds = relStuPosts.stream()
+                        .map(RelStuInternshipPost::getId).collect(Collectors.toList());
+                Set<Integer> approvedPostIds = viewVerifyProcessRelStuInternshipPostMergeDao
+                        .findByRelationIdInAndIsDeletedFalse(candidatePostIds).stream()
+                        .filter(m -> Boolean.TRUE.equals(m.getIsAllVerified()))
+                        .map(m -> m.getRelationId())
+                        .collect(Collectors.toSet());
+                relStuPosts = relStuPosts.stream()
+                        .filter(r -> approvedPostIds.contains(r.getId()))
+                        .collect(Collectors.toList());
+            }
+
             if (!relStuPosts.isEmpty()) {
                 List<Integer> stuPostIds = relStuPosts.stream()
                         .map(RelStuInternshipPost::getId).collect(Collectors.toList());
-                List<ViewRelStuInternshipPost> viewStuPosts =
-                        viewRelStuInternshipPostDao.findAllById(stuPostIds);
                 Map<Integer, ViewRelStuInternshipPost> idToView = new HashMap<>();
-                for (ViewRelStuInternshipPost v : viewStuPosts) idToView.put(v.getId(), v);
+                for (ViewRelStuInternshipPost v : viewRelStuInternshipPostDao.findAllById(stuPostIds))
+                    idToView.put(v.getId(), v);
 
                 List<MainDiary> diaries = mainDiaryDao
                         .findByStuInternshipPostIdInAndPeriodIndexAndIsDeletedFalse(stuPostIds, periodIndex);
@@ -238,6 +302,13 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                 Map<Integer, ViewVerifyMainDiaryMerge> mergeMap =
                         fetchMergeByDiaryIds(new ArrayList<>(stuPostIdToDiaryId.values()));
 
+                // 批量查 ViewBaseUser（无日志时补充 studentNo / className）
+                Set<Integer> studentIdsWithoutDiary = relStuPosts.stream()
+                        .filter(r -> !stuPostIdToDiaryId.containsKey(r.getId()))
+                        .map(RelStuInternshipPost::getStudentId)
+                        .collect(Collectors.toSet());
+                Map<Integer, ViewBaseUser> studentIdToUser = batchLoadUsers(studentIdsWithoutDiary);
+
                 for (RelStuInternshipPost rsp : relStuPosts) {
                     JSONObject item = new JSONObject();
                     item.put("stuInternshipPostId", rsp.getId());
@@ -246,19 +317,40 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                     if (v != null) {
                         item.put("studentName", v.getStudentName());
                         item.put("internshipPostName", v.getInternshipPostName());
+                        item.put("companyName", v.getCompanyName());
+                        item.put("postDescription", v.getInternshipPostRemarks());
+                        item.put("className", v.getDepartmentName());
                     }
+                    // teacherName（校外也可能分配校内导师）
+                    ViewRelTitleTeacherStudent tts = stuIdToTitle.get(rsp.getStudentId());
+                    item.put("teacherName", tts != null ? tts.getTeacherName() : null);
+                    item.put("titleDescription", null); // 校外无题目描述
+
                     Integer diaryId = stuPostIdToDiaryId.get(rsp.getId());
                     ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
+                    if (merge != null) {
+                        item.put("studentNo", merge.getStudentAccount());
+                        item.put("majorName", merge.getStudentMajorName());
+                        if (item.getString("className") == null)
+                            item.put("className", merge.getStudentDepartmentName());
+                    } else {
+                        ViewBaseUser bu = studentIdToUser.get(rsp.getStudentId());
+                        item.put("studentNo", bu != null ? bu.getAccount() : null);
+                        item.put("majorName", null);
+                    }
                     item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
                     result.add(item);
                 }
                 return result;
             }
+            return result; // 校外项目：无论是否有审核通过的学生，都直接返回，不走校内路径
         }
 
-        // 校内路径：通过题目-学生关联
-        List<ViewRelTitleTeacherStudent> titleStudents =
-                viewRelTitleTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+        // 校内路径：题目-学生关联（userId 过滤 + 只保留题目已审核通过的学生）
+        List<ViewRelTitleTeacherStudent> titleStudents = allTitleStudents.stream()
+                .filter(t -> Integer.valueOf(1).equals(t.getIsAudit()))
+                .filter(t -> userId == null || userId.equals(t.getTeacherId()))
+                .collect(Collectors.toList());
         if (titleStudents.isEmpty()) return result;
 
         List<Integer> relTitleStudentIds = titleStudents.stream()
@@ -272,19 +364,48 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         Map<Integer, ViewVerifyMainDiaryMerge> mergeMap =
                 fetchMergeByDiaryIds(new ArrayList<>(relTitleStudentIdToDiaryId.values()));
 
+        Set<Integer> stuIdsWithoutDiary = titleStudents.stream()
+                .filter(t -> !relTitleStudentIdToDiaryId.containsKey(t.getRelTitleStudentId()))
+                .map(ViewRelTitleTeacherStudent::getStuId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Integer, ViewBaseUser> studentIdToUser = batchLoadUsers(stuIdsWithoutDiary);
+
         for (ViewRelTitleTeacherStudent rts : titleStudents) {
             JSONObject item = new JSONObject();
             item.put("relTitleStudentId", rts.getRelTitleStudentId());
             item.put("studentId", rts.getStuId());
             item.put("studentName", rts.getStudentName());
             item.put("titleName", rts.getName());
+            item.put("titleDescription", rts.getRemarks());
             item.put("teacherName", rts.getTeacherName());
+            item.put("companyName", null); // 校内无企业
+
             Integer diaryId = relTitleStudentIdToDiaryId.get(rts.getRelTitleStudentId());
             ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
+            if (merge != null) {
+                item.put("studentNo", merge.getStudentAccount());
+                item.put("majorName", merge.getStudentMajorName());
+                item.put("className", merge.getStudentDepartmentName());
+            } else {
+                ViewBaseUser bu = studentIdToUser.get(rts.getStuId());
+                item.put("studentNo", bu != null ? bu.getAccount() : null);
+                item.put("majorName", null);
+                item.put("className", bu != null ? bu.getDepartmentName() : null);
+            }
+            item.put("postDescription", null); // 校内无岗位描述
             item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
             result.add(item);
         }
         return result;
+    }
+
+    private Map<Integer, ViewBaseUser> batchLoadUsers(Set<Integer> studentIds) {
+        if (studentIds.isEmpty()) return Collections.emptyMap();
+        Map<Integer, ViewBaseUser> map = new HashMap<>();
+        for (ViewBaseUser u : viewBaseUserDao.getByIdInAndIsDeletedFalse(studentIds))
+            map.put(u.getId(), u);
+        return map;
     }
 
     // ==================== 工具方法 ====================

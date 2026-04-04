@@ -8,6 +8,8 @@ import newcms.base.Constant;
 import newcms.entity.db.*;
 import newcms.repository.db.BaseUserDao;
 import newcms.repository.db.RelUserRoleDao;
+import newcms.repository.db.ViewRelStuInternshipPostDao;
+import newcms.repository.db.ViewRelTitleTeacherStudentDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
@@ -50,6 +52,10 @@ public class UserServiceImpl extends Base implements IUserService {
     private DataTreeServiceImpl dataTreeServiceImpl;
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+    @Resource
+    private ViewRelStuInternshipPostDao viewRelStuInternshipPostDao;
+    @Resource
+    private ViewRelTitleTeacherStudentDao viewRelTitleTeacherStudentDao;
 
     private static Pattern pattern = Pattern.compile("-?[0-9]+(\\\\.[0-9]+)?");
 
@@ -89,6 +95,16 @@ public Object getLoginUser(Date date, String userAgent) {
         userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
         userInfoJSON.put("jobName", viewBaseUser.getJobName());
         userInfoJSON.put("schoolId", viewBaseUser.getSchoolId());
+        // 学生端校内外实习类型（非学生用户返回 null）
+        String internshipType = null;
+        try {
+            if (!viewRelStuInternshipPostDao.findByStudentIdAndIsDeletedFalse(userId).isEmpty()) {
+                internshipType = "external";
+            } else if (!viewRelTitleTeacherStudentDao.findByStuIdAndIsDeletedFalse(userId).isEmpty()) {
+                internshipType = "internal";
+            }
+        } catch (Exception ignored) {}
+        userInfoJSON.put("internshipType", internshipType);
         jsReturnKey.put("userInfo", userInfoJSON);
         //下面创建role、contestType和menuList的键值信息
         JSONObject jsRoleSearch = new JSONObject();
@@ -400,8 +416,8 @@ public Object getLoginUser(Date date, String userAgent) {
         redis.delete(key);
         //返回给前端头像的headImage 和fileId
         JSONObject searchKey = new JSONObject();
-        searchKey.put("relationId",getLoginUserId());
-        searchKey.put("type",1);
+        searchKey.put("relationIds", getLoginUserId());
+        searchKey.put("tableName", "base_user");
         @SuppressWarnings("unchecked")
         Page<SysOssFile> ossFilePage = (Page<SysOssFile>)iCommonService.getSomeRecords(OSS_FILE_INFO, searchKey);
         List<SysOssFile> tblOssFileInfos = ossFilePage.getContent();
@@ -527,20 +543,50 @@ public Object getLoginUser(Date date, String userAgent) {
         return resJson;
     }
 
+    @Resource
+    private MinIOUtils minIOUtils;
+
     /**
-     * 用户上传头像
-     * @param file
-     * @return
+     * 用户上传头像：上传至 MinIO，软删除旧头像记录，更新 BaseUser.ossFileId
      */
     @Override
-    public Object uploadAvatar( MultipartFile file ){
-//        SysOssFile fileInfo = ossUtil.upload(HEAD_IMAGE, FileUtil.toFile(file),getLoginUserId());
-//        // 删除以前的图片
-//         ossUtil.delete(((BaseUser)getLoginUser()).getOssFileId());
-//        String url = ossUtil.getUrl(fileInfo.getId());
-//        fileInfo.setUrl(url);
-//        return  fileInfo;
-        return null;
+    public Object uploadAvatar(MultipartFile file) {
+        Integer userId = getLoginUserId();
+        try {
+            // 删除旧头像（MinIO 对象 + DB 软删除）
+            List<SysOssFile> oldFiles = sysOssFileDao
+                    .findByRelationIdsAndTableNameAndIsDeletedFalse(userId, "base_user");
+            if (!oldFiles.isEmpty()) {
+                List<String> oldPaths = oldFiles.stream()
+                        .map(SysOssFile::getOssPath)
+                        .filter(java.util.Objects::nonNull)
+                        .collect(Collectors.toList());
+                if (!oldPaths.isEmpty()) {
+                    minIOUtils.removeObjects(Constant.BUCKET_NAME, oldPaths);
+                }
+                sysOssFileDao.updateByIds(
+                        oldFiles.stream().map(SysOssFile::getId).collect(Collectors.toList()));
+            }
+
+            // 上传新头像
+            List<com.alibaba.fastjson.JSONObject> result =
+                    minIOUtils.upload(new MultipartFile[]{file}, userId, "base_user", userId);
+            if (result.isEmpty()) throw BaseResponse.moreInfoError.error("头像上传失败");
+
+            com.alibaba.fastjson.JSONObject fileJson = result.get(0);
+            Integer newOssFileId = fileJson.getInteger("id");
+
+            // 更新 BaseUser.ossFileId
+            BaseUser user = tblUserInfoDao.findById(userId).orElse(null);
+            if (user != null) {
+                user.setOssFileId(newOssFileId);
+                tblUserInfoDao.save(user);
+            }
+            return fileJson;
+        } catch (Exception e) {
+            logger.error("头像上传失败", e);
+            throw BaseResponse.moreInfoError.error("头像上传失败: " + e.getMessage());
+        }
     }
     @Override
     public Object getUserRoles(String userId) {

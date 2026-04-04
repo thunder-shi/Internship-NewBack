@@ -9,6 +9,7 @@ import java.util.List;
 @Repository
 public interface ViewRelTitleTeacherStudentDao extends BaseDao<ViewRelTitleTeacherStudent, Integer> {
     List<ViewRelTitleTeacherStudent> findByStuIdAndInternshipIdAndIsDeletedFalse(Integer stuId, Integer internshipId);
+    List<ViewRelTitleTeacherStudent> findByStuIdAndIsDeletedFalse(Integer stuId);
     List<ViewRelTitleTeacherStudent> findByRelTitleStudentIdAndIsDeletedFalse(Integer relTitleStudentId);
     List<ViewRelTitleTeacherStudent> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
 }

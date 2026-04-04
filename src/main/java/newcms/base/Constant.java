@@ -153,7 +153,7 @@ public class Constant {
         public static final String EXTERNAL_ENTERPRISE_ASSIGN_TUTOR = "EXTERNAL_ENTERPRISE_ASSIGN_TUTOR"; // 校外实习-分配企业导师
     }
 
-    public static final String BUCKET_NAME = "association";
+    public static final String BUCKET_NAME = "internship";
 
     // 审核级别
     public static final class VERIFY_LEVEL {

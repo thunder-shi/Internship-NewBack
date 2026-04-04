@@ -22,7 +22,9 @@ public class DiaryController {
 
     @Operation(summary = "提交实习日志",
             description = "校外实习传 stuInternshipPostId，校内实习传 relTitleStudentId，二者不能同时为空。"
-                    + "返回新建 MainDiary 的 id，可用于调用 /common/minio/upload 上传附件（tableName=\"main_diary\"）。")
+                    + "返回 MainDiary 的 id（首次提交为新建，重新提交时返回已有记录的 id，内容就地更新）。"
+                    + "可用该 id 调用 /common/minio/upload 上传附件（tableName=\"main_diary\"）；"
+                    + "重新提交不会删除旧附件，前端需自行管理附件的增删。")
     @PostMapping(value = "/submit", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object submitDiary(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("submitDiary", requestJson);
@@ -57,6 +59,21 @@ public class DiaryController {
         return BaseResponse.ok(iDiaryService.getDiaryPeriods(stuInternshipPostId, relTitleStudentId));
     }
 
+    @Operation(summary = "获取实习项目的总期数（老师端）",
+            description = "老师端期数选择器使用。根据实习项目的 cron 和最早流程 startTime 推算当前总期数，"
+                    + "返回 { \"totalPeriods\": N }，0 表示尚未开始或无流程配置。")
+    @PostMapping(value = "/internship-periods", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getInternshipPeriodCount(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getInternshipPeriodCount", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) throw BaseResponse.parameterInvalid.error("node 不能为空");
+        Integer internshipId = node.getInteger("internshipId");
+        if (internshipId == null) throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        JSONObject result = new JSONObject();
+        result.put("totalPeriods", iDiaryService.getInternshipPeriodCount(internshipId));
+        return BaseResponse.ok(result);
+    }
+
     @Operation(summary = "老师查看某期学生日志列表",
             description = "返回该实习项目某期所有学生的日志状态。"
                     + "校外实习：每项含 stuInternshipPostId、studentName、internshipPostName 及 diary；"
@@ -71,6 +88,7 @@ public class DiaryController {
         if (internshipId == null || periodIndex == null) {
             throw BaseResponse.parameterInvalid.error("internshipId 和 periodIndex 不能为空");
         }
-        return BaseResponse.ok(iDiaryService.getPeriodStudents(internshipId, periodIndex));
+        Integer userId = node.getInteger("userId"); // 可选，不传则返回全部学生（超管视角）
+        return BaseResponse.ok(iDiaryService.getPeriodStudents(internshipId, periodIndex, userId));
     }
 }

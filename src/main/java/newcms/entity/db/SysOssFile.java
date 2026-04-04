@@ -16,41 +16,30 @@ import jakarta.persistence.Entity;
 @Entity
 @Accessors(chain = true)
 public class SysOssFile extends BaseInfo {
-    @Column(columnDefinition = "integer unsigned not null")
+    @Column(columnDefinition = "int unsigned not null comment '上传人Id'")
     private Integer userId;
-    @Column(columnDefinition = "varchar(50) ")
+
+    @Column(columnDefinition = "varchar(50) comment '文件夹名称'")
     private String bucketName;
-    @Column(columnDefinition = "varchar(255) ")
-    private String name;
-    @Column(columnDefinition = "varchar(255) ")
+
+    @Column(columnDefinition = "varchar(255) comment '文件名'")
+    private String fileName;
+
+    @Column(columnDefinition = "varchar(255) comment '文件在OSS上的具体路径'")
     private String ossPath;
-    @Column(columnDefinition = "varchar(50) ")
+
+    @Column(columnDefinition = "varchar(50) comment '后缀'")
     private String suffix;
-    @Column(columnDefinition = "varchar(50) ")
+
+    @Column(columnDefinition = "varchar(50) comment '文件大小'")
     private String fileSize;
-    @Column(columnDefinition = "integer unsigned ")
-    private Integer relationId;
+
+    @Column(name = "RELATION_ID", columnDefinition = "int unsigned not null default 0")
+    private Integer relationId = 0;  // 历史字段，保留以满足 NOT NULL 约束，业务逻辑使用 relationIds
+
+    @Column(columnDefinition = "int unsigned not null comment '关联表id'")
+    private Integer relationIds;
+
     @Column(columnDefinition = "varchar(50) comment '关联表名'")
     private String tableName;
-    @Column(columnDefinition = "integer unsigned not null ")
-    private Integer type;
-    @Column(columnDefinition = "varchar(255) comment '文件url' ")
-    private String url;
-
-    //分片上传的uploadId
-    @Column(columnDefinition = "varchar(255) ")
-    private String uploadId;
-    //文件唯一标识（md5）
-    @Column(columnDefinition = "varchar(255) ")
-    private String fileIdentifier;
-    //每个分片大小（byte）
-    @Column(columnDefinition = "integer unsigned ")
-    private Long chunkSize;
-    //分片数量
-    @Column(columnDefinition = "integer unsigned ")
-    private Integer chunkNum;
-    @Column(columnDefinition = "integer unsigned")
-    private Integer duration;
-    @Column(columnDefinition = "smallint  comment '排序号'")
-    private Integer theOrder ;
 }

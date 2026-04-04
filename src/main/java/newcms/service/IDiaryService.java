@@ -30,11 +30,21 @@ public interface IDiaryService {
     Object getDiaryPeriods(Integer stuInternshipPostId, Integer relTitleStudentId);
 
     /**
-     * 老师查看某实习项目某期所有学生的日志提交及审核状态
+     * 获取某实习项目的总期数（老师端期数选择器使用）。
+     * 计算规则与学生端 getDiaryPeriods 一致：从流程最早 startTime 到当前时间按 cron 推算。
+     *
+     * @param internshipId 实习项目ID
+     * @return 总期数（int），0 表示尚未开始或无流程配置
+     */
+    int getInternshipPeriodCount(Integer internshipId);
+
+    /**
+     * 老师查看某实习项目某期所有学生的日志提交及审核状态。
+     * userId 不为 null 时只返回该老师名下的学生；为 null 时返回全部（超管视角）。
      *
      * @param internshipId 实习项目ID
      * @param periodIndex  期数
-     * @return 学生列表，每项包含 stuInternshipPostId、studentId、studentName 及 diary
+     * @param userId       当前老师的用户ID（可为 null）
      */
-    Object getPeriodStudents(Integer internshipId, Integer periodIndex);
+    Object getPeriodStudents(Integer internshipId, Integer periodIndex, Integer userId);
 }
