@@ -172,15 +172,16 @@ public class CommonController extends Base {
     }
 
     /**
-     * 强制下载文件（触发浏览器另存为）。
+     * 获取文件下载链接（presigned URL，有效期 10 分钟）。
      * GET /common/minio/download/{id}
      */
     @GetMapping(value = "/minio/download/{id}")
-    public void downloadFile(@PathVariable Integer id, HttpServletResponse response) {
+    public Object downloadFile(@PathVariable Integer id) {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
-        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
-                ossFile.getFileName(), false, response);
+        String url = minIOUtils.presignedUrl(ossFile.getBucketName(), ossFile.getOssPath(),
+                ossFile.getFileName(), 600);
+        return BaseResponse.ok(url);
     }
 
     /**

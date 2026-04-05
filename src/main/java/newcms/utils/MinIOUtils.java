@@ -127,6 +127,33 @@ public class MinIOUtils {
     }
 
     /**
+     * 生成 presigned 下载链接，有效期 expireSeconds 秒。
+     * 附加 response-content-disposition 和 response-content-type，
+     * 确保浏览器直连 MinIO 时强制下载并使用原始文件名。
+     */
+    public String presignedUrl(String bucketName, String ossPath,
+                               String fileName, int expireSeconds) {
+        try {
+            String encoded = URLEncoder.encode(
+                    fileName != null ? fileName : "file", StandardCharsets.UTF_8);
+            return minioClient.getPresignedObjectUrl(
+                    io.minio.GetPresignedObjectUrlArgs.builder()
+                            .method(io.minio.http.Method.GET)
+                            .bucket(bucketName)
+                            .object(ossPath)
+                            .expiry(expireSeconds, java.util.concurrent.TimeUnit.SECONDS)
+                            .extraQueryParams(Map.of(
+                                    "response-content-disposition",
+                                    "attachment; filename=\"" + encoded + "\"",
+                                    "response-content-type", "application/octet-stream"
+                            ))
+                            .build());
+        } catch (Exception e) {
+            throw new RuntimeException("生成下载链接失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * 将 MinIO 文件流式输出到 HTTP 响应。
      *
      * @param bucketName MinIO bucket

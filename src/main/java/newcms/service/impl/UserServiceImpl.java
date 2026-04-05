@@ -8,8 +8,8 @@ import newcms.base.Constant;
 import newcms.entity.db.*;
 import newcms.repository.db.BaseUserDao;
 import newcms.repository.db.RelUserRoleDao;
-import newcms.repository.db.ViewRelStuInternshipPostDao;
-import newcms.repository.db.ViewRelTitleTeacherStudentDao;
+import newcms.repository.db.BaseInternshipTypeDao;
+import newcms.repository.db.RelIntershipUserDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
@@ -53,9 +53,9 @@ public class UserServiceImpl extends Base implements IUserService {
     @Resource
     private IVerifyProcessService iVerifyProcessService;
     @Resource
-    private ViewRelStuInternshipPostDao viewRelStuInternshipPostDao;
+    private RelIntershipUserDao relIntershipUserDao;
     @Resource
-    private ViewRelTitleTeacherStudentDao viewRelTitleTeacherStudentDao;
+    private BaseInternshipTypeDao baseInternshipTypeDao;
 
     private static Pattern pattern = Pattern.compile("-?[0-9]+(\\\\.[0-9]+)?");
 
@@ -95,13 +95,25 @@ public Object getLoginUser(Date date, String userAgent) {
         userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
         userInfoJSON.put("jobName", viewBaseUser.getJobName());
         userInfoJSON.put("schoolId", viewBaseUser.getSchoolId());
-        // 学生端校内外实习类型（非学生用户返回 null）
+        // 学生端校内外实习类型：查 rel_intership_user 确认学生是否已被纳入实习项目
         String internshipType = null;
         try {
-            if (!viewRelStuInternshipPostDao.findByStudentIdAndIsDeletedFalse(userId).isEmpty()) {
-                internshipType = "external";
-            } else if (!viewRelTitleTeacherStudentDao.findByStuIdAndIsDeletedFalse(userId).isEmpty()) {
-                internshipType = "internal";
+            List<RelIntershipUser> relList = relIntershipUserDao.findByUserIdAndIsDeletedFalse(userId);
+            for (RelIntershipUser rel : relList) {
+                BaseInternshipType internshipType1 = (BaseInternshipType)
+                        iCommonService.getOneRecordById("BaseInternshipType",
+                                FastJsonUtil.toJson(iCommonService.getOneRecordById(
+                                        "MainInternship", rel.getInternshipId()))
+                                        .getInteger("internshipTypeId"));
+                if (internshipType1 == null) continue;
+                // intTypeId: 1=校内实习, 2=校外实习
+                if (Integer.valueOf(2).equals(internshipType1.getIntTypeId())) {
+                    internshipType = "external";
+                    break;
+                } else if (Integer.valueOf(1).equals(internshipType1.getIntTypeId())) {
+                    internshipType = "internal";
+                    break;
+                }
             }
         } catch (Exception ignored) {}
         userInfoJSON.put("internshipType", internshipType);
