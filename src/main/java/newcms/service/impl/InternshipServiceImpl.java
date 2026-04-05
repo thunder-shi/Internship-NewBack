@@ -26,6 +26,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final String ENTERPRISE_TUTOR_JOB_CODE = Constant.USER_JOB_CODE.COMPANY_TUTOR;
     private static final int LARGE_PAGE_SIZE = 100000;
     private static final int POST_PAGE_SIZE = 10000;
+    /** 与库中 base_int_type / view_main_internship.int_type_name 一致，用于识别校外实习 */
+    private static final String EXTERNAL_INT_TYPE_NAME = "校外实习";
+    private static final String STU_POST_STATUS_ALL = "all";
+    private static final String STU_POST_STATUS_NOT_SELECTED = "notSelected";
+    private static final String STU_POST_STATUS_SELECTED_PENDING = "selectedPendingAudit";
+    private static final String STU_POST_STATUS_POST_APPROVED = "postApproved";
 
     @Resource
     private ICommonService iCommonService;
@@ -279,6 +285,508 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                     .collect(Collectors.toSet()));
         }
         return lockedUserIds;
+    }
+
+    // ==================== 校外实习统计（学院汇总 / 岗位 / 学生选岗） ====================
+
+    @Override
+    public Object listExternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size) {
+        if (departmentId == null) {
+            throw BaseResponse.parameterInvalid.error("departmentId 不能为空");
+        }
+        int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
+        int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+
+        Set<Integer> deptStudentIds = loadUserIdsByDepartmentAndJobCode(departmentId, Constant.USER_JOB_CODE.STUDENT);
+        Set<Integer> deptSchoolTeacherIds = loadUserIdsByDepartmentAndJobCode(departmentId, Constant.USER_JOB_CODE.SCHOOL_TEACHER);
+
+        JSONObject internshipSk = new JSONObject();
+        internshipSk.put("intTypeName", EXTERNAL_INT_TYPE_NAME);
+        Sort newestFirst = Sort.by(Sort.Direction.DESC, "createTime");
+        @SuppressWarnings("unchecked")
+        Page<Object> internshipPage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewMainInternship", internshipSk, null, newestFirst, pageNum, pageSize);
+        List<Object> internshipList = internshipPage.getContent();
+        if (internshipList == null || internshipList.isEmpty()) {
+            JSONObject empty = new JSONObject();
+            empty.put("rows", new JSONArray());
+            empty.put("totalElements", internshipPage.getTotalElements());
+            empty.put("totalPages", internshipPage.getTotalPages());
+            empty.put("page", pageNum);
+            empty.put("size", pageSize);
+            return empty;
+        }
+
+        JSONArray rows = new JSONArray();
+        for (Object inv : internshipList) {
+            JSONObject invJson = FastJsonUtil.toJson(inv);
+            Integer internshipId = invJson.getInteger("id");
+            if (internshipId == null) {
+                continue;
+            }
+            String internshipName = invJson.getString("name");
+
+            int signupStudentCount = countDistinctMergeUsersInSet(internshipId, Constant.USER_JOB_CODE.STUDENT, deptStudentIds);
+            int signupTeacherCount = countDistinctMergeUsersInSet(internshipId, Constant.USER_JOB_CODE.SCHOOL_TEACHER, deptSchoolTeacherIds);
+
+            JSONObject postSk = new JSONObject();
+            postSk.put("internshipId", internshipId);
+            @SuppressWarnings("unchecked")
+            Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainInternshipPost", postSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+            List<Object> postList = postPage.getContent();
+            int postSignupCount = postList == null ? 0 : postList.size();
+            int totalRecruitmentHeadcount = 0;
+            if (postList != null) {
+                for (Object po : postList) {
+                    JSONObject pj = FastJsonUtil.toJson(po);
+                    Integer n = pj.getInteger("allPersonNum");
+                    totalRecruitmentHeadcount += (n != null ? n : 0);
+                }
+            }
+
+            int pendingPostCount = countPendingAuditInternshipPosts(internshipId);
+            int studentWithPostSelectionCount = countDeptStudentsWithPostSelection(internshipId, departmentId);
+
+            JSONObject row = new JSONObject();
+            row.put("internshipId", internshipId);
+            row.put("internshipName", internshipName);
+            row.put("signupStudentCount", signupStudentCount);
+            row.put("signupTeacherCount", signupTeacherCount);
+            row.put("postSignupCount", postSignupCount);
+            row.put("totalRecruitmentHeadcount", totalRecruitmentHeadcount);
+            row.put("pendingAuditPostCount", pendingPostCount);
+            row.put("studentWithPostSelectionCount", studentWithPostSelectionCount);
+            rows.add(row);
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("rows", rows);
+        result.put("totalElements", internshipPage.getTotalElements());
+        result.put("totalPages", internshipPage.getTotalPages());
+        result.put("page", pageNum);
+        result.put("size", pageSize);
+        return result;
+    }
+
+    @Override
+    public Object listApprovedExternalInternshipPosts(Integer internshipId, Integer page, Integer size) {
+        assertExternalInternship(internshipId);
+        int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
+        int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+
+        List<Object> list = fetchAllPagesInternshipPostMergePass(internshipId);
+        List<JSONObject> allItems = new ArrayList<>();
+        if (list != null) {
+            Set<Integer> seenPostIds = new HashSet<>();
+            for (Object o : list) {
+                JSONObject j = FastJsonUtil.toJson(o);
+                Integer postId = parseInternshipPostIdFromInternshipPostMergeRow(j);
+                if (postId == null || seenPostIds.contains(postId)) {
+                    continue;
+                }
+                seenPostIds.add(postId);
+                JSONObject item = new JSONObject();
+                item.put("internshipPostId", postId);
+                item.put("internshipPostName", firstNonEmpty(j.getString("internshipPostName"), j.getString("name")));
+                item.put("companyName", j.getString("companyName"));
+                item.put("companyId", j.getInteger("companyId"));
+                item.put("allPersonNum", j.getInteger("allPersonNum"));
+                item.put("nowPersonNum", j.getInteger("nowPersonNum"));
+                item.put("internshipPostCode", j.getString("internshipPostCode"));
+                item.put("processTypeCode", j.getString("processTypeCode"));
+                Object postEntity = iCommonService.getOneRecordById("MainInternshipPost", postId);
+                if (postEntity != null) {
+                    JSONObject pe = FastJsonUtil.toJson(postEntity);
+                    item.put("postTypeId", pe.getInteger("postTypeId"));
+                    item.put("remarks", pe.getString("remarks"));
+                    Integer postTypeId = pe.getInteger("postTypeId");
+                    if (postTypeId != null) {
+                        Object postTypeObj = iCommonService.getOneRecordById("BasePostType", postTypeId);
+                        if (postTypeObj != null) {
+                            item.put("salary", FastJsonUtil.toJson(postTypeObj).getInteger("salary"));
+                        }
+                    }
+                }
+                allItems.add(item);
+            }
+        }
+
+        int total = allItems.size();
+        int totalPages = pageSize <= 0 ? 0 : (int) Math.ceil((double) total / (double) pageSize);
+        int from = Math.max(0, (pageNum - 1) * pageSize);
+        int to = Math.min(from + pageSize, total);
+        JSONArray posts = new JSONArray();
+        if (from < total) {
+            for (int i = from; i < to; i++) {
+                posts.add(allItems.get(i));
+            }
+        }
+
+        JSONObject out = new JSONObject();
+        out.put("internshipId", internshipId);
+        out.put("posts", posts);
+        out.put("page", pageNum);
+        out.put("size", pageSize);
+        out.put("totalElements", total);
+        out.put("totalPages", totalPages);
+        return out;
+    }
+
+    /**
+     * 拉取某项目下岗位合并视图中 isAudit=PASS 的全部行（分页拼接），避免仅取第一页导致去重后 total 偏少。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Object> fetchAllPagesInternshipPostMergePass(Integer internshipId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        List<Object> all = new ArrayList<>();
+        int p = 1;
+        while (true) {
+            Page<Object> dbPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewVerifyProcessInternshipPostMerge", sk, null, Sort.unsorted(), p, POST_PAGE_SIZE);
+            List<Object> content = dbPage.getContent();
+            if (content == null || content.isEmpty()) {
+                break;
+            }
+            all.addAll(content);
+            if (content.size() < POST_PAGE_SIZE) {
+                break;
+            }
+            p++;
+        }
+        return all;
+    }
+
+    @Override
+    public Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status) {
+        assertExternalInternship(internshipId);
+        String st = normalizeStudentPostBreakdownStatus(status);
+        int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
+        int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+        Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
+        JSONObject stuSk = new JSONObject();
+        stuSk.put("internshipId", internshipId);
+        @SuppressWarnings("unchecked")
+        Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelStuInternshipPostMerge", stuSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> mergeList = mergePage.getContent() == null ? Collections.emptyList() : mergePage.getContent();
+
+        Set<Integer> anyStuPostUser = new HashSet<>();
+        Set<Integer> passUser = new HashSet<>();
+        Map<Integer, JSONObject> userRowSample = new HashMap<>();
+        for (Object o : mergeList) {
+            JSONObject j = FastJsonUtil.toJson(o);
+            Integer uid = parseStudentUserIdFromStuPostMerge(j);
+            if (uid == null) {
+                continue;
+            }
+            anyStuPostUser.add(uid);
+            Integer isAudit = j.getInteger("isAudit");
+            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
+                passUser.add(uid);
+            }
+            JSONObject prev = userRowSample.get(uid);
+            if (prev == null) {
+                userRowSample.put(uid, j);
+            } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
+                userRowSample.put(uid, j);
+            }
+        }
+
+        List<Integer> postApprovedList = passUser.stream().sorted().collect(Collectors.toList());
+        List<Integer> selectedPending = anyStuPostUser.stream()
+                .filter(u -> !passUser.contains(u))
+                .sorted()
+                .collect(Collectors.toList());
+        List<Integer> notSelected = projectStudentUserIds.stream()
+                .filter(u -> !anyStuPostUser.contains(u))
+                .sorted()
+                .collect(Collectors.toList());
+
+        JSONObject counts = new JSONObject();
+        counts.put(STU_POST_STATUS_NOT_SELECTED, notSelected.size());
+        counts.put(STU_POST_STATUS_SELECTED_PENDING, selectedPending.size());
+        counts.put(STU_POST_STATUS_POST_APPROVED, postApprovedList.size());
+
+        Object invObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+        JSONObject invJ = invObj != null ? FastJsonUtil.toJson(invObj) : new JSONObject();
+
+        if (STU_POST_STATUS_ALL.equals(st)) {
+            List<Integer> allOrdered = projectStudentUserIds.stream().sorted().collect(Collectors.toList());
+            int total = allOrdered.size();
+            int totalPages = pageSize <= 0 ? 0 : (int) Math.ceil((double) total / (double) pageSize);
+            int from = Math.max(0, (pageNum - 1) * pageSize);
+            int to = Math.min(from + pageSize, total);
+            List<Integer> slice = from >= total ? Collections.emptyList() : allOrdered.subList(from, to);
+            JSONArray rows = new JSONArray();
+            for (Integer uid : slice) {
+                JSONObject row = buildOneStudentBriefRow(uid, userRowSample);
+                row.put("selectionStatus", resolveStudentSelectionStatus(uid, anyStuPostUser, passUser));
+                rows.add(row);
+            }
+            JSONObject result = new JSONObject();
+            result.put("internshipId", internshipId);
+            result.put("internshipName", invJ.getString("name"));
+            result.put("status", STU_POST_STATUS_ALL);
+            result.put("page", pageNum);
+            result.put("size", pageSize);
+            result.put("counts", counts);
+            result.put("totalElements", total);
+            result.put("totalPages", totalPages);
+            result.put("rows", rows);
+            return result;
+        }
+
+        List<Integer> targetList;
+        Map<Integer, JSONObject> mergeForRows;
+        if (STU_POST_STATUS_NOT_SELECTED.equals(st)) {
+            targetList = notSelected;
+            mergeForRows = null;
+        } else if (STU_POST_STATUS_SELECTED_PENDING.equals(st)) {
+            targetList = selectedPending;
+            mergeForRows = userRowSample;
+        } else {
+            targetList = postApprovedList;
+            mergeForRows = userRowSample;
+        }
+
+        JSONObject paged = buildPagedStudentCategory(targetList, mergeForRows, pageNum, pageSize);
+        JSONObject result = new JSONObject();
+        result.put("internshipId", internshipId);
+        result.put("internshipName", invJ.getString("name"));
+        result.put("status", st);
+        result.put("page", paged.getInteger("page"));
+        result.put("size", paged.getInteger("size"));
+        result.put("counts", counts);
+        result.put("totalElements", paged.getInteger("totalElements"));
+        result.put("totalPages", paged.getInteger("totalPages"));
+        result.put("rows", paged.get("rows"));
+        return result;
+    }
+
+    private static String normalizeStudentPostBreakdownStatus(String status) {
+        if (status == null || status.trim().isEmpty()) {
+            return STU_POST_STATUS_ALL;
+        }
+        String s = status.trim();
+        if (STU_POST_STATUS_ALL.equals(s)
+                || STU_POST_STATUS_NOT_SELECTED.equals(s)
+                || STU_POST_STATUS_SELECTED_PENDING.equals(s)
+                || STU_POST_STATUS_POST_APPROVED.equals(s)) {
+            return s;
+        }
+        throw BaseResponse.parameterInvalid.error("status 无效，可选：all、notSelected、selectedPendingAudit、postApproved");
+    }
+
+    private static String resolveStudentSelectionStatus(Integer uid, Set<Integer> anyStuPostUser, Set<Integer> passUser) {
+        if (passUser.contains(uid)) {
+            return STU_POST_STATUS_POST_APPROVED;
+        }
+        if (anyStuPostUser.contains(uid)) {
+            return STU_POST_STATUS_SELECTED_PENDING;
+        }
+        return STU_POST_STATUS_NOT_SELECTED;
+    }
+
+    private void assertExternalInternship(Integer internshipId) {
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        Object v = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+        if (v == null) {
+            throw BaseResponse.parameterInvalid.error("实习项目不存在");
+        }
+        JSONObject j = FastJsonUtil.toJson(v);
+        String intTypeName = j.getString("intTypeName");
+        if (intTypeName == null || !EXTERNAL_INT_TYPE_NAME.equals(intTypeName.trim())) {
+            throw BaseResponse.parameterInvalid.error("仅支持校外实习项目");
+        }
+    }
+
+    private Set<Integer> loadUserIdsByDepartmentAndJobCode(Integer departmentId, String jobCode) {
+        JSONObject sk = new JSONObject();
+        sk.put("departmentId", departmentId);
+        sk.put("jobCode", jobCode);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewBaseUser", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return new HashSet<>();
+        }
+        return list.stream()
+                .map(FastJsonUtil::toJson)
+                .map(json -> json.getInteger("id"))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    private int countDistinctMergeUsersInSet(Integer internshipId, String jobCode, Set<Integer> allowedUserIds) {
+        if (allowedUserIds == null || allowedUserIds.isEmpty()) {
+            return 0;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("jobCode", jobCode);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelIntershipUserMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return 0;
+        }
+        return (int) list.stream()
+                .map(FastJsonUtil::toJson)
+                .map(json -> json.getInteger("userId"))
+                .filter(Objects::nonNull)
+                .filter(allowedUserIds::contains)
+                .distinct()
+                .count();
+    }
+
+    private int countPendingAuditInternshipPosts(Integer internshipId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessInternshipPostMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return 0;
+        }
+        Set<Integer> pendingIds = new HashSet<>();
+        for (Object o : list) {
+            JSONObject j = FastJsonUtil.toJson(o);
+            Integer a = j.getInteger("isAudit");
+            if (a != null && (a == Constant.AUDIT_STATUS.SAVE || a == Constant.AUDIT_STATUS.SUBMIT)) {
+                Integer pid = parseInternshipPostIdFromInternshipPostMergeRow(j);
+                if (pid != null) {
+                    pendingIds.add(pid);
+                }
+            }
+        }
+        return pendingIds.size();
+    }
+
+    private int countDeptStudentsWithPostSelection(Integer internshipId, Integer departmentId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("departmentId", departmentId);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelStuInternshipPostMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return 0;
+        }
+        Set<Integer> uids = new HashSet<>();
+        for (Object o : list) {
+            Integer uid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(o));
+            if (uid != null) {
+                uids.add(uid);
+            }
+        }
+        return uids.size();
+    }
+
+    private Set<Integer> loadInternshipProjectStudentUserIds(Integer internshipId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
+        @SuppressWarnings("unchecked")
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelIntershipUserMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return new HashSet<>();
+        }
+        return list.stream()
+                .map(FastJsonUtil::toJson)
+                .map(json -> json.getInteger("userId"))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    private Integer parseStudentUserIdFromStuPostMerge(JSONObject j) {
+        if (j == null) {
+            return null;
+        }
+        Integer uid = j.getInteger("studentId");
+        if (uid != null) {
+            return uid;
+        }
+        String s = j.getString("studentId");
+        if (s == null || s.isBlank()) {
+            return j.getInteger("userId");
+        }
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private JSONObject buildPagedStudentCategory(List<Integer> fullUserIds, Map<Integer, JSONObject> mergeSample,
+                                               int pageNum, int pageSize) {
+        List<Integer> ids = fullUserIds == null ? Collections.emptyList() : fullUserIds;
+        int total = ids.size();
+        int totalPages = pageSize <= 0 ? 0 : (int) Math.ceil((double) total / (double) pageSize);
+        int from = Math.max(0, (pageNum - 1) * pageSize);
+        int to = Math.min(from + pageSize, total);
+        List<Integer> slice = from >= total ? Collections.emptyList() : ids.subList(from, to);
+        JSONObject block = new JSONObject();
+        block.put("rows", buildStudentBriefList(slice, mergeSample));
+        block.put("page", pageNum);
+        block.put("size", pageSize);
+        block.put("totalElements", total);
+        block.put("totalPages", totalPages);
+        return block;
+    }
+
+    private JSONObject buildOneStudentBriefRow(Integer uid, Map<Integer, JSONObject> mergeSample) {
+        JSONObject row = new JSONObject();
+        row.put("userId", uid);
+        if (mergeSample != null && mergeSample.containsKey(uid)) {
+            JSONObject m = mergeSample.get(uid);
+            row.put("userName", m.getString("studentName"));
+            row.put("departmentId", m.getInteger("departmentId"));
+            row.put("departmentName", m.getString("departmentName"));
+            row.put("internshipPostName", m.getString("internshipPostName"));
+            row.put("companyName", m.getString("companyName"));
+            row.put("isAudit", m.getInteger("isAudit"));
+        } else {
+            Object uo = iCommonService.getOneRecordById("ViewBaseUser", uid);
+            if (uo != null) {
+                JSONObject uj = FastJsonUtil.toJson(uo);
+                row.put("userName", uj.getString("name"));
+                row.put("departmentId", uj.getInteger("departmentId"));
+                row.put("departmentName", uj.getString("departmentName"));
+            }
+        }
+        return row;
+    }
+
+    private JSONArray buildStudentBriefList(List<Integer> userIds, Map<Integer, JSONObject> mergeSample) {
+        JSONArray arr = new JSONArray();
+        if (userIds == null || userIds.isEmpty()) {
+            return arr;
+        }
+        for (Integer uid : userIds) {
+            arr.add(buildOneStudentBriefRow(uid, mergeSample));
+        }
+        return arr;
+    }
+
+    private static String firstNonEmpty(String a, String b) {
+        if (a != null && !a.isBlank()) {
+            return a;
+        }
+        if (b != null && !b.isBlank()) {
+            return b;
+        }
+        return a;
     }
 
     @Override

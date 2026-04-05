@@ -101,4 +101,36 @@ public interface IInternshipService {
     //  * @return 符合条件的实习项目列表
     //  */
     // Object getNowInternship(String processTypeCode);
+
+    /**
+     * 本学院校外实习项目报名汇总（按学院部门统计各项目指标）。
+     *
+     * @param departmentId 学院部门 ID（ViewBaseUser.departmentId）
+     * @param page         页码，从 1 开始
+     * @param size         每页条数
+     */
+    Object listExternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size);
+
+    /**
+     * 指定校外实习项目下，审核已通过的企业岗位列表（含公司、招聘人数等）。
+     *
+     * @param internshipId 实习项目 ID
+     * @param page         页码，从 1 开始；{@code null} 时与默认页大小见实现
+     * @param size         每页条数；{@code null} 时使用默认大小
+     */
+    Object listApprovedExternalInternshipPosts(Integer internshipId, Integer page, Integer size);
+
+    /**
+     * 指定校外实习项目：学生选岗情况。{@code counts} 始终为三类全量人数。
+     * <ul>
+     *   <li>{@code status=all}：不分状态，返回本项目内全部学生一条列表并分页；每条含 {@code selectionStatus}。</li>
+     *   <li>其余三个值：仅查询并分页返回该状态对应的学生 {@code rows}。</li>
+     * </ul>
+     *
+     * @param internshipId 实习项目 ID
+     * @param page         页码，从 1 开始
+     * @param size         每页条数
+     * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
+     */
+    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status);
 }

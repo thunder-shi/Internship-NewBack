@@ -264,4 +264,74 @@ public class InternshipProcessController {
     //     return BaseResponse.ok(iInternshipService.getNowInternship(processTypeCode));
     // }
 
+    @Operation(
+            summary = "本学院校外实习项目报名汇总",
+            description = "按学院部门（departmentId）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、本学院已选岗学生数等。"
+    )
+    @PostMapping(value = "/listExternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listExternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listExternalInternshipCollegeStats", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.listExternalInternshipCollegeStats(departmentId, page, size));
+    }
+
+    @Operation(
+            summary = "校外实习项目-审核已通过岗位列表",
+            description = "指定校外实习项目 internshipId，返回审核已通过（isAudit=PASS）的岗位及公司、招聘人数、岗位类型薪资（salary，来自 BasePostType）等；"
+                    + "支持 pageInfo.page / pageInfo.size 分页（对去重后的岗位列表切片）。"
+    )
+    @PostMapping(value = "/listApprovedExternalInternshipPosts", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listApprovedExternalInternshipPosts(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listApprovedExternalInternshipPosts", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.listApprovedExternalInternshipPosts(internshipId, page, size));
+    }
+
+    @Operation(
+            summary = "校外实习项目-学生选岗情况",
+            description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
+                    + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
+                    + "counts 始终为三类全量人数。分页：pageInfo.page、pageInfo.size。"
+    )
+    @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getExternalInternshipStudentPostBreakdown(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getExternalInternshipStudentPostBreakdown", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        String status = node != null ? node.getString("status") : requestJson.getString("status");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status));
+    }
+
 }
