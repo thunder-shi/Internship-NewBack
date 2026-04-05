@@ -262,7 +262,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @SuppressWarnings("unchecked")
     private Set<Integer> getLockedStudentUserIdsFromVerifyMerge() {
         Set<Integer> lockedUserIds = new HashSet<>();
-        for (int status : new int[]{Constant.AUDIT_STATUS.SAVE, Constant.AUDIT_STATUS.SUBMIT}) {
+        for (int status : new int[]{Constant.AUDIT_STATUS.SAVE, Constant.AUDIT_STATUS.SUBMIT,Constant.AUDIT_STATUS.PASS}) {
             JSONObject verifySearchKeys = new JSONObject();
             verifySearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
             verifySearchKeys.put("isAudit", status);
