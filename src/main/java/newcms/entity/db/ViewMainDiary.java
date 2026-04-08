@@ -5,24 +5,53 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
+import java.time.LocalDateTime;
+
+/**
+ * 实习日志视图
+ * 合并 main_diary + main_diary_period + 关联信息（岗位/题目/学生）
+ */
 @Getter
 @Setter
 @Entity(name = "view_main_diary")
 public class ViewMainDiary extends BaseInfo {
-    // 来自 main_diary
-    private Integer stuInternshipPostId;   // 校外：非空
-    private Integer relTitleStudentId;     // 校内：非空
-    private Integer periodIndex;
-    private String content;
-    private String remark;
+    // 来自 main_diary（NameRemarkInfo）
+    private String code;
+    private String name;
+    private String remarks;         // 老师批阅意见（写回 main_diary.remarks）
 
-    // 校外：岗位信息（stuInternshipPostId 非空时有值）
+    // 来自 main_diary（新字段）
+    private Integer relationId;     // 关联 rel_stu_internship_post 或 rel_title_student 的 id
+    private String tableName;       // "RelStuInternshipPost" 或 "RelTitleStudent"
+    private Integer periodId;       // 关联 main_diary_period.id
+    private String content;         // 日志正文
+    private Boolean submit;         // false=草稿，true=已提交
+    private Integer verifyTypeId;
+    private Integer verifyFirstRoleId;
+    private Integer verifySecondRoleId;
+    private Integer verifyThirdRoleId;
+    private Integer verifyFourthRoleId;
+    private Integer verifyFifthRoleId;
+    private Integer currentVerifyTypeId;
+    // 各级审核角色名（来自 sys_role）
+    private String verifyFirstRoleName;
+    private String verifySecondRoleName;
+    private String verifyThirdRoleName;
+    private String verifyFourthRoleName;
+    private String verifyFifthRoleName;
+
+    // 来自 main_diary_period（期次信息）
+    private Integer periodIndex;
+    private LocalDateTime beginTime;
+    private LocalDateTime endTime;
+
+    // 校外：岗位信息（tableName = 'RelStuInternshipPost' 时有值）
     private String internshipPostCode;
     private String internshipPostName;
     private String internshipPostRemarks;
     private String postCompanyName;
 
-    // 校内：题目信息（relTitleStudentId 非空时有值）
+    // 校内：题目信息（tableName = 'RelTitleStudent' 时有值）
     private Integer titleId;
     private String titleName;
     private Integer teacherId;

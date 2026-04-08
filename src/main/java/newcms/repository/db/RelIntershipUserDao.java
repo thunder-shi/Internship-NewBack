@@ -11,5 +11,7 @@ import java.util.List;
 @Repository
 public interface RelIntershipUserDao extends BaseDao<RelIntershipUser, Integer> {
     List<RelIntershipUser> findByUserIdAndIsDeletedFalse(Integer userId);
+    List<RelIntershipUser> findByUserIdAndInternshipIdAndIsDeletedFalse(Integer userId, Integer internshipId);
+    List<RelIntershipUser> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
 }
 
