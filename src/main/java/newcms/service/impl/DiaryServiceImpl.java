@@ -13,8 +13,6 @@ import newcms.utils.FastJsonUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -29,16 +27,22 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     private MainDiaryDao mainDiaryDao;
 
     @Resource
-    private MainVerifyProcessDao mainVerifyProcessDao;
+    private MainDiaryPeriodDao mainDiaryPeriodDao;
 
     @Resource
-    private RelProcessInternshipDao relProcessInternshipDao;
+    private MainVerifyProcessDao mainVerifyProcessDao;
 
     @Resource
     private MainInternshipPostDao mainInternshipPostDao;
 
     @Resource
     private RelStuInternshipPostDao relStuInternshipPostDao;
+
+    @Resource
+    private RelIntershipUserDao relIntershipUserDao;
+
+    @Resource
+    private RelTeacherStudentDao relTeacherStudentDao;
 
     @Resource
     private ViewRelTitleTeacherStudentDao viewRelTitleTeacherStudentDao;
@@ -55,54 +59,100 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     @Resource
     private ViewBaseUserDao viewBaseUserDao;
 
-    // ==================== 提交日志 ====================
+    @Resource
+    private newcms.service.IVerifyProcessService iVerifyProcessService;
+
+    // ==================== 提交/保存日志 ====================
 
     @Override
-    public Integer submitDiary(Integer stuInternshipPostId, Integer relTitleStudentId,
-                               Integer periodIndex, String content, Integer currentUserId) {
-        boolean isExternal = stuInternshipPostId != null;
-        boolean isInternal = relTitleStudentId != null;
-        if (!isExternal && !isInternal) {
-            throw BaseResponse.parameterInvalid.error("stuInternshipPostId 和 relTitleStudentId 不能同时为空");
-        }
+    public Integer submitDiary(Integer relationId, String tableName, Integer periodId,
+                               String content, Boolean submit, Integer currentUserId) {
+        boolean isSubmit = Boolean.TRUE.equals(submit);
 
-        Integer teacherId = null;
-        Integer internshipId = null;
-
-        // 查找该期已有的 diary（如果有就是重新提交）
-        Optional<MainDiary> existingOpt = isExternal
-                ? mainDiaryDao.findByStuInternshipPostIdAndPeriodIndexAndIsDeletedFalse(stuInternshipPostId, periodIndex)
-                : mainDiaryDao.findByRelTitleStudentIdAndPeriodIndexAndIsDeletedFalse(relTitleStudentId, periodIndex);
+        // 查找已有日志（同一 relationId+tableName+periodId 只存一条）
+        Optional<MainDiary> existingOpt =
+                mainDiaryDao.findByRelationIdAndTableNameAndPeriodIdAndIsDeletedFalse(relationId, tableName, periodId);
 
         if (existingOpt.isPresent()) {
-            // 重新提交：更新 content，将 isAudit=-1 的记录改为 isAudit=0
             MainDiary existing = existingOpt.get();
             Integer diaryId = existing.getId();
+            boolean wasDraft = !Boolean.TRUE.equals(existing.getSubmit());
 
+            // 更新内容、提交状态、审核进度
             JSONObject updateDiary = new JSONObject();
             updateDiary.put("id", diaryId);
             updateDiary.put("content", content);
+            updateDiary.put("submit", isSubmit);
+            updateDiary.put("currentVerifyTypeId", isSubmit ? Constant.VERIFY_LEVEL.ONE_VERIFY : Constant.VERIFY_LEVEL.NO_VERIFY);
             iCommonService.saveOneRecord("MainDiary", updateDiary);
 
-            // 找到待提交（isAudit=-1）的记录并改为 isAudit=0
-            List<MainVerifyProcess> pendingList = mainVerifyProcessDao
-                    .findByRelationIdAndTableNameAndIsDeletedFalse(diaryId, "MainDiary");
-            pendingList.stream()
-                    .filter(p -> p.getIsAudit() != null && p.getIsAudit() == Constant.AUDIT_STATUS.SAVE)
-                    .max(Comparator.comparing(MainVerifyProcess::getId))
-                    .ifPresent(p -> {
-                        JSONObject updateProcess = new JSONObject();
-                        updateProcess.put("id", p.getId());
-                        updateProcess.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
-                        iCommonService.saveOneRecord("MainVerifyProcess", updateProcess);
-                    });
-
+            // 从草稿变为提交时，创建审核记录（若无 SUBMIT 状态的记录）
+            if (isSubmit && wasDraft) {
+                ensureDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId);
+            }
             return diaryId;
         }
 
-        // 首次提交：需要获取指导老师
-        if (isExternal) {
-            Object relStuPostObj = iCommonService.getOneRecordById("RelStuInternshipPost", stuInternshipPostId);
+        // 首次创建
+        JSONObject diaryJson = new JSONObject();
+        diaryJson.put("relationId", relationId);
+        diaryJson.put("tableName", tableName);
+        diaryJson.put("periodId", periodId);
+        diaryJson.put("content", content);
+        diaryJson.put("submit", isSubmit);
+        diaryJson.put("verifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);
+        diaryJson.put("currentVerifyTypeId", isSubmit ? Constant.VERIFY_LEVEL.ONE_VERIFY : Constant.VERIFY_LEVEL.NO_VERIFY);
+        Object savedDiary = iCommonService.saveOneRecord("MainDiary", diaryJson);
+        Integer diaryId = FastJsonUtil.toJson(savedDiary).getInteger("id");
+
+        if (isSubmit) {
+            ensureDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId);
+        }
+        return diaryId;
+    }
+
+    /**
+     * 若没有 SUBMIT(0) 状态的审核记录，则新建第一级审核记录。
+     * 优先使用 MainDiary.verifyFirstRoleId 做角色匹配；角色未配置（0）时回落到具体分配的校内导师。
+     */
+    private void ensureDiaryVerifyProcess(Integer diaryId, Integer relationId,
+                                          String tableName, Integer currentUserId) {
+        List<MainVerifyProcess> existing =
+                mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(diaryId, "MainDiary");
+        boolean hasPending = existing.stream()
+                .anyMatch(p -> p.getIsAudit() != null && p.getIsAudit() == Constant.AUDIT_STATUS.SUBMIT);
+        if (hasPending) return;
+
+        // 读取日志的第一级审核角色
+        JSONObject diaryJson = FastJsonUtil.toJson(iCommonService.getOneRecordById("MainDiary", diaryId));
+        Integer verifyFirstRoleId = diaryJson.getInteger("verifyFirstRoleId");
+
+        String verifyUserId;
+        if (verifyFirstRoleId != null && verifyFirstRoleId > 0) {
+            // 角色配置存在：按角色+学校范围查找所有可审核人
+            verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, currentUserId);
+        } else {
+            // 角色未配置：回落到具体分配的校内导师
+            Integer teacherId = findSchoolTeacherId(relationId, tableName, currentUserId);
+            verifyUserId = String.valueOf(teacherId);
+        }
+
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", diaryId);
+        verifyJson.put("createUserId", currentUserId);
+        verifyJson.put("verifyUserId", verifyUserId);
+        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", "MainDiary");
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+    }
+
+    /**
+     * 根据 relationId+tableName 查找负责审批该日志的校内导师 ID。
+     */
+    private Integer findSchoolTeacherId(Integer relationId, String tableName, Integer currentUserId) {
+        if ("RelStuInternshipPost".equals(tableName)) {
+            Object relStuPostObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
             if (relStuPostObj == null) throw BaseResponse.parameterInvalid.error("学生实习岗位记录不存在");
             JSONObject relStuPostJson = FastJsonUtil.toJson(relStuPostObj);
             Integer studentId = relStuPostJson.getInteger("studentId");
@@ -110,166 +160,129 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
             Object postObj = iCommonService.getOneRecordById("MainInternshipPost", internshipPostId);
             if (postObj == null) throw BaseResponse.parameterInvalid.error("实习岗位不存在");
-            internshipId = FastJsonUtil.toJson(postObj).getInteger("internshipId");
+            Integer internshipId = FastJsonUtil.toJson(postObj).getInteger("internshipId");
 
-            List<ViewRelTitleTeacherStudent> teachers =
-                    viewRelTitleTeacherStudentDao.findByStuIdAndInternshipIdAndIsDeletedFalse(studentId, internshipId);
-            if (teachers.isEmpty()) throw BaseResponse.parameterInvalid.error("该学生尚未分配指导老师");
-            teacherId = teachers.get(0).getTeacherId();
+            List<RelIntershipUser> relIntershipUsers =
+                    relIntershipUserDao.findByUserIdAndInternshipIdAndIsDeletedFalse(studentId, internshipId);
+            if (relIntershipUsers.isEmpty()) throw BaseResponse.parameterInvalid.error("该学生尚未纳入实习项目");
+            Integer relIntershipUserId = relIntershipUsers.get(0).getId();
+
+            List<RelTeacherStudent> teacherStudents =
+                    relTeacherStudentDao.findByRelInternshipIdAndIsDeletedFalse(relIntershipUserId);
+            Set<Integer> candidateIds = teacherStudents.stream()
+                    .map(RelTeacherStudent::getTeacherId).filter(Objects::nonNull).collect(Collectors.toSet());
+            return viewBaseUserDao.getByIdInAndIsDeletedFalse(candidateIds).stream()
+                    .filter(u -> Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(u.getJobCode()))
+                    .map(ViewBaseUser::getId)
+                    .findFirst()
+                    .orElseThrow(() -> BaseResponse.parameterInvalid.error("该学生尚未分配校内导师"));
         } else {
+            // RelTitleStudent（校内）
             List<ViewRelTitleTeacherStudent> records =
-                    viewRelTitleTeacherStudentDao.findByRelTitleStudentIdAndIsDeletedFalse(relTitleStudentId);
+                    viewRelTitleTeacherStudentDao.findByRelTitleStudentIdAndIsDeletedFalse(relationId);
             if (records.isEmpty()) throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
-            ViewRelTitleTeacherStudent record = records.get(0);
-            teacherId = record.getTeacherId();
-            internshipId = record.getInternshipId();
+            return records.get(0).getTeacherId();
         }
-
-        // 新建 MainDiary
-        JSONObject diaryJson = new JSONObject();
-        diaryJson.put("stuInternshipPostId", stuInternshipPostId);
-        diaryJson.put("relTitleStudentId", relTitleStudentId);
-        diaryJson.put("periodIndex", periodIndex);
-        diaryJson.put("content", content);
-        Object savedDiary = iCommonService.saveOneRecord("MainDiary", diaryJson);
-        Integer diaryId = FastJsonUtil.toJson(savedDiary).getInteger("id");
-
-        // 创建 MainVerifyProcess（processId 用 0 占位，diary 无流程配置）
-        JSONObject verifyJson = new JSONObject();
-        verifyJson.put("relationId", diaryId);
-        verifyJson.put("processId", 0);
-        verifyJson.put("createUserId", currentUserId);
-        verifyJson.put("verifyUserId", String.valueOf(teacherId));
-        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
-        verifyJson.put("reason", "");
-        verifyJson.put("tableName", "MainDiary");
-        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
-
-        return diaryId;
     }
 
-    // ==================== 期数列表（学生视角） ====================
+    // ==================== 期次列表（学生视角） ====================
 
     @Override
-    public Object getDiaryPeriods(Integer stuInternshipPostId, Integer relTitleStudentId) {
-        boolean isExternal = stuInternshipPostId != null;
+    public Object getDiaryPeriods(Integer relationId, String tableName) {
+        Integer internshipId = getInternshipIdFromRelation(relationId, tableName);
 
-        Integer internshipId;
-        String cron;
+        List<MainDiaryPeriod> periods =
+                mainDiaryPeriodDao.findByInternshipIdAndIsDeletedFalseOrderByPeriodIndexAsc(internshipId);
+        if (periods.isEmpty()) return Collections.emptyList();
 
-        if (isExternal) {
-            Object relStuPostObj = iCommonService.getOneRecordById("RelStuInternshipPost", stuInternshipPostId);
-            if (relStuPostObj == null) throw BaseResponse.parameterInvalid.error("学生实习岗位记录不存在");
-            Integer internshipPostId = FastJsonUtil.toJson(relStuPostObj).getInteger("internshipPostId");
-            Object postObj = iCommonService.getOneRecordById("MainInternshipPost", internshipPostId);
-            if (postObj == null) throw BaseResponse.parameterInvalid.error("实习岗位不存在");
-            internshipId = FastJsonUtil.toJson(postObj).getInteger("internshipId");
-        } else {
-            List<ViewRelTitleTeacherStudent> records =
-                    viewRelTitleTeacherStudentDao.findByRelTitleStudentIdAndIsDeletedFalse(relTitleStudentId);
-            if (records.isEmpty()) throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
-            internshipId = records.get(0).getInternshipId();
-        }
-
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) throw BaseResponse.parameterInvalid.error("实习项目不存在");
-        cron = FastJsonUtil.toJson(internshipObj).getString("cron");
-
-        // 取最早流程 startTime 作为周期起点
-        List<RelProcessInternship> processes = relProcessInternshipDao.findByInternshipIdAndIsDeletedFalse(internshipId);
-        if (processes.isEmpty()) return Collections.emptyList();
-        LocalDateTime startTime = processes.stream()
-                .map(RelProcessInternship::getStartTime)
-                .filter(Objects::nonNull)
-                .min(Comparator.naturalOrder())
-                .orElse(null);
-        if (startTime == null) return Collections.emptyList();
-
-        int totalPeriods = calcTotalPeriods(startTime, cron);
-        if (totalPeriods <= 0) return Collections.emptyList();
-
-        // 查询已提交日志
-        List<MainDiary> diaries = isExternal
-                ? mainDiaryDao.findByStuInternshipPostIdAndIsDeletedFalse(stuInternshipPostId)
-                : mainDiaryDao.findByRelTitleStudentIdAndIsDeletedFalse(relTitleStudentId);
-
-        Map<Integer, Integer> periodToDiaryId = new HashMap<>();
+        List<MainDiary> diaries =
+                mainDiaryDao.findByRelationIdAndTableNameAndIsDeletedFalse(relationId, tableName);
+        Map<Integer, Integer> periodIdToDiaryId = new HashMap<>();
         for (MainDiary d : diaries) {
-            if (d.getPeriodIndex() != null) {
-                periodToDiaryId.put(d.getPeriodIndex(), d.getId());
-            }
+            if (d.getPeriodId() != null) periodIdToDiaryId.put(d.getPeriodId(), d.getId());
         }
 
-        Map<Integer, ViewVerifyMainDiaryMerge> diaryIdToMerge =
-                fetchMergeByDiaryIds(new ArrayList<>(periodToDiaryId.values()));
+        Map<Integer, ViewVerifyMainDiaryMerge> mergeMap =
+                fetchMergeByDiaryIds(new ArrayList<>(periodIdToDiaryId.values()));
 
         List<JSONObject> result = new ArrayList<>();
-        for (int i = 1; i <= totalPeriods; i++) {
+        for (MainDiaryPeriod period : periods) {
             JSONObject item = new JSONObject();
-            item.put("periodIndex", i);
-            Integer diaryId = periodToDiaryId.get(i);
-            ViewVerifyMainDiaryMerge merge = diaryId != null ? diaryIdToMerge.get(diaryId) : null;
+            item.put("periodId", period.getId());
+            item.put("periodIndex", period.getPeriodIndex());
+            item.put("beginTime", period.getBeginTime());
+            item.put("endTime", period.getEndTime());
+            Integer diaryId = periodIdToDiaryId.get(period.getId());
+            ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
             item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
             result.add(item);
         }
         return result;
     }
 
-    // ==================== 总期数（老师端期数选择器） ====================
+    // ==================== 期次定义（老师端） ====================
 
     @Override
-    public int getInternshipPeriodCount(Integer internshipId) {
-        Object internshipObj = iCommonService.getOneRecordById("MainInternship", internshipId);
-        if (internshipObj == null) throw BaseResponse.parameterInvalid.error("实习项目不存在");
-        String cron = FastJsonUtil.toJson(internshipObj).getString("cron");
-
-        List<RelProcessInternship> processes = relProcessInternshipDao.findByInternshipIdAndIsDeletedFalse(internshipId);
-        if (processes.isEmpty()) return 0;
-        LocalDateTime startTime = processes.stream()
-                .map(RelProcessInternship::getStartTime)
-                .filter(Objects::nonNull)
-                .min(Comparator.naturalOrder())
-                .orElse(null);
-        if (startTime == null) return 0;
-        return calcTotalPeriods(startTime, cron);
+    public List<MainDiaryPeriod> getInternshipPeriods(Integer internshipId) {
+        return mainDiaryPeriodDao.findByInternshipIdAndIsDeletedFalseOrderByPeriodIndexAsc(internshipId);
     }
 
     // ==================== 学生列表（老师视角） ====================
 
     @Override
-    public Object getPeriodStudents(Integer internshipId, Integer periodIndex, Integer userId) {
+    public Object getPeriodStudents(Integer internshipId, Integer periodId, Integer userId) {
         List<JSONObject> result = new ArrayList<>();
 
-        // 预加载 teacher-student 映射（两条路径都用：校外取 teacherName，校内做 userId 过滤）
-        List<ViewRelTitleTeacherStudent> allTitleStudents =
-                viewRelTitleTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId);
-        // stuId → ViewRelTitleTeacherStudent（校外取 teacherName 用）
-        Map<Integer, ViewRelTitleTeacherStudent> stuIdToTitle = new HashMap<>();
-        for (ViewRelTitleTeacherStudent t : allTitleStudents) {
-            if (t.getStuId() != null) stuIdToTitle.put(t.getStuId(), t);
-        }
-        // userId 过滤时允许的 stuId 集合
-        Set<Integer> allowedStuIds = null;
-        if (userId != null) {
-            allowedStuIds = allTitleStudents.stream()
-                    .filter(t -> userId.equals(t.getTeacherId()))
-                    .map(ViewRelTitleTeacherStudent::getStuId)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-        }
-        final Set<Integer> finalAllowedStuIds = allowedStuIds;
-
-        // 校外路径：岗位 → 学生报名记录（有岗位即视为校外项目，直接 return）
+        // 校外路径：有岗位 → 校外项目
         List<MainInternshipPost> posts = mainInternshipPostDao.findByInternshipIdAndIsDeletedFalse(internshipId);
         if (!posts.isEmpty()) {
+            // 建立 relIntershipUser id ↔ studentId 的双向映射
+            List<RelIntershipUser> allRelIntershipUsers =
+                    relIntershipUserDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+            Map<Integer, Integer> relIntershipUserIdToStudentId = new HashMap<>();
+            Map<Integer, Integer> studentIdToRelIntershipUserId = new HashMap<>();
+            for (RelIntershipUser riu : allRelIntershipUsers) {
+                relIntershipUserIdToStudentId.put(riu.getId(), riu.getUserId());
+                studentIdToRelIntershipUserId.put(riu.getUserId(), riu.getId());
+            }
+
+            // 筛出校内导师（jobCode = SCHOOL_TEACHER）
+            List<RelTeacherStudent> allTeacherStudents =
+                    relTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+            Set<Integer> candidateTeacherIds = allTeacherStudents.stream()
+                    .map(RelTeacherStudent::getTeacherId).filter(Objects::nonNull).collect(Collectors.toSet());
+            Map<Integer, ViewBaseUser> teacherIdToUser = new HashMap<>();
+            for (ViewBaseUser u : viewBaseUserDao.getByIdInAndIsDeletedFalse(candidateTeacherIds))
+                teacherIdToUser.put(u.getId(), u);
+            Set<Integer> schoolTeacherIds = teacherIdToUser.values().stream()
+                    .filter(u -> Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(u.getJobCode()))
+                    .map(ViewBaseUser::getId).collect(Collectors.toSet());
+
+            // studentId → 校内导师 ID；校内导师 ID → 所管 studentId 集合
+            Map<Integer, Integer> studentIdToSchoolTeacherId = new HashMap<>();
+            Map<Integer, Set<Integer>> schoolTeacherIdToStudentIds = new HashMap<>();
+            for (RelTeacherStudent rts : allTeacherStudents) {
+                if (rts.getTeacherId() == null || !schoolTeacherIds.contains(rts.getTeacherId())
+                        || rts.getRelInternshipId() == null) continue;
+                Integer studentId = relIntershipUserIdToStudentId.get(rts.getRelInternshipId());
+                if (studentId == null) continue;
+                studentIdToSchoolTeacherId.put(studentId, rts.getTeacherId());
+                schoolTeacherIdToStudentIds.computeIfAbsent(rts.getTeacherId(), k -> new HashSet<>()).add(studentId);
+            }
+
+            // userId 过滤：只返回该校内导师名下的学生
+            Set<Integer> allowedStuIds = userId != null
+                    ? schoolTeacherIdToStudentIds.getOrDefault(userId, Collections.emptySet())
+                    : null;
+
             List<Integer> postIds = posts.stream().map(MainInternshipPost::getId).collect(Collectors.toList());
             List<RelStuInternshipPost> relStuPosts =
                     relStuInternshipPostDao.findByInternshipPostIdInAndIsDeletedFalse(postIds);
 
-            // userId 过滤：只保留该老师名下的学生
-            if (finalAllowedStuIds != null) {
+            if (allowedStuIds != null) {
+                final Set<Integer> filter = allowedStuIds;
                 relStuPosts = relStuPosts.stream()
-                        .filter(r -> finalAllowedStuIds.contains(r.getStudentId()))
+                        .filter(r -> filter.contains(r.getStudentId()))
                         .collect(Collectors.toList());
             }
 
@@ -294,15 +307,18 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                 for (ViewRelStuInternshipPost v : viewRelStuInternshipPostDao.findAllById(stuPostIds))
                     idToView.put(v.getId(), v);
 
+                // 按 relationId（=RelStuInternshipPost.id）+ tableName + periodId 查日志
                 List<MainDiary> diaries = mainDiaryDao
-                        .findByStuInternshipPostIdInAndPeriodIndexAndIsDeletedFalse(stuPostIds, periodIndex);
+                        .findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(
+                                stuPostIds, "RelStuInternshipPost", periodId);
                 Map<Integer, Integer> stuPostIdToDiaryId = new HashMap<>();
-                for (MainDiary d : diaries) stuPostIdToDiaryId.put(d.getStuInternshipPostId(), d.getId());
+                for (MainDiary d : diaries) {
+                    if (d.getRelationId() != null) stuPostIdToDiaryId.put(d.getRelationId(), d.getId());
+                }
 
                 Map<Integer, ViewVerifyMainDiaryMerge> mergeMap =
                         fetchMergeByDiaryIds(new ArrayList<>(stuPostIdToDiaryId.values()));
 
-                // 批量查 ViewBaseUser（无日志时补充 studentNo / className）
                 Set<Integer> studentIdsWithoutDiary = relStuPosts.stream()
                         .filter(r -> !stuPostIdToDiaryId.containsKey(r.getId()))
                         .map(RelStuInternshipPost::getStudentId)
@@ -311,7 +327,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
                 for (RelStuInternshipPost rsp : relStuPosts) {
                     JSONObject item = new JSONObject();
-                    item.put("stuInternshipPostId", rsp.getId());
+                    item.put("stuRelationId", rsp.getId());
                     item.put("studentId", rsp.getStudentId());
                     ViewRelStuInternshipPost v = idToView.get(rsp.getId());
                     if (v != null) {
@@ -321,10 +337,10 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                         item.put("postDescription", v.getInternshipPostRemarks());
                         item.put("className", v.getDepartmentName());
                     }
-                    // teacherName（校外也可能分配校内导师）
-                    ViewRelTitleTeacherStudent tts = stuIdToTitle.get(rsp.getStudentId());
-                    item.put("teacherName", tts != null ? tts.getTeacherName() : null);
-                    item.put("titleDescription", null); // 校外无题目描述
+                    Integer assignedTeacherId = studentIdToSchoolTeacherId.get(rsp.getStudentId());
+                    ViewBaseUser teacher = assignedTeacherId != null ? teacherIdToUser.get(assignedTeacherId) : null;
+                    item.put("teacherName", teacher != null ? teacher.getNickName() : null);
+                    item.put("titleDescription", null);
 
                     Integer diaryId = stuPostIdToDiaryId.get(rsp.getId());
                     ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
@@ -341,25 +357,29 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                     item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
                     result.add(item);
                 }
-                return result;
             }
-            return result; // 校外项目：无论是否有审核通过的学生，都直接返回，不走校内路径
+            return result; // 校外项目直接返回，不走校内路径
         }
 
         // 校内路径：题目-学生关联（userId 过滤 + 只保留题目已审核通过的学生）
-        List<ViewRelTitleTeacherStudent> titleStudents = allTitleStudents.stream()
-                .filter(t -> Integer.valueOf(1).equals(t.getIsAudit()))
-                .filter(t -> userId == null || userId.equals(t.getTeacherId()))
-                .collect(Collectors.toList());
+        List<ViewRelTitleTeacherStudent> titleStudents =
+                viewRelTitleTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId).stream()
+                        .filter(t -> Integer.valueOf(1).equals(t.getIsAudit()))
+                        .filter(t -> userId == null || userId.equals(t.getTeacherId()))
+                        .collect(Collectors.toList());
         if (titleStudents.isEmpty()) return result;
 
         List<Integer> relTitleStudentIds = titleStudents.stream()
                 .map(ViewRelTitleTeacherStudent::getRelTitleStudentId).collect(Collectors.toList());
 
+        // 按 relationId（=RelTitleStudent.id）+ tableName + periodId 查日志
         List<MainDiary> diaries = mainDiaryDao
-                .findByRelTitleStudentIdInAndPeriodIndexAndIsDeletedFalse(relTitleStudentIds, periodIndex);
+                .findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(
+                        relTitleStudentIds, "RelTitleStudent", periodId);
         Map<Integer, Integer> relTitleStudentIdToDiaryId = new HashMap<>();
-        for (MainDiary d : diaries) relTitleStudentIdToDiaryId.put(d.getRelTitleStudentId(), d.getId());
+        for (MainDiary d : diaries) {
+            if (d.getRelationId() != null) relTitleStudentIdToDiaryId.put(d.getRelationId(), d.getId());
+        }
 
         Map<Integer, ViewVerifyMainDiaryMerge> mergeMap =
                 fetchMergeByDiaryIds(new ArrayList<>(relTitleStudentIdToDiaryId.values()));
@@ -373,13 +393,13 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
         for (ViewRelTitleTeacherStudent rts : titleStudents) {
             JSONObject item = new JSONObject();
-            item.put("relTitleStudentId", rts.getRelTitleStudentId());
+            item.put("titleRelationId", rts.getRelTitleStudentId());
             item.put("studentId", rts.getStuId());
             item.put("studentName", rts.getStudentName());
             item.put("titleName", rts.getName());
             item.put("titleDescription", rts.getRemarks());
             item.put("teacherName", rts.getTeacherName());
-            item.put("companyName", null); // 校内无企业
+            item.put("companyName", null);
 
             Integer diaryId = relTitleStudentIdToDiaryId.get(rts.getRelTitleStudentId());
             ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
@@ -393,11 +413,29 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
                 item.put("majorName", null);
                 item.put("className", bu != null ? bu.getDepartmentName() : null);
             }
-            item.put("postDescription", null); // 校内无岗位描述
+            item.put("postDescription", null);
             item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
             result.add(item);
         }
         return result;
+    }
+
+    // ==================== 工具方法 ====================
+
+    private Integer getInternshipIdFromRelation(Integer relationId, String tableName) {
+        if ("RelStuInternshipPost".equals(tableName)) {
+            Object relStuPostObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
+            if (relStuPostObj == null) throw BaseResponse.parameterInvalid.error("学生实习岗位记录不存在");
+            Integer internshipPostId = FastJsonUtil.toJson(relStuPostObj).getInteger("internshipPostId");
+            Object postObj = iCommonService.getOneRecordById("MainInternshipPost", internshipPostId);
+            if (postObj == null) throw BaseResponse.parameterInvalid.error("实习岗位不存在");
+            return FastJsonUtil.toJson(postObj).getInteger("internshipId");
+        } else {
+            List<ViewRelTitleTeacherStudent> records =
+                    viewRelTitleTeacherStudentDao.findByRelTitleStudentIdAndIsDeletedFalse(relationId);
+            if (records.isEmpty()) throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
+            return records.get(0).getInternshipId();
+        }
     }
 
     private Map<Integer, ViewBaseUser> batchLoadUsers(Set<Integer> studentIds) {
@@ -408,25 +446,11 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         return map;
     }
 
-    // ==================== 工具方法 ====================
-
     private Map<Integer, ViewVerifyMainDiaryMerge> fetchMergeByDiaryIds(List<Integer> diaryIds) {
         Map<Integer, ViewVerifyMainDiaryMerge> result = new HashMap<>();
         if (diaryIds.isEmpty()) return result;
         List<ViewVerifyMainDiaryMerge> merges = viewVerifyMainDiaryMergeDao.findByRelationIdIn(diaryIds);
         for (ViewVerifyMainDiaryMerge m : merges) result.put(m.getRelationId(), m);
         return result;
-    }
-
-    private int calcTotalPeriods(LocalDateTime startTime, String cron) {
-        LocalDateTime now = LocalDateTime.now();
-        if (startTime.isAfter(now)) return 0;
-        if (cron == null) return 1;
-        return switch (cron.toUpperCase()) {
-            case "DAILY"   -> (int) ChronoUnit.DAYS.between(startTime, now) + 1;
-            case "WEEKLY"  -> (int) ChronoUnit.WEEKS.between(startTime, now) + 1;
-            case "MONTHLY" -> (int) ChronoUnit.MONTHS.between(startTime, now) + 1;
-            default        -> 1;
-        };
     }
 }

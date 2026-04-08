@@ -1351,31 +1351,57 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Object verifyObj = Id != null ? iCommonService.getOneRecordById("MainVerifyProcess", Id) : null;
         String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
 
-        // 日志审核：单级直审，跳过多级流程
+        // 日志审核：使用日志自身的审核配置，支持多级流程
         if ("MainDiary".equals(tableName)) {
             Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
             JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
             Integer diaryId = verifyJson.getInteger("relationId");
+            Integer createUserId = verifyJson.getInteger("createUserId");
             String reason = node.getString("reason");
-            // 将审核意见写回 MainDiary.remark（仅有内容时写入，不覆盖旧意见）
+
+            // 将审核意见写回 MainDiary.remarks（仅有内容时写入）
             if (isAudit != null && isAudit >= 1 && diaryId != null
                     && reason != null && !reason.isEmpty()) {
                 JSONObject updateDiary = new JSONObject();
                 updateDiary.put("id", diaryId);
-                updateDiary.put("remark", reason);
+                updateDiary.put("remarks", reason);
                 iCommonService.saveOneRecord("MainDiary", updateDiary);
             }
-            // 退回时新建 isAudit=-1 记录，让学生可以重新提交
-            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && diaryId != null) {
-                JSONObject newVerify = new JSONObject();
-                newVerify.put("relationId", diaryId);
-                newVerify.put("processId", 0);
-                newVerify.put("createUserId", verifyJson.getInteger("createUserId"));
-                newVerify.put("verifyUserId", verifyJson.getString("verifyUserId"));
-                newVerify.put("isAudit", Constant.AUDIT_STATUS.SAVE);
-                newVerify.put("reason", "");
-                newVerify.put("tableName", "MainDiary");
-                iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
+
+            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && diaryId != null) {
+                // 审核通过：读取日志自身的审核配置推进多级流程
+                JSONObject diaryJson = FastJsonUtil.toJson(iCommonService.getOneRecordById("MainDiary", diaryId));
+                Integer currentLevel = diaryJson.getInteger("currentVerifyTypeId");
+                Integer verifyTypeId  = diaryJson.getInteger("verifyTypeId");
+                if (currentLevel != null && verifyTypeId != null) {
+                    Integer nextLevel = currentLevel + 1;
+                    // 更新日志当前审核级别
+                    JSONObject levelUpdate = new JSONObject();
+                    levelUpdate.put("id", diaryId);
+                    levelUpdate.put("currentVerifyTypeId", nextLevel);
+                    iCommonService.saveOneRecord("MainDiary", levelUpdate);
+                    // 若还有下一级，创建下一级审核记录
+                    if (nextLevel <= verifyTypeId) {
+                        Integer nextRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(diaryJson, nextLevel);
+                        if (nextRoleId != null && nextRoleId > 0) {
+                            String nextVerifyUserId = iVerifyProcessService.GetVerifyUserId(nextRoleId, createUserId);
+                            JSONObject newVerify = new JSONObject();
+                            newVerify.put("relationId", diaryId);
+                            newVerify.put("createUserId", createUserId);
+                            newVerify.put("verifyUserId", nextVerifyUserId);
+                            newVerify.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+                            newVerify.put("tableName", "MainDiary");
+                            iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
+                        }
+                    }
+                }
+            } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && diaryId != null) {
+                // 退回：将日志重置为草稿，学生可重新修改提交（重新走第一级）
+                JSONObject resetDiary = new JSONObject();
+                resetDiary.put("id", diaryId);
+                resetDiary.put("submit", false);
+                resetDiary.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+                iCommonService.saveOneRecord("MainDiary", resetDiary);
             }
             return saved;
         }

@@ -9,13 +9,11 @@ import java.util.Optional;
 
 @Repository
 public interface MainDiaryDao extends BaseDao<MainDiary, Integer> {
-    // 校外：按 stuInternshipPostId 查询
-    Optional<MainDiary> findByStuInternshipPostIdAndPeriodIndexAndIsDeletedFalse(Integer stuInternshipPostId, Integer periodIndex);
-    List<MainDiary> findByStuInternshipPostIdAndIsDeletedFalse(Integer stuInternshipPostId);
-    List<MainDiary> findByStuInternshipPostIdInAndPeriodIndexAndIsDeletedFalse(Iterable<Integer> stuInternshipPostIds, Integer periodIndex);
+    // 按 relationId + tableName 查询（通用，校外传 "RelStuInternshipPost"，校内传 "RelTitleStudent"）
+    Optional<MainDiary> findByRelationIdAndTableNameAndPeriodIdAndIsDeletedFalse(Integer relationId, String tableName, Integer periodId);
+    List<MainDiary> findByRelationIdAndTableNameAndIsDeletedFalse(Integer relationId, String tableName);
 
-    // 校内：按 relTitleStudentId 查询
-    Optional<MainDiary> findByRelTitleStudentIdAndPeriodIndexAndIsDeletedFalse(Integer relTitleStudentId, Integer periodIndex);
-    List<MainDiary> findByRelTitleStudentIdAndIsDeletedFalse(Integer relTitleStudentId);
-    List<MainDiary> findByRelTitleStudentIdInAndPeriodIndexAndIsDeletedFalse(Iterable<Integer> relTitleStudentIds, Integer periodIndex);
+    // 批量：多个 relationId + 同一 tableName + 同一 periodId
+    List<MainDiary> findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(Iterable<Integer> relationIds, String tableName, Integer periodId);
+    List<MainDiary> findByRelationIdInAndTableNameAndIsDeletedFalse(Iterable<Integer> relationIds, String tableName);
 }
