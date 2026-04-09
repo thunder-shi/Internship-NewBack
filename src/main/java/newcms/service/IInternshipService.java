@@ -47,6 +47,17 @@ public interface IInternshipService {
     Object auditProcess(Object node);
 
     /**
+     * 学生端：查询本人最近一条“选题审核不通过”记录（含不通过理由）。
+     * 若不存在，返回 null。
+     */
+    Object getLatestRejectedTitleSelection(Integer stuId);
+
+    /**
+     * 学生端：确认已知晓选题不通过后，删除对应 RelTitleStudent 记录及其审核记录。
+     */
+    Object acknowledgeRejectedTitleSelection(Integer relationId, Integer stuId);
+
+    /**
      * 老师申报题目 / 师生互选-学生选题：新增关联记录后创建首条 MainVerifyProcess。
      * RelTitleTeacher、RelTeacherStudent 走「老师申报题目」流程；RelTitleStudent 走 INTERNAL_STUDENT_TEACHER_MATCH。
      * 需审核时 isAudit=-1（保存未提交），无需审核时 isAudit=1（直接通过）。

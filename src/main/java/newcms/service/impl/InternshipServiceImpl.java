@@ -1411,6 +1411,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             iVerifyProcessService.onVerifyProcessApproved(Id);
         }
 
+        // 学生选题审核未通过：将原因落库到 RelTitleStudent.topicReasons
+        if (isAudit != null && isAudit == Constant.AUDIT_STATUS.NOTPASS
+                && TABLE_REL_TITLE_STUDENT.equals(tableName) && verifyObj != null) {
+            Integer relationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
+            if (relationId != null) {
+                JSONObject updateTopicReason = new JSONObject();
+                updateTopicReason.put("id", relationId);
+                updateTopicReason.put("topicReasons", node.getString("reason"));
+                iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, updateTopicReason);
+            }
+        }
+
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
@@ -1428,6 +1440,63 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         return saved;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Object getLatestRejectedTitleSelection(Integer stuId) {
+        if (stuId == null) {
+            throw BaseResponse.parameterInvalid.error("stuId 不能为空");
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("stuId", stuId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.NOTPASS);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelTitleStudentMerge", sk, null,
+                Sort.by(Sort.Direction.DESC, "vpUpdateTime").and(Sort.by(Sort.Direction.DESC, "id")),
+                1, 1);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        return list.get(0);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Object acknowledgeRejectedTitleSelection(Integer relationId, Integer stuId) {
+        if (relationId == null || stuId == null) {
+            throw BaseResponse.parameterInvalid.error("relationId、stuId 不能为空");
+        }
+        Object relObj = iCommonService.getOneRecordById(TABLE_REL_TITLE_STUDENT, relationId);
+        if (relObj == null) {
+            throw BaseResponse.parameterInvalid.error("选题记录不存在");
+        }
+        JSONObject relJson = FastJsonUtil.toJson(relObj);
+        Integer relStuId = relJson.getInteger("stuId");
+        if (relStuId == null || !relStuId.equals(stuId)) {
+            throw BaseResponse.parameterInvalid.error("该记录不属于当前学生");
+        }
+
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("stuId", stuId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelTitleStudentMerge", sk, null,
+                Sort.by(Sort.Direction.DESC, "vpUpdateTime").and(Sort.by(Sort.Direction.DESC, "id")),
+                1, 1);
+        List<Object> list = page.getContent();
+        if (list == null || list.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("未找到该选题审核记录");
+        }
+        Integer isAudit = FastJsonUtil.toJson(list.get(0)).getInteger("isAudit");
+        if (isAudit == null || isAudit != Constant.AUDIT_STATUS.NOTPASS) {
+            throw BaseResponse.parameterInvalid.error("仅审核不通过的选题记录允许确认并删除");
+        }
+
+        deleteVerifyProcessByRelationIdAndTableName(relationId, TABLE_REL_TITLE_STUDENT);
+        iCommonService.deleteRecordByDelflag(TABLE_REL_TITLE_STUDENT, relationId);
+        return "确认成功，已清理该条不通过选题记录";
     }
 
     /**

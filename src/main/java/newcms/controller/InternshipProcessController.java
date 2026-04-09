@@ -85,6 +85,31 @@ public class InternshipProcessController {
         return BaseResponse.ok(iInternshipService.auditProcess(node));
     }
 
+    @Operation(
+            summary = "学生端-查询最近一条选题审核不通过记录",
+            description = "按 stuId 查询 view_verify_process_rel_title_student_merge 中最近一条 isAudit=NOTPASS 的记录，返回不通过理由 topicReasons。"
+    )
+    @PostMapping(value = "/getLatestRejectedTitleSelection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getLatestRejectedTitleSelection(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getLatestRejectedTitleSelection", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer stuId = node != null ? node.getInteger("stuId") : requestJson.getInteger("stuId");
+        return BaseResponse.ok(iInternshipService.getLatestRejectedTitleSelection(stuId));
+    }
+
+    @Operation(
+            summary = "学生端-确认已知晓不通过并删除选题记录",
+            description = "学生点击确认后，删除 RelTitleStudent 对应记录及其 MainVerifyProcess 审核记录，便于重新选题。"
+    )
+    @PostMapping(value = "/acknowledgeRejectedTitleSelection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object acknowledgeRejectedTitleSelection(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("acknowledgeRejectedTitleSelection", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer relationId = node != null ? node.getInteger("relationId") : requestJson.getInteger("relationId");
+        Integer stuId = node != null ? node.getInteger("stuId") : requestJson.getInteger("stuId");
+        return BaseResponse.ok(iInternshipService.acknowledgeRejectedTitleSelection(relationId, stuId));
+    }
+
     @PostMapping(value = "/activateProcess")
     public Object activateProcess (@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("activateProcess", requestJson);
