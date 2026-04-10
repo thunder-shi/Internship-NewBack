@@ -114,9 +114,9 @@ public interface IInternshipService {
     // Object getNowInternship(String processTypeCode);
 
     /**
-     * 本学院校外实习项目报名汇总（按学院部门统计各项目指标）。
+     * 本学院校外实习项目报名汇总（按部门树：含 departmentId 及其全部子部门）。
      *
-     * @param departmentId 学院部门 ID（ViewBaseUser.departmentId）
+     * @param departmentId 学院/部门节点 ID（与 BaseDepartment 树一致）
      * @param page         页码，从 1 开始
      * @param size         每页条数
      */
@@ -142,6 +142,8 @@ public interface IInternshipService {
      * @param page         页码，从 1 开始
      * @param size         每页条数
      * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
+     * @param departmentId 可选；若传则只统计用户所属部门为该节点或其下级部门（与 BaseDepartment 树一致）的学生；{@code null} 不按部门过滤
      */
-    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status);
+    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                     Integer departmentId);
 }
