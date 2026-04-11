@@ -45,4 +45,7 @@ public class ViewRelTitleTeacherStudent extends NameRemarkInfo {
 
     @Column(name = "is_audit")
     private Integer isAudit;
+
+    @Column(name = "topic_Reasons")
+    private String topicReasons;
 }

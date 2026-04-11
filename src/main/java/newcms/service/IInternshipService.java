@@ -47,6 +47,17 @@ public interface IInternshipService {
     Object auditProcess(Object node);
 
     /**
+     * 学生端：查询本人最近一条“选题审核不通过”记录（含不通过理由）。
+     * 若不存在，返回 null。
+     */
+    Object getLatestRejectedTitleSelection(Integer stuId);
+
+    /**
+     * 学生端：确认已知晓选题不通过后，删除对应 RelTitleStudent 记录及其审核记录。
+     */
+    Object acknowledgeRejectedTitleSelection(Integer relationId, Integer stuId);
+
+    /**
      * 老师申报题目 / 师生互选-学生选题：新增关联记录后创建首条 MainVerifyProcess。
      * RelTitleTeacher、RelTeacherStudent 走「老师申报题目」流程；RelTitleStudent 走 INTERNAL_STUDENT_TEACHER_MATCH。
      * 需审核时 isAudit=-1（保存未提交），无需审核时 isAudit=1（直接通过）。
@@ -103,9 +114,9 @@ public interface IInternshipService {
     // Object getNowInternship(String processTypeCode);
 
     /**
-     * 本学院校外实习项目报名汇总（按学院部门统计各项目指标）。
+     * 本学院校外实习项目报名汇总（按部门树：含 departmentId 及其全部子部门）。
      *
-     * @param departmentId 学院部门 ID（ViewBaseUser.departmentId）
+     * @param departmentId 学院/部门节点 ID（与 BaseDepartment 树一致）
      * @param page         页码，从 1 开始
      * @param size         每页条数
      */
@@ -131,6 +142,8 @@ public interface IInternshipService {
      * @param page         页码，从 1 开始
      * @param size         每页条数
      * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
+     * @param departmentId 可选；若传则只统计用户所属部门为该节点或其下级部门（与 BaseDepartment 树一致）的学生；{@code null} 不按部门过滤
      */
-    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status);
+    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                     Integer departmentId);
 }

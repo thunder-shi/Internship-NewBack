@@ -110,4 +110,7 @@ public class ViewVerifyProcessRelTitleStudentMerge extends NameRemarkInfo {
 
     @Column(name = "is_all_verified")
     private Boolean isAllVerified;
+
+    @Column(name = "topic_Reasons")
+    private String topicReasons;
 }

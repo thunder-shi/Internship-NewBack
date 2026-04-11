@@ -238,6 +238,10 @@ public class DataListServiceImpl extends Base implements IDataListService {
         } else { //修改
 
         }
+        // 学生选题首次提交时，确保不通过原因字段为空（由老师审核不通过后再写入）
+        if ("RelTitleStudent".equals(tblName) && isNew && !node.containsKey("topicReasons")) {
+            node.put("topicReasons", null);
+        }
         Object saved = iCommonService.saveOneRecord(tblName, node);
 
         // 老师申报题目 / 学生选题：新增后创建首条 MainVerifyProcess（保存未提交/无需审核直接通过）

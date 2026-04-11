@@ -85,6 +85,31 @@ public class InternshipProcessController {
         return BaseResponse.ok(iInternshipService.auditProcess(node));
     }
 
+    @Operation(
+            summary = "学生端-查询最近一条选题审核不通过记录",
+            description = "按 stuId 查询 view_verify_process_rel_title_student_merge 中最近一条 isAudit=NOTPASS 的记录，返回不通过理由 topicReasons。"
+    )
+    @PostMapping(value = "/getLatestRejectedTitleSelection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getLatestRejectedTitleSelection(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getLatestRejectedTitleSelection", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer stuId = node != null ? node.getInteger("stuId") : requestJson.getInteger("stuId");
+        return BaseResponse.ok(iInternshipService.getLatestRejectedTitleSelection(stuId));
+    }
+
+    @Operation(
+            summary = "学生端-确认已知晓不通过并删除选题记录",
+            description = "学生点击确认后，删除 RelTitleStudent 对应记录及其 MainVerifyProcess 审核记录，便于重新选题。"
+    )
+    @PostMapping(value = "/acknowledgeRejectedTitleSelection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object acknowledgeRejectedTitleSelection(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("acknowledgeRejectedTitleSelection", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer relationId = node != null ? node.getInteger("relationId") : requestJson.getInteger("relationId");
+        Integer stuId = node != null ? node.getInteger("stuId") : requestJson.getInteger("stuId");
+        return BaseResponse.ok(iInternshipService.acknowledgeRejectedTitleSelection(relationId, stuId));
+    }
+
     @PostMapping(value = "/activateProcess")
     public Object activateProcess (@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("activateProcess", requestJson);
@@ -266,7 +291,7 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "本学院校外实习项目报名汇总",
-            description = "按学院部门（departmentId）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、本学院已选岗学生数等。"
+            description = "按学院部门树（departmentId 含其全部子部门）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、已选岗学生数等。"
     )
     @PostMapping(value = "/listExternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listExternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
@@ -313,7 +338,8 @@ public class InternshipProcessController {
             summary = "校外实习项目-学生选岗情况",
             description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
                     + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
-                    + "counts 始终为三类全量人数。分页：pageInfo.page、pageInfo.size。"
+                    + "departmentId 可选：传则只含所属部门为该节点或其下级（BaseDepartment 子树）的用户；不传则与原先一致，不按部门过滤。"
+                    + "counts 为当前过滤范围内三类人数。分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object getExternalInternshipStudentPostBreakdown(@RequestBody JSONObject requestJson) {
@@ -324,6 +350,7 @@ public class InternshipProcessController {
         JSONObject node = requestJson.getJSONObject("node");
         Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
         String status = node != null ? node.getString("status") : requestJson.getString("status");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
         JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
         int page = pageInfo != null && pageInfo.getInteger("page") != null
                 ? pageInfo.getInteger("page")
@@ -331,7 +358,8 @@ public class InternshipProcessController {
         int size = pageInfo != null && pageInfo.getInteger("size") != null
                 ? pageInfo.getInteger("size")
                 : Constant.DEFAULT_SIZE;
-        return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status));
+        return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status,
+                departmentId));
     }
 
 }
