@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface MainDiaryPeriodDao extends BaseDao<MainDiaryPeriod, Integer> {
     List<MainDiaryPeriod> findByInternshipIdAndIsDeletedFalseOrderByPeriodIndexAsc(Integer internshipId);
+    List<MainDiaryPeriod> findByInternshipIdAndIsDeletedFalseOrderByBeginTimeAsc(Integer internshipId);
 }

@@ -7,6 +7,7 @@ import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.service.ICommonService;
+import newcms.service.IDiaryService;
 import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -38,6 +39,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+
+    @Resource
+    private IDiaryService iDiaryService;
 
     // ==================== 实习项目管理====================
 
@@ -1409,6 +1413,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (isAudit != null && isAudit == 1 && Id != null) {
             // 审核通过：推进到下一级
             iVerifyProcessService.onVerifyProcessApproved(Id);
+            // 审核通过后，为该学生创建日志桩（幂等；若期次未生成则静默跳过）
+            if (verifyObj != null) {
+                Integer relId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
+                if (relId != null) {
+                    if ("RelStuInternshipPost".equals(tableName) || "RelTitleStudent".equals(tableName)) {
+                        iDiaryService.createDiaryEntriesForStudent(relId, tableName);
+                    } else if ("RelTeacherStudent".equals(tableName)) {
+                        // RelTeacherStudent.relInternshipId = RelStuInternshipPost.id，用岗位 id 建日志桩
+                        Object relTeacher = iCommonService.getOneRecordById("RelTeacherStudent", relId);
+                        if (relTeacher != null) {
+                            Integer relInternshipId = FastJsonUtil.toJson(relTeacher).getInteger("relInternshipId");
+                            if (relInternshipId != null) {
+                                iDiaryService.createDiaryEntriesForStudent(relInternshipId, "RelStuInternshipPost");
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
