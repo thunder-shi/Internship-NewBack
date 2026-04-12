@@ -386,13 +386,23 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer relationId = verifyProcess.getRelationId();
         String tableName = verifyProcess.getTableName();
         Integer createUserId = verifyProcess.getCreateUserId();
-        // 获取 RelProcessInternship 记录（获取审核角色配置和 verifyTypeId）
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
-        if (relObj == null) {
-            logger.warn("未找到流程关联记录 {}", processId);
-            return;
+        // processId 为 null 时（如日志审核），直接从业务实体读审核配置；否则走 RelProcessInternship
+        JSONObject relJson;
+        if (processId != null) {
+            Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+            if (relObj == null) {
+                logger.warn("未找到流程关联记录 {}", processId);
+                return;
+            }
+            relJson = FastJsonUtil.toJson(relObj);
+        } else {
+            Object entityObj = iCommonService.getOneRecordById(tableName, relationId);
+            if (entityObj == null) {
+                logger.warn("未找到业务实体配置 {} id={}", tableName, relationId);
+                return;
+            }
+            relJson = FastJsonUtil.toJson(entityObj);
         }
-        JSONObject relJson = FastJsonUtil.toJson(relObj);
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
 
         // 从对应的业务实体表获取 currentVerifyTypeId（每个审核条目独立跟踪审核级别）
