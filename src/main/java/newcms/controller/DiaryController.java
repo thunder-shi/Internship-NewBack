@@ -125,6 +125,21 @@ public class DiaryController {
         return BaseResponse.ok(null);
     }
 
+    @Operation(summary = "批量初始化实习项目日志占位记录",
+            description = "给指定实习项目下所有学生、所有期次创建 submit=false 的日志占位记录（幂等）。"
+                    + "校外实习遍历 RelStuInternshipPost，校内遍历 RelTitleStudent。"
+                    + "前端在 initTeacherStudentByInternshipId 或 initEnterpriseTutorByInternshipId 成功后调用。")
+    @PostMapping(value = "/init-by-internship", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object initDiaryByInternship(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("initDiaryByInternship", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) throw BaseResponse.parameterInvalid.error("node 不能为空");
+        Integer internshipId = node.getInteger("internshipId");
+        if (internshipId == null) throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        iDiaryService.initDiaryByInternship(internshipId);
+        return BaseResponse.ok(null);
+    }
+
     @Operation(summary = "老师查看某期学生日志列表",
             description = "返回该实习项目某期所有学生的日志状态。"
                     + "校外实习：每项含 stuRelationId、studentName、internshipPostName 及 diary；"

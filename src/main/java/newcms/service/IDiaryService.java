@@ -84,6 +84,15 @@ public interface IDiaryService {
     void createDiaryEntriesForStudent(Integer relationId, String tableName);
 
     /**
+     * 给指定实习项目下所有学生、所有期次批量初始化 submit=false 的日志占位记录（幂等）。
+     * 校外：遍历 RelStuInternshipPost；校内：遍历 RelTitleStudent。
+     * 若期次尚未生成则静默返回。
+     *
+     * @param internshipId 实习项目 ID
+     */
+    void initDiaryByInternship(Integer internshipId);
+
+    /**
      * 新增或编辑单条期次记录，保存后按 beginTime 重建同项目所有期次的 periodIndex。
      * id=null 时新增，id 有值时更新（只允许修改 beginTime / endTime）。
      *

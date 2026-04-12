@@ -46,9 +46,6 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   private RelStuInternshipPostDao relStuInternshipPostDao;
 
   @Resource
-  private RelIntershipUserDao relIntershipUserDao;
-
-  @Resource
   private RelTeacherStudentDao relTeacherStudentDao;
 
   @Resource
@@ -142,7 +139,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, currentUserId);
     } else {
       // 角色未配置：回落到具体分配的校内导师
-      Integer teacherId = findSchoolTeacherId(relationId, tableName, currentUserId);
+      Integer teacherId = findSchoolTeacherId(relationId, tableName);
       verifyUserId = String.valueOf(teacherId);
     }
 
@@ -159,28 +156,11 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   /**
    * 根据 relationId+tableName 查找负责审批该日志的校内导师 ID。
    */
-  private Integer findSchoolTeacherId(Integer relationId, String tableName, Integer currentUserId) {
+  private Integer findSchoolTeacherId(Integer relationId, String tableName) {
     if ("RelStuInternshipPost".equals(tableName)) {
-      Object relStuPostObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
-      if (relStuPostObj == null)
-        throw BaseResponse.parameterInvalid.error("学生实习岗位记录不存在");
-      JSONObject relStuPostJson = FastJsonUtil.toJson(relStuPostObj);
-      Integer studentId = relStuPostJson.getInteger("studentId");
-      Integer internshipPostId = relStuPostJson.getInteger("internshipPostId");
-
-      Object postObj = iCommonService.getOneRecordById("MainInternshipPost", internshipPostId);
-      if (postObj == null)
-        throw BaseResponse.parameterInvalid.error("实习岗位不存在");
-      Integer internshipId = FastJsonUtil.toJson(postObj).getInteger("internshipId");
-
-      List<RelIntershipUser> relIntershipUsers = relIntershipUserDao
-          .findByUserIdAndInternshipIdAndIsDeletedFalse(studentId, internshipId);
-      if (relIntershipUsers.isEmpty())
-        throw BaseResponse.parameterInvalid.error("该学生尚未纳入实习项目");
-      Integer relIntershipUserId = relIntershipUsers.get(0).getId();
-
+      // RelTeacherStudent.relInternshipId 存的是 RelStuInternshipPost.id，即 relationId 本身
       List<RelTeacherStudent> teacherStudents = relTeacherStudentDao
-          .findByRelInternshipIdAndIsDeletedFalse(relIntershipUserId);
+          .findByRelInternshipIdAndIsDeletedFalse(relationId);
       Set<Integer> candidateIds = teacherStudents.stream()
           .map(RelTeacherStudent::getTeacherId).filter(Objects::nonNull).collect(Collectors.toSet());
       return viewBaseUserDao.getByIdInAndIsDeletedFalse(candidateIds).stream()
@@ -368,6 +348,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           }
           Integer assignedTeacherId = studentIdToSchoolTeacherId.get(rsp.getStudentId());
           ViewBaseUser teacher = assignedTeacherId != null ? teacherIdToUser.get(assignedTeacherId) : null;
+          item.put("teacherId", assignedTeacherId);
           item.put("teacherName", teacher != null ? teacher.getNickName() : null);
           item.put("titleDescription", null);
 
@@ -429,6 +410,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       item.put("studentName", rts.getStudentName());
       item.put("titleName", rts.getName());
       item.put("titleDescription", rts.getRemarks());
+      item.put("teacherId", rts.getTeacherId());
       item.put("teacherName", rts.getTeacherName());
       item.put("companyName", null);
 
@@ -778,6 +760,32 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       periods.get(i).setPeriodIndex(i + 1);
     }
     mainDiaryPeriodDao.saveAll(periods);
+  }
+
+  @Override
+  public void initDiaryByInternship(Integer internshipId) {
+    if (internshipId == null)
+      throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+
+    List<MainDiaryPeriod> periods = mainDiaryPeriodDao
+        .findByInternshipIdAndIsDeletedFalseOrderByPeriodIndexAsc(internshipId);
+    if (periods.isEmpty())
+      return; // 期次尚未生成，静默跳过
+
+    // 校外路径：RelStuInternshipPost
+    List<MainInternshipPost> posts = mainInternshipPostDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+    if (!posts.isEmpty()) {
+      List<Integer> postIds = posts.stream().map(MainInternshipPost::getId).collect(Collectors.toList());
+      relStuInternshipPostDao.findByInternshipPostIdInAndIsDeletedFalse(postIds)
+          .forEach(rsp -> createDiaryStubs(rsp.getId(), "RelStuInternshipPost", internshipId));
+    }
+
+    // 校内路径：RelTitleStudent（通过 ViewRelTitleTeacherStudent 关联到 internshipId）
+    viewRelTitleTeacherStudentDao.findByInternshipIdAndIsDeletedFalse(internshipId).stream()
+        .map(ViewRelTitleTeacherStudent::getRelTitleStudentId)
+        .filter(Objects::nonNull)
+        .distinct()
+        .forEach(relId -> createDiaryStubs(relId, "RelTitleStudent", internshipId));
   }
 
   /** 追溯为当前实习项目所有已通过审核的学生创建日志桩 */
