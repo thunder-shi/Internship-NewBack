@@ -61,7 +61,7 @@ public class ViewVerifyMainSignMerge extends BaseInfo {
 
     private String address;
     private Integer imgId;
-
+    private Integer stuInternshipId;
     @Column(name = "type")
     private Byte signType;
 }
