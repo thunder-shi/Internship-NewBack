@@ -46,6 +46,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
   @Resource
   private IDiaryService iDiaryService;
+
+  @Resource
   private ViewExternalInternshipCollegeStatsDao viewExternalInternshipCollegeStatsDao;
 
   @Resource
