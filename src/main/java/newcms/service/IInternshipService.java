@@ -144,4 +144,21 @@ public interface IInternshipService {
      * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
      */
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status);
+
+    /**
+     * 本学院校内实习项目汇总：报名师生数、题目审核通过数、未提交题目教师数、学生选题三类人数等。
+     */
+    Object listInternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size);
+
+    /**
+     * 校内实习项目学生选题三类名单（与校外选岗 breakdown 用法类似）。
+     *
+     * @param status {@code all}、{@code notSubmitted}、{@code pendingAudit}、{@code titleApproved}
+     */
+    Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status);
+
+    /**
+     * 校内实习项目：尚未提交申报题目的教师列表（可选按学院过滤）。{@code departmentId} 为 {@code null} 时为本项目全部报名教师。
+     */
+    Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
 }

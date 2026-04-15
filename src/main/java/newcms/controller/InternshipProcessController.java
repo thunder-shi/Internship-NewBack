@@ -359,4 +359,75 @@ public class InternshipProcessController {
         return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status));
     }
 
+    @Operation(
+            summary = "本学院校内实习项目报名与选题汇总",
+            description = "departmentId 必填；分页 ViewMainInternship（校内实习）。每行含：报名学生/老师数、题目审核通过数、"
+                    + "未提交题目教师数、学生选题通过/审核中/尚未选题人数（本院已报名学生口径）。"
+    )
+    @PostMapping(value = "/listInternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listInternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listInternalInternshipCollegeStats", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.listInternalInternshipCollegeStats(departmentId, page, size));
+    }
+
+    @Operation(
+            summary = "校内实习项目-学生选题情况",
+            description = "internshipId 必填；status：all / notSubmitted / pendingAudit / titleApproved。"
+                    + "counts 为三类全量人数；分页 pageInfo。"
+    )
+    @PostMapping(value = "/getInternalInternshipTitleSelectionBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getInternalInternshipTitleSelectionBreakdown(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getInternalInternshipTitleSelectionBreakdown", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        String status = node != null ? node.getString("status") : requestJson.getString("status");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.getInternalInternshipTitleSelectionBreakdown(internshipId, page, size, status));
+    }
+
+    @Operation(
+            summary = "校内实习项目-未提交申报题目的教师",
+            description = "internshipId 必填；departmentId 可选（不传则本项目全部报名教师中未提交者）。"
+                    + "未提交：无任何 isAudit≠保存(-1) 的申报题目审核记录。分页 pageInfo。"
+    )
+    @PostMapping(value = "/listInternalInternshipTeachersNotSubmittedTopic", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listInternalInternshipTeachersNotSubmittedTopic(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listInternalInternshipTeachersNotSubmittedTopic", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
+        int page = pageInfo != null && pageInfo.getInteger("page") != null
+                ? pageInfo.getInteger("page")
+                : Constant.DEFAULT_PAGE;
+        int size = pageInfo != null && pageInfo.getInteger("size") != null
+                ? pageInfo.getInteger("size")
+                : Constant.DEFAULT_SIZE;
+        return BaseResponse.ok(iInternshipService.listInternalInternshipTeachersNotSubmittedTopic(internshipId, departmentId, page, size));
+    }
+
 }

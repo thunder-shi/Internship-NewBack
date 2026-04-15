@@ -213,6 +213,11 @@ public class DataListServiceImpl extends Base implements IDataListService {
     }
     @Override
     public Object editOneNode(String tblName, JSONObject node) {
+        // MainVerifyProcess 的状态变更统一走 internshipService.auditProcess，
+        // 以确保选题自动通过/多级审核推进等业务逻辑生效。
+        if ("MainVerifyProcess".equals(tblName)) {
+            return iInternshipService.auditProcess(node);
+        }
         // 判断是否为新增操作
         boolean isNew = node.getInteger("id") == null || node.getInteger("id") == 0;
         //新增
