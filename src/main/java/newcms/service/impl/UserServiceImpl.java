@@ -92,9 +92,12 @@ public Object getLoginUser(Date date, String userAgent) {
         }
         ViewBaseUser viewBaseUser = ((ViewBaseUser) iCommonService.getOneRecordById("ViewBaseUser", userInfo.getId()));
         JSONObject userInfoJSON = FastJsonUtil.toJson(userInfo);
-        userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
-        userInfoJSON.put("jobName", viewBaseUser.getJobName());
-        userInfoJSON.put("schoolId", viewBaseUser.getSchoolId());
+        // BUG-01: 用户对应视图不存在时跳过，避免 NPE 导致登录接口 500
+        if (viewBaseUser != null) {
+            userInfoJSON.put("departmentName", viewBaseUser.getDepartmentName());
+            userInfoJSON.put("jobName", viewBaseUser.getJobName());
+            userInfoJSON.put("schoolId", viewBaseUser.getSchoolId());
+        }
         // 学生端校内外实习类型：查 rel_intership_user 确认学生是否已被纳入实习项目
         String internshipType = null;
         try {
@@ -115,7 +118,10 @@ public Object getLoginUser(Date date, String userAgent) {
                     break;
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            // EXC-01: 记录日志而非静默吞掉异常
+            logger.warn("查询学生实习类型失败，userId={}: {}", userId, e.getMessage());
+        }
         userInfoJSON.put("internshipType", internshipType);
         jsReturnKey.put("userInfo", userInfoJSON);
         //下面创建role、contestType和menuList的键值信息
@@ -237,10 +243,11 @@ public Object getLoginUser(Date date, String userAgent) {
      */
     @Override
     public Object register(JSONObject json) {
-        //首先校验密码
-//        if (!EncodeUtil.isStrongPwd(password)) {
-//            throw BaseResponse.moreInfoError.error("弱密码(应包含大小写字母、特殊符号及数字且长度大于8位)");
-//        }
+        String password = json.getString("password");
+        // SEC-02: 恢复密码强度校验
+        if (!EncodeUtil.isStrongPwd(password)) {
+            throw BaseResponse.moreInfoError.error("弱密码(应包含大小写字母、特殊符号及数字且长度大于8位)");
+        }
         //查重
         String account = json.getString("account");
         String phone = json.getString("phone");
@@ -261,7 +268,7 @@ public Object getLoginUser(Date date, String userAgent) {
             throw BaseResponse.moreInfoError.error("用户已存在");
         }
         //注册
-        String password = json.getString("password");
+        // password 已在方法顶部声明
         String name = json.getString("name");
         Integer departmentId = getDepartmentId(json);
         Integer jobId = json.getInteger("jobId");
@@ -351,6 +358,10 @@ public Object getLoginUser(Date date, String userAgent) {
 
     @Override
     public Object userRoleSet(Integer[] roleSet, Integer userId) {
+        // DATA-01: roleSet 为 null 时先删后不写，导致角色数据丢失
+        if (roleSet == null) {
+            throw BaseResponse.parameterInvalid.error("角色列表不能为空");
+        }
         //通过userId查找出对应的 UserRoleRel Ids,然后删除
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("userId",userId);
@@ -386,22 +397,37 @@ public Object getLoginUser(Date date, String userAgent) {
         Sort sort = GeneralUtil.getSortInfo(sortJson);
         Object res = iDataListService.getSomeRecords(USER_INFO, null, null, sort, pageInfo.getInteger("page"), pageInfo.getInteger("size"));
         JSONObject resJson = FastJsonUtil.toJson(res);
-        for(Object obj : resJson.getJSONArray("content")){
-            int userId = FastJsonUtil.toJson(obj).getInteger("id");
-            //按userId查找TblUserRoleRel
-            JSONObject searchKeys = new JSONObject();
-            searchKeys.put("userId", userId);
-            JSONObject pagInfo2 = new JSONObject();
-            pagInfo2.put("page", -1);
-            pagInfo2.put("size", 10);
-            Object obj1 = iDataListService.getSomeRecords("RelUserRole", searchKeys, null, null, GeneralUtil.getPageInfo(pagInfo2).get("page"), GeneralUtil.getPageInfo(pagInfo2).get("size"));
-            Set<Integer> roleIds = new HashSet<>();
+        // PERF-01: 批量查询当前页所有用户的角色，避免 N+1 查询
+        List<Integer> userIds = new ArrayList<>();
+        for (Object obj : resJson.getJSONArray("content")) {
+            userIds.add(FastJsonUtil.toJson(obj).getInteger("id"));
+        }
+        Map<Integer, Set<Integer>> userRoleMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            JSONObject batchSearchKeys = new JSONObject();
+            batchSearchKeys.put("userId", StringUtils.collectionToDelimitedString(userIds, ","));
+            Map<String, String> batchRegMap = new HashMap<>();
+            batchRegMap.put("userId", Constant.IN);
+            JSONObject batchPageInfo = new JSONObject();
+            batchPageInfo.put("page", -1);
+            batchPageInfo.put("size", 100);
             @SuppressWarnings("unchecked")
-            ArrayList<Object> obj1List = (ArrayList<Object>)obj1;
-            for(Object obj2: obj1List){
-                roleIds.add(FastJsonUtil.toJson(obj2).getInteger("roleId"));
+            ArrayList<Object> allRoles = (ArrayList<Object>) iDataListService.getSomeRecords(
+                    "RelUserRole", batchSearchKeys, batchRegMap, null,
+                    GeneralUtil.getPageInfo(batchPageInfo).get("page"),
+                    GeneralUtil.getPageInfo(batchPageInfo).get("size"));
+            for (Object roleObj : allRoles) {
+                JSONObject roleJson = FastJsonUtil.toJson(roleObj);
+                Integer uid = roleJson.getInteger("userId");
+                Integer rid = roleJson.getInteger("roleId");
+                if (uid != null && rid != null) {
+                    userRoleMap.computeIfAbsent(uid, k -> new HashSet<>()).add(rid);
+                }
             }
-            ((JSONObject)obj).put("roleIds",roleIds);
+        }
+        for (Object obj : resJson.getJSONArray("content")) {
+            int userId = FastJsonUtil.toJson(obj).getInteger("id");
+            ((JSONObject) obj).put("roleIds", userRoleMap.getOrDefault(userId, new HashSet<>()));
         }
         return resJson;
     }
@@ -469,48 +495,79 @@ public Object getLoginUser(Date date, String userAgent) {
         JSONObject searchKey2 = new JSONObject();
         searchKey2.put("isDeleted", false);
         @SuppressWarnings("unchecked")
-        Page<BaseJobPosition> jobPage = (Page<BaseJobPosition>)iCommonService.getSomeRecords("BaseJobPosition",searchKey2);
-        List<BaseJobPosition> jobInfoList = jobPage.getContent();
-        // Page<BaseDepartment> deptPage = (Page<BaseDepartment>)iCommonService.getSomeRecords("BaseDepartment",searchKey2);
-        // List<BaseDepartment> departmentInfoList = deptPage.getContent();
-        Map<Integer, String> jobMap = jobInfoList.stream().collect(Collectors.toMap(BaseJobPosition::getId, BaseJobPosition::getName));
-        // Map<Integer, String> departmentMap = departmentInfoList.stream().collect(Collectors.toMap(BaseDepartment::getId, BaseDepartment::getName));
-        for(Object obj : resJson.getJSONArray("content")) {
-            int userId = FastJsonUtil.toJson(obj).getInteger("id");
-            //按userId查找TblUserRoleRel
-            JSONObject searchKey1 = new JSONObject();
-            searchKey1.put("userId", userId);
-            @SuppressWarnings("unchecked")
-            Page<Object> rolePage = (Page<Object>)iCommonService.getSomeRecords("RelUserRole", searchKey1);
-            Object obj1 = rolePage.getContent();
-            Set<Integer> roleIds = new HashSet<>();
-            @SuppressWarnings("unchecked")
-            ArrayList<Object> obj1List = (ArrayList<Object>)obj1;
-            for(Object obj2: obj1List){
-                roleIds.add(FastJsonUtil.toJson(obj2).getInteger("roleId"));
-            }
-            ((JSONObject)obj).put("roleIds",roleIds);
+        Page<BaseJobPosition> jobPage = (Page<BaseJobPosition>) iCommonService.getSomeRecords("BaseJobPosition", searchKey2);
+        Map<Integer, String> jobMap = jobPage.getContent().stream()
+                .collect(Collectors.toMap(BaseJobPosition::getId, BaseJobPosition::getName));
+        // BUG-03: 使用独立的 departmentMap 而非错误地从 jobMap 取值
+        @SuppressWarnings("unchecked")
+        Page<BaseDepartment> deptPage = (Page<BaseDepartment>) iCommonService.getSomeRecords("BaseDepartment", searchKey2);
+        Map<Integer, String> departmentMap = deptPage.getContent().stream()
+                .collect(Collectors.toMap(BaseDepartment::getId, BaseDepartment::getName));
 
+        // PERF-02: 批量查询所有用户角色，避免 N+1 查询
+        List<Integer> userIds = new ArrayList<>();
+        for (Object obj : resJson.getJSONArray("content")) {
+            userIds.add(FastJsonUtil.toJson(obj).getInteger("id"));
+        }
+        Map<Integer, Set<Integer>> userRoleIdsMap = new HashMap<>();
+        Set<Integer> allRoleIds = new HashSet<>();
+        if (!userIds.isEmpty()) {
+            JSONObject roleSearchKey = new JSONObject();
+            roleSearchKey.put("userId", StringUtils.collectionToDelimitedString(userIds, ","));
+            Map<String, String> roleRepMap = new HashMap<>();
+            roleRepMap.put("userId", Constant.IN);
             @SuppressWarnings("unchecked")
-            List<SysRole> roleInfos = (List<SysRole>) iCommonService.getRecordsByIds("SysRole", roleIds, false);
-            StringBuilder role = new StringBuilder();
-            for (SysRole roleInfo : roleInfos) {
-                role.append(roleInfo.getName()).append("&");
-            }
-            role = new StringBuilder(role.substring(0, role.length() - 1));
-            ((JSONObject)obj).put("role",role);
-
-            Integer jobId =  FastJsonUtil.toJson(obj).getInteger("jobId");
-            if (jobId!=null){
-                ((JSONObject)obj).put("job",jobMap.get(jobId));
-            }
-            Integer departmentId =  FastJsonUtil.toJson(obj).getInteger("departmentId");
-            if (departmentId!=null){
-                ((JSONObject)obj).put("departmentName",jobMap.get(jobId));
+            Page<Object> batchRolePage = (Page<Object>) iCommonService.getSomeRecords(
+                    "RelUserRole", roleSearchKey, roleRepMap, Sort.unsorted(), 1, userIds.size() * 20 + 1);
+            for (Object roleObj : batchRolePage.getContent()) {
+                JSONObject roleJson = FastJsonUtil.toJson(roleObj);
+                Integer uid = roleJson.getInteger("userId");
+                Integer rid = roleJson.getInteger("roleId");
+                if (uid != null && rid != null) {
+                    userRoleIdsMap.computeIfAbsent(uid, k -> new HashSet<>()).add(rid);
+                    allRoleIds.add(rid);
+                }
             }
         }
-        Object rawRet = resJson;
-        return rawRet;
+        // 批量查询角色名称
+        Map<Integer, String> roleNameMap = new HashMap<>();
+        if (!allRoleIds.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            List<SysRole> allRoleInfos = (List<SysRole>) iCommonService.getRecordsByIds("SysRole", allRoleIds, false);
+            for (SysRole r : allRoleInfos) {
+                roleNameMap.put(r.getId(), r.getName());
+            }
+        }
+
+        for (Object obj : resJson.getJSONArray("content")) {
+            int userId = FastJsonUtil.toJson(obj).getInteger("id");
+            Set<Integer> roleIds = userRoleIdsMap.getOrDefault(userId, new HashSet<>());
+            ((JSONObject) obj).put("roleIds", roleIds);
+
+            // BUG-02: 空角色列表时跳过 substring，避免越界
+            StringBuilder role = new StringBuilder();
+            for (Integer rid : roleIds) {
+                String roleName = roleNameMap.get(rid);
+                if (roleName != null) {
+                    role.append(roleName).append("&");
+                }
+            }
+            if (role.length() > 0) {
+                role.deleteCharAt(role.length() - 1);
+            }
+            ((JSONObject) obj).put("role", role.toString());
+
+            Integer jobId = FastJsonUtil.toJson(obj).getInteger("jobId");
+            if (jobId != null) {
+                ((JSONObject) obj).put("job", jobMap.get(jobId));
+            }
+            // BUG-03: 使用 departmentMap 而非 jobMap
+            Integer departmentId = FastJsonUtil.toJson(obj).getInteger("departmentId");
+            if (departmentId != null) {
+                ((JSONObject) obj).put("departmentName", departmentMap.get(departmentId));
+            }
+        }
+        return resJson;
     }
 
     /**
@@ -533,22 +590,33 @@ public Object getLoginUser(Date date, String userAgent) {
             Page<RelUserRole> userRolePage = (Page<RelUserRole>)iCommonService.getSomeRecords("RelUserRole", roleSearchKey, roleMap, Sort.unsorted());
             List<RelUserRole> userRoleRelList = userRolePage.getContent();
             Set<Integer> userIdSet = userRoleRelList.stream().map(RelUserRole::getUserId).collect(Collectors.toSet());
-            StringBuilder stringBuilder = new StringBuilder();
-            for (Integer userId : userIdSet) {
-                stringBuilder.append(userId).append(",");
-            }
-            searchKeys.put("id",stringBuilder.substring(0,stringBuilder.length()-1));
-            repMap.put("id","()");
             searchKeys.remove("roleIds");
             repMap.remove("roleIds");
+            // BUG-04: userIdSet 为空时 substring(0,-1) 越界；用不可能匹配的条件返回空结果
+            if (userIdSet.isEmpty()) {
+                searchKeys.put("id", "-1");
+                repMap.put("id", Constant.EQ);
+            } else {
+                StringBuilder stringBuilder = new StringBuilder();
+                for (Integer userId : userIdSet) {
+                    stringBuilder.append(userId).append(",");
+                }
+                searchKeys.put("id", stringBuilder.substring(0, stringBuilder.length() - 1));
+                repMap.put("id", "()");
+            }
         }
         Object res = iCommonService.getSomeRecords(tblName, searchKeys, repMap, sort, page, size);
         JSONObject resJson = FastJsonUtil.toJson(res);
         for(Object obj : resJson.getJSONArray("content")) {
             Set<Integer> roleIds = new HashSet<>();
-            String[] str = FastJsonUtil.toJson(obj).getString("roleIds").split(SPLIT_OPERATOR.COMMA);
-            for(String c:str){
-                roleIds.add(Integer.parseInt(c));
+            // BUG-06: roleIds 字段为 null 时直接 split 会 NPE
+            String roleIdsStr = FastJsonUtil.toJson(obj).getString("roleIds");
+            if (roleIdsStr != null && !roleIdsStr.isEmpty()) {
+                for (String c : roleIdsStr.split(SPLIT_OPERATOR.COMMA)) {
+                    try {
+                        roleIds.add(Integer.parseInt(c.trim()));
+                    } catch (NumberFormatException ignored) {}
+                }
             }
             ((JSONObject)obj).put("roleIds",roleIds);
         }

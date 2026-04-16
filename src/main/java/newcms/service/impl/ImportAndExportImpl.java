@@ -285,8 +285,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     }
                 }
             }
-        }catch (Exception ex) {
+        } catch (Exception ex) {
+            // EXC-06: 不再静默吞掉，让调用方感知并处理（避免返回不完整文件）
             LogUtil.error(logger, ex);
+            throw new RuntimeException("导出数据时发生错误", ex);
         }
         setSizeColumn(sheet, headerColNames.size());
     }
@@ -413,20 +415,23 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
      * @param file
      */
     public Workbook judgeVersion(File file) {
-        Workbook workbook = null;
+        // EXC-02: 使用 try-with-resources 确保 FileInputStream 在异常时正确关闭
         try {
             if (file.getPath().endsWith("xls")) {
                 logger.debug("读取 Excel 2003 版本文件");
-                workbook = new HSSFWorkbook(new FileInputStream(file));
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    return new HSSFWorkbook(fis);
+                }
             } else if (file.getPath().endsWith("xlsx")) {
-                workbook = new XSSFWorkbook(new FileInputStream(file));
                 logger.debug("读取 Excel 2007 版本文件");
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    return new XSSFWorkbook(fis);
+                }
             }
         } catch (IOException e) {
             logger.error("读取 Excel 文件异常, file={}", file.getPath(), e);
         }
-
-        return workbook;
+        return null;
     }
 
     /**
@@ -438,14 +443,14 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     public Boolean writeBrowser(HSSFWorkbook workbook, String name) {
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         HttpServletResponse response = attributes.getResponse();
-        //写入浏览器
+        // EXC-03: 使用 try-with-resources 确保 OutputStream 在写入异常时也能关闭
         try {
-            String header  ="attachment;filename=" + URLEncoder.encode(name, StandardCharsets.UTF_8.toString()) + ".xls";
+            String header = "attachment;filename=" + URLEncoder.encode(name, StandardCharsets.UTF_8.toString()) + ".xls";
             response.setHeader("content-disposition", header);
-            OutputStream outputStream = response.getOutputStream();
-            workbook.write(outputStream);
-            outputStream.flush();
-            outputStream.close();
+            try (OutputStream outputStream = response.getOutputStream()) {
+                workbook.write(outputStream);
+                outputStream.flush();
+            }
             return true;
         } catch (Exception e) {
             logger.error("写入浏览器异常, name={}", name, e);
@@ -608,10 +613,12 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     parentId = -1;
                 }
                 else {
+                    // BUG-05: major 查不到时直接 .getId() → NPE；后面的 null 保护永远不执行
                     BaseMajor major = (BaseMajor)iCommonService.getOneRecordByCode("BaseMajor", parentCode, false);
-                    parentId = major.getId();
-                    if (parentId == null) {
+                    if (major == null || major.getId() == null) {
                         parentId = -1;
+                    } else {
+                        parentId = major.getId();
                     }
                 }
                 JSONObject data = new JSONObject();
@@ -716,8 +723,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     }
                     departmentId = department.getId();
                 } catch (Exception e) {
-                    logger.error("查找部门编码 {} 时发生异常，跳过该行数据", departmentCode, e);
-                    continue;
+                    // DATA-04: 抛出而非 continue，确保事务回滚（全有或全无）
+                    throw new RuntimeException("第 " + (i + 1) + " 行：查找部门编码 " + departmentCode + " 时发生异常", e);
                 }
                 if (departmentId == null) {
                     logger.warn("未找到匹配的部门ID，跳过该行数据");
@@ -736,8 +743,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                         continue;
                     }
                 } catch (Exception e) {
-                    logger.error("查找身份类别 {} 时发生异常，跳过该行数据", jobName);
-                    continue;
+                    throw new RuntimeException("第 " + (i + 1) + " 行：查找身份类别 " + jobName + " 时发生异常", e);
                 }
                 if (jobId == null) {
                     logger.warn("身份类别 {} 对应的ID为空，跳过该行数据", jobName);
@@ -763,8 +769,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                         continue;
                     }
                 } catch (Exception e) {
-                    logger.error("查找专业名称 {} 时发生异常，跳过该行数据", majorName);
-                    continue;
+                    throw new RuntimeException("第 " + (i + 1) + " 行：查找专业名称 " + majorName + " 时发生异常", e);
                 }
                 if (majorId == null) {
                     logger.warn("专业名称 {} 对应的ID为空，跳过该行数据", majorName);
@@ -811,8 +816,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                         // 更新密码
                         iDataListService.editOneNode("BaseUser", updateData);
                     } catch (Exception e) {
-                        logger.error("加密并更新密码时发生异常，userId: {}", userId, e);
-                        // 不抛出异常，继续处理下一行数据
+                        throw new RuntimeException("第 " + (i + 1) + " 行：加密更新密码失败，userId: " + userId, e);
                     }
                 }
                 
@@ -829,8 +833,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                             logger.warn("未找到名称为'学生'的角色，跳过用户角色设置，userId: {}", userId);
                         }
                     } catch (Exception e) {
-                        logger.error("设置用户角色时发生异常，userId: {}", userId, e);
-                        // 不抛出异常，继续处理下一行数据
+                        throw new RuntimeException("第 " + (i + 1) + " 行：设置用户角色失败，userId: " + userId, e);
                     }
                 }
             }
