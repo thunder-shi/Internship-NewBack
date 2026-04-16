@@ -37,3 +37,5 @@ build/
 
 .cursor/
 .gemini/
+
+.DS_Store
