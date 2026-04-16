@@ -1,5 +1,6 @@
 package newcms.controller;
 
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -203,6 +204,44 @@ public class InternshipProcessController {
      }
 
     @Operation(
+            summary = "查询可分配老师列表",
+            description = "根据 internshipId 和 departmentId 查询当前实习项目下审核已通过的校内导师，口径与系统自动分配一致。"
+    )
+    @PostMapping(value = "/listAssignableTeachers", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listAssignableTeachers(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listAssignableTeachers", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        if (internshipId == null || departmentId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、departmentId 不能为空");
+        }
+        return BaseResponse.ok(iInternshipService.listAssignableTeachers(internshipId, departmentId));
+    }
+
+    @Operation(
+            summary = "查询可分配学生列表",
+            description = "根据 internshipId 和 departmentId 查询当前实习项目下岗位审核通过且选岗审核通过的学生，口径与系统自动分配一致。"
+    )
+    @PostMapping(value = "/listAssignableStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object listAssignableStudents(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("listAssignableStudents", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        if (internshipId == null || departmentId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、departmentId 不能为空");
+        }
+        return BaseResponse.ok(iInternshipService.listAssignableStudents(internshipId, departmentId));
+    }
+
+    @Operation(
             summary = "根据实习项目初始化师生关系和审核记录",
             description = "按 internshipId 关联岗位和学生选择记录，创建 RelTeacherStudent，并同步创建 MainVerifyProcess。"
                     + "tutorAssignKind：1=校内导师（自动均衡分配 teacherId，支持待审核重分配）；"
@@ -275,6 +314,40 @@ public class InternshipProcessController {
         }
         return BaseResponse.ok(
                 iInternshipService.initEnterpriseTutorByInternshipId(internshipId, processId, createUserId, verifyUserId, currentVerifyTypeId)
+        );
+    }
+
+    @Operation(
+            summary = "手动分配老师与学生",
+            description = "按传入 teacherId 和 studentIds，批量创建 RelTeacherStudent 和 MainVerifyProcess。"
+    )
+    @PostMapping(value = "/manualAssignTeacherStudent", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object manualAssignTeacherStudent(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("manualAssignTeacherStudent", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
+        Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
+        String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
+        Integer currentVerifyTypeId = node != null ? node.getInteger("currentVerifyTypeId") : requestJson.getInteger("currentVerifyTypeId");
+        Integer teacherId = node != null ? node.getInteger("teacherId") : requestJson.getInteger("teacherId");
+        JSONArray studentIdsArray = node != null ? node.getJSONArray("studentIds") : requestJson.getJSONArray("studentIds");
+        List<Integer> studentIds = studentIdsArray == null ? null : studentIdsArray.toJavaList(Integer.class);
+        if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
+        }
+        if (teacherId == null) {
+            throw BaseResponse.parameterInvalid.error("teacherId 不能为空");
+        }
+        if (studentIds == null || studentIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("studentIds 不能为空");
+        }
+        return BaseResponse.ok(
+                iInternshipService.manualAssignTeacherStudent(internshipId, processId, createUserId, verifyUserId,
+                        currentVerifyTypeId, teacherId, studentIds)
         );
     }
 
