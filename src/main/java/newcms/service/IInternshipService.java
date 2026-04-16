@@ -84,6 +84,16 @@ public interface IInternshipService {
     Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer departmentId, Integer page, Integer size, Sort sort);
 
     /**
+     * 查询当前实习项目下可参与系统分配的校内导师（审核通过），按部门树过滤。
+     */
+    Object listAssignableTeachers(Integer internshipId, Integer departmentId);
+
+    /**
+     * 查询当前实习项目下可参与系统分配的学生（岗位审核通过且选岗审核通过），按部门树过滤。
+     */
+    Object listAssignableStudents(Integer internshipId, Integer departmentId);
+
+    /**
      * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。
      *
      * @param tutorAssignKind 导师类型，见 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND}；
@@ -104,6 +114,12 @@ public interface IInternshipService {
      */
     Object initEnterpriseTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                              Integer currentVerifyTypeId);
+
+    /**
+     * 手动指定单个老师和多个学生，批量创建 RelTeacherStudent 及其审核记录。
+     */
+    Object manualAssignTeacherStudent(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
+                                      Integer currentVerifyTypeId, Integer teacherId, List<Integer> studentIds);
 
     // /**
     //  * 获取当前进行中的实习项目
