@@ -21,6 +21,7 @@ public class ViewVerifyProcessRelTeacherStudentMerge extends BaseInfo {
     // 来自 rel_teacher_student
     private String name;
     private Integer teacherId;
+    private Integer relTeaStuId;
     private Integer internshipId;
     private Integer relInternshipId;
     private String remarks;

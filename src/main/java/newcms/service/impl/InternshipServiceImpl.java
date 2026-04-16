@@ -14,6 +14,7 @@ import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -230,6 +231,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
     int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+    if (departmentId == null) {
+      return new PageImpl<>(Collections.emptyList(), PageRequest.of(pageNum - 1, pageSize), 0);
+    }
 
     // 1. 查出该实习项目下已经在 RelIntershipUser 中关联过的 userId 列表（只看未删除的关联）
     JSONObject relSearchKeys = new JSONObject();
@@ -277,6 +281,109 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         finalSort,
         pageNum,
         pageSize);
+  }
+
+  @Override
+  public Object listAssignableTeachers(Integer internshipId, Integer departmentId) {
+    JSONObject teacherSearchKeys = new JSONObject();
+    teacherSearchKeys.put("internshipId", internshipId);
+    teacherSearchKeys.put("jobCode", TEACHER_JOB_CODE);
+    teacherSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
+    @SuppressWarnings("unchecked")
+    Page<Object> teacherPage = (Page<Object>) iCommonService.getSomeRecords(
+        "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+
+    JSONArray rows = new JSONArray();
+    Set<Integer> seenUserIds = new HashSet<>();
+    List<Object> content = teacherPage.getContent();
+    if (content == null) {
+      content = Collections.emptyList();
+    }
+    for (Object obj : content) {
+      JSONObject j = FastJsonUtil.toJson(obj);
+      Integer userId = j.getInteger("userId");
+      Integer rowDeptId = j.getInteger("departmentId");
+      if (userId == null || !seenUserIds.add(userId)) {
+        continue;
+      }
+      if (departmentId != null && !Objects.equals(rowDeptId, departmentId)) {
+        continue;
+      }
+      JSONObject row = new JSONObject();
+      row.put("userId", userId);
+      row.put("userName", firstNonEmpty(j.getString("userName"), j.getString("name")));
+      row.put("departmentId", rowDeptId);
+      row.put("jobCode", j.getString("jobCode"));
+      row.put("jobName", j.getString("jobName"));
+      row.put("phone", j.getString("phone"));
+      row.put("account", j.getString("account"));
+      row.put("relIntershipUserId", j.getInteger("relIntershipUserId"));
+      row.put("currentVerifyTypeId", j.getInteger("currentVerifyTypeId"));
+      row.put("isAudit", j.getInteger("isAudit"));
+      rows.add(row);
+    }
+    JSONObject result = new JSONObject();
+    result.put("rows", rows);
+    result.put("total", rows.size());
+    return result;
+  }
+
+  @Override
+  public Object listAssignableStudents(Integer internshipId, Integer departmentId) {
+    List<Object> relStuList;
+    try {
+      relStuList = getStudentInternshipSelections(internshipId);
+    } catch (RuntimeException e) {
+      JSONObject emptyResult = new JSONObject();
+      emptyResult.put("rows", new JSONArray());
+      emptyResult.put("total", 0);
+      return emptyResult;
+    }
+    Set<Integer> existingAssignedRelInternshipIds = loadTeacherStudentMergeRelInternshipIds(internshipId);
+    Map<Integer, JSONObject> mergeSample = new LinkedHashMap<>();
+    List<Integer> studentIds = new ArrayList<>();
+    for (Object obj : relStuList) {
+      JSONObject j = FastJsonUtil.toJson(obj);
+      Integer userId = parseStudentUserIdFromStuPostMerge(j);
+      Integer relInternshipId = j.getInteger("relationId");
+      if (relInternshipId == null) {
+        relInternshipId = j.getInteger("id");
+      }
+      Integer rowDeptId = j.getInteger("departmentId");
+      if (userId == null || mergeSample.containsKey(userId)) {
+        continue;
+      }
+      if (relInternshipId != null && existingAssignedRelInternshipIds.contains(relInternshipId)) {
+        continue;
+      }
+      if (departmentId != null && !Objects.equals(rowDeptId, departmentId)) {
+        continue;
+      }
+      mergeSample.put(userId, j);
+      studentIds.add(userId);
+    }
+    JSONObject result = new JSONObject();
+    result.put("rows", buildStudentBriefList(studentIds, mergeSample));
+    result.put("total", studentIds.size());
+    return result;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Set<Integer> loadTeacherStudentMergeRelInternshipIds(Integer internshipId) {
+    JSONObject searchKeys = new JSONObject();
+    searchKeys.put("internshipId", internshipId);
+    Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
+        "ViewVerifyProcessRelTeacherStudentMerge", searchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+    List<Object> rows = mergePage.getContent();
+    if (rows == null || rows.isEmpty()) {
+      return new HashSet<>();
+    }
+    return rows.stream()
+        .filter(Objects::nonNull)
+        .map(FastJsonUtil::toJson)
+        .map(json -> json.getInteger("relInternshipId"))
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
   }
 
   // ==================== 校外实习统计（学院汇总 / 岗位 / 学生选岗） ====================
@@ -887,6 +994,92 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     int[] createdCounts = createTeacherStudentAndVerifyRecords(
         internshipId, processId, createUserId, verifyUserId, newRelStuList, null, false, verifyType);
     return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
+  }
+
+  @Override
+  public Object manualAssignTeacherStudent(Integer internshipId, Integer processId, Integer createUserId,
+      String verifyUserId,
+      Integer currentVerifyTypeId, Integer teacherId, List<Integer> studentIds) {
+    validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
+    if (teacherId == null) {
+      throw BaseResponse.parameterInvalid.error("teacherId 不能为空");
+    }
+    if (studentIds == null || studentIds.isEmpty()) {
+      throw BaseResponse.parameterInvalid.error("studentIds 不能为空");
+    }
+    int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
+    if (verifyType <= 0) {
+      throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+    }
+
+    List<Object> relStuList = getStudentInternshipSelections(internshipId);
+    Map<Integer, Integer> studentRelInternshipMap = new HashMap<>();
+    for (Object relStuObj : relStuList) {
+      JSONObject relStuJson = FastJsonUtil.toJson(relStuObj);
+      Integer studentId = parseStudentUserIdFromStuPostMerge(relStuJson);
+      Integer relInternshipId = relStuJson.getInteger("relationId");
+      if (relInternshipId == null) {
+        relInternshipId = relStuJson.getInteger("id");
+      }
+      if (studentId != null && relInternshipId != null) {
+        studentRelInternshipMap.put(studentId, relInternshipId);
+      }
+    }
+
+    Set<Integer> existingRelInternshipIds = getRelTeacherStudentRecords(internshipId).stream()
+        .filter(Objects::nonNull)
+        .map(FastJsonUtil::toJson)
+        .map(json -> json.getInteger("relInternshipId"))
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+
+    int createdRelTeacherStudentCount = 0;
+    int createdVerifyProcessCount = 0;
+    int skippedExistingCount = 0;
+
+    for (Integer studentId : studentIds) {
+      if (studentId == null) {
+        continue;
+      }
+
+      Integer relInternshipId = studentRelInternshipMap.get(studentId);
+      if (relInternshipId == null) {
+        throw BaseResponse.moreInfoError.error("studentId=" + studentId + " 未找到对应的已通过学生选岗记录");
+      }
+      if (existingRelInternshipIds.contains(relInternshipId)) {
+        skippedExistingCount++;
+        continue;
+      }
+
+      JSONObject relTeacherStudentJson = new JSONObject();
+      relTeacherStudentJson.put("teacherId", teacherId);
+      relTeacherStudentJson.put("currentVerifyTypeId", verifyType);
+      relTeacherStudentJson.put("relInternshipId", relInternshipId);
+      relTeacherStudentJson.put("internshipId", internshipId);
+      Object savedRelTeacherStudent = iCommonService.saveOneRecord("RelTeacherStudent", relTeacherStudentJson);
+      JSONObject savedRelTeacherStudentJson = FastJsonUtil.toJson(savedRelTeacherStudent);
+      Integer relationId = savedRelTeacherStudentJson.getInteger("id");
+      if (relationId == null) {
+        continue;
+      }
+      createdRelTeacherStudentCount++;
+      existingRelInternshipIds.add(relInternshipId);
+
+      JSONObject verifyJson = new JSONObject();
+      verifyJson.put("relationId", relationId);
+      verifyJson.put("processId", processId);
+      verifyJson.put("createUserId", createUserId);
+      verifyJson.put("verifyUserId", verifyUserId);
+      verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+      verifyJson.put("reason", "");
+      verifyJson.put("tableName", "RelTeacherStudent");
+      iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+      createdVerifyProcessCount++;
+    }
+
+    JSONObject result = buildInitTeacherStudentResult(0, createdRelTeacherStudentCount, createdVerifyProcessCount);
+    result.put("skippedExistingCount", skippedExistingCount);
+    return result;
   }
 
   private void validateInitTeacherStudentParams(Integer internshipId, Integer processId, Integer createUserId,
