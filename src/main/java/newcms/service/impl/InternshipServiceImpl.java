@@ -373,14 +373,52 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     List<Object> list = fetchAllPagesInternshipPostMergePass(internshipId);
     List<JSONObject> allItems = new ArrayList<>();
     if (list != null) {
-      Set<Integer> seenPostIds = new HashSet<>();
+      // PERF-04: 先收集所有 postId，批量查 MainInternshipPost 和 BasePostType，避免 N+1
+      Set<Integer> seenPostIds = new LinkedHashSet<>();
+      Map<Integer, JSONObject> listRowByPostId = new HashMap<>();
       for (Object o : list) {
         JSONObject j = FastJsonUtil.toJson(o);
         Integer postId = parseInternshipPostIdFromInternshipPostMergeRow(j);
-        if (postId == null || seenPostIds.contains(postId)) {
-          continue;
+        if (postId != null && !seenPostIds.contains(postId)) {
+          seenPostIds.add(postId);
+          listRowByPostId.put(postId, j);
         }
-        seenPostIds.add(postId);
+      }
+      // 批量查 MainInternshipPost
+      Map<Integer, JSONObject> postEntityMap = new HashMap<>();
+      if (!seenPostIds.isEmpty()) {
+        JSONObject postIdSearchKeys = new JSONObject();
+        postIdSearchKeys.put("id", seenPostIds.stream().map(String::valueOf).collect(Collectors.joining(",")));
+        Map<String, String> postIdRepMap = new HashMap<>();
+        postIdRepMap.put("id", "()");
+        @SuppressWarnings("unchecked")
+        Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
+            "MainInternshipPost", postIdSearchKeys, postIdRepMap,
+            Sort.unsorted(), 1, seenPostIds.size() + 1);
+        for (Object pe : postPage.getContent()) {
+          JSONObject peJson = FastJsonUtil.toJson(pe);
+          Integer pid = peJson.getInteger("id");
+          if (pid != null) postEntityMap.put(pid, peJson);
+        }
+      }
+      // 批量查 BasePostType
+      Set<Integer> allPostTypeIds = new HashSet<>();
+      for (JSONObject pe : postEntityMap.values()) {
+        Integer ptId = pe.getInteger("postTypeId");
+        if (ptId != null) allPostTypeIds.add(ptId);
+      }
+      Map<Integer, JSONObject> postTypeMap = new HashMap<>();
+      if (!allPostTypeIds.isEmpty()) {
+        @SuppressWarnings("unchecked")
+        List<Object> postTypeList = (List<Object>) iCommonService.getRecordsByIds("BasePostType", allPostTypeIds, false);
+        for (Object pt : postTypeList) {
+          JSONObject ptJson = FastJsonUtil.toJson(pt);
+          Integer ptId = ptJson.getInteger("id");
+          if (ptId != null) postTypeMap.put(ptId, ptJson);
+        }
+      }
+      for (Integer postId : seenPostIds) {
+        JSONObject j = listRowByPostId.get(postId);
         JSONObject item = new JSONObject();
         item.put("internshipPostId", postId);
         item.put("internshipPostName", firstNonEmpty(j.getString("internshipPostName"), j.getString("name")));
@@ -390,16 +428,15 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         item.put("nowPersonNum", j.getInteger("nowPersonNum"));
         item.put("internshipPostCode", j.getString("internshipPostCode"));
         item.put("processTypeCode", j.getString("processTypeCode"));
-        Object postEntity = iCommonService.getOneRecordById("MainInternshipPost", postId);
-        if (postEntity != null) {
-          JSONObject pe = FastJsonUtil.toJson(postEntity);
+        JSONObject pe = postEntityMap.get(postId);
+        if (pe != null) {
           item.put("postTypeId", pe.getInteger("postTypeId"));
           item.put("remarks", pe.getString("remarks"));
           Integer postTypeId = pe.getInteger("postTypeId");
           if (postTypeId != null) {
-            Object postTypeObj = iCommonService.getOneRecordById("BasePostType", postTypeId);
+            JSONObject postTypeObj = postTypeMap.get(postTypeId);
             if (postTypeObj != null) {
-              item.put("salary", FastJsonUtil.toJson(postTypeObj).getInteger("salary"));
+              item.put("salary", postTypeObj.getInteger("salary"));
             }
           }
         }
