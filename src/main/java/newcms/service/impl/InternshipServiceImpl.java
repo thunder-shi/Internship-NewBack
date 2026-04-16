@@ -6,16 +6,20 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
+import newcms.service.IDataTreeService;
 import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
@@ -46,6 +50,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+
+    @Resource
+    private ViewExternalInternshipCollegeStatsDao viewExternalInternshipCollegeStatsDao;
+
+    @Resource
+    private IDataTreeService iDataTreeService;
 
     // ==================== 实习项目管理====================
 
@@ -215,8 +225,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("internshipId 和 jobCode 不能为空");
         }
 
-    int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
-    int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+        int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
+        int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
+        if (departmentId == null) {
+            return new PageImpl<>(Collections.emptyList(), PageRequest.of(pageNum - 1, pageSize), 0);
+        }
 
         // 1. 查出该实习项目下已经在 RelIntershipUser 中关联过的 userId 列表（只看未删除的关联）
         JSONObject relSearchKeys = new JSONObject();
@@ -234,11 +247,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .map(json -> json.getInteger("userId"))
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-
-        // 学生额外约束：如果已在任意项目的审核合并视图中处于“待提交/已提交”，则不能再被其他项目选择。
-        if (Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
-            usedUserIdSet.addAll(getLockedStudentUserIdsFromVerifyMerge());
-        }
 
         // 2. 组装 ViewBaseUser 的查询条件：
         //    - jobCode = 前端传入 jobCode
@@ -261,42 +269,15 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             repMap.put("id", Constant.NOT_IN);
         }
 
-    // 3. 通过通用的 getSomeRecords 分页查询 ViewBaseUser（带排序）
-    Sort finalSort = (sort == null) ? Sort.unsorted() : sort;
-    return iCommonService.getSomeRecords(
-        "ViewBaseUser",
-        userSearchKeys,
-        repMap,
-        finalSort,
-        pageNum,
-        pageSize);
-  }
-
-    /**
-     * 学生额外锁定规则：若学生在任意项目的审核合并视图中处于“保存/提交”状态，
-     * 视为已参与待审流程，不能再次出现在可选学生列表中。
-     */
-    @SuppressWarnings("unchecked")
-    private Set<Integer> getLockedStudentUserIdsFromVerifyMerge() {
-        Set<Integer> lockedUserIds = new HashSet<>();
-        int[] statuses = {Constant.AUDIT_STATUS.SAVE, Constant.AUDIT_STATUS.SUBMIT};
-        for (int status : statuses) {
-            JSONObject verifySearchKeys = new JSONObject();
-            verifySearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
-            verifySearchKeys.put("isAudit", status);
-            Page<Object> verifyPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "ViewVerifyProcessRelIntershipUserMerge", verifySearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-            List<Object> verifyList = verifyPage.getContent();
-            if (verifyList == null || verifyList.isEmpty()) {
-                continue;
-            }
-            lockedUserIds.addAll(verifyList.stream()
-                    .map(FastJsonUtil::toJson)
-                    .map(json -> json.getInteger("userId"))
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet()));
-        }
-        return lockedUserIds;
+        // 3. 通过通用的 getSomeRecords 分页查询 ViewBaseUser（带排序）
+        Sort finalSort = (sort == null) ? Sort.unsorted() : sort;
+        return iCommonService.getSomeRecords(
+                "ViewBaseUser",
+                userSearchKeys,
+                repMap,
+                finalSort,
+                pageNum,
+                pageSize);
     }
 
     @Override
@@ -497,77 +478,74 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
-
-        Set<Integer> deptStudentIds = loadUserIdsByDepartmentAndJobCode(departmentId, Constant.USER_JOB_CODE.STUDENT);
-        Set<Integer> deptSchoolTeacherIds = loadUserIdsByDepartmentAndJobCode(departmentId, Constant.USER_JOB_CODE.SCHOOL_TEACHER);
-
-        JSONObject internshipSk = new JSONObject();
-        internshipSk.put("intTypeName", EXTERNAL_INT_TYPE_NAME);
-        Sort newestFirst = Sort.by(Sort.Direction.DESC, "createTime");
-        @SuppressWarnings("unchecked")
-        Page<Object> internshipPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewMainInternship", internshipSk, null, newestFirst, pageNum, pageSize);
-        List<Object> internshipList = internshipPage.getContent();
-        if (internshipList == null || internshipList.isEmpty()) {
-            JSONObject empty = new JSONObject();
-            empty.put("rows", new JSONArray());
-            empty.put("totalElements", internshipPage.getTotalElements());
-            empty.put("totalPages", internshipPage.getTotalPages());
-            empty.put("page", pageNum);
-            empty.put("size", pageSize);
-            return empty;
+        List<Integer> deptIds = iDataTreeService.getAllChildIndex("BaseDepartment", departmentId);
+        if (deptIds == null || deptIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("部门不存在或无效");
         }
-
+        Page<Object[]> statsPage = viewExternalInternshipCollegeStatsDao.findAggregatedByDepartmentIds(
+                deptIds, PageRequest.of(pageNum - 1, pageSize));
         JSONArray rows = new JSONArray();
-        for (Object inv : internshipList) {
-            JSONObject invJson = FastJsonUtil.toJson(inv);
-            Integer internshipId = invJson.getInteger("id");
-            if (internshipId == null) {
+        for (Object[] r : statsPage.getContent()) {
+            if (r == null || r.length < 9) {
                 continue;
             }
-            String internshipName = invJson.getString("name");
-
-            int signupStudentCount = countDistinctMergeUsersInSet(internshipId, Constant.USER_JOB_CODE.STUDENT, deptStudentIds);
-            int signupTeacherCount = countDistinctMergeUsersInSet(internshipId, Constant.USER_JOB_CODE.SCHOOL_TEACHER, deptSchoolTeacherIds);
-
-            JSONObject postSk = new JSONObject();
-            postSk.put("internshipId", internshipId);
-            @SuppressWarnings("unchecked")
-            Page<Object> postPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "MainInternshipPost", postSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-            List<Object> postList = postPage.getContent();
-            int postSignupCount = postList == null ? 0 : postList.size();
-            int totalRecruitmentHeadcount = 0;
-            if (postList != null) {
-                for (Object po : postList) {
-                    JSONObject pj = FastJsonUtil.toJson(po);
-                    Integer n = pj.getInteger("allPersonNum");
-                    totalRecruitmentHeadcount += (n != null ? n : 0);
-                }
-            }
-
-            int pendingPostCount = countPendingAuditInternshipPosts(internshipId);
-            int studentWithPostSelectionCount = countDeptStudentsWithPostSelection(internshipId, departmentId);
-
             JSONObject row = new JSONObject();
-            row.put("internshipId", internshipId);
-            row.put("internshipName", internshipName);
-            row.put("signupStudentCount", signupStudentCount);
-            row.put("signupTeacherCount", signupTeacherCount);
-            row.put("postSignupCount", postSignupCount);
-            row.put("totalRecruitmentHeadcount", totalRecruitmentHeadcount);
-            row.put("pendingAuditPostCount", pendingPostCount);
-            row.put("studentWithPostSelectionCount", studentWithPostSelectionCount);
+            row.put("internshipId", toInteger(r[0]));
+            row.put("internshipName", r[1] != null ? String.valueOf(r[1]) : null);
+            row.put("signupStudentCount", nzInt(toInteger(r[3])));
+            row.put("signupTeacherCount", nzInt(toInteger(r[4])));
+            row.put("postSignupCount", nzInt(toInteger(r[5])));
+            row.put("totalRecruitmentHeadcount", nzNumberInt(r[6]));
+            row.put("pendingAuditPostCount", nzInt(toInteger(r[7])));
+            row.put("studentWithPostSelectionCount", nzInt(toInteger(r[8])));
             rows.add(row);
         }
-
         JSONObject result = new JSONObject();
         result.put("rows", rows);
-        result.put("totalElements", internshipPage.getTotalElements());
-        result.put("totalPages", internshipPage.getTotalPages());
+        result.put("totalElements", statsPage.getTotalElements());
+        result.put("totalPages", statsPage.getTotalPages());
         result.put("page", pageNum);
         result.put("size", pageSize);
         return result;
+    }
+
+    private static Integer toInteger(Object o) {
+        if (o == null) {
+            return null;
+        }
+        if (o instanceof Number) {
+            return ((Number) o).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(o));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static int nzNumberInt(Object o) {
+        if (o == null) {
+            return 0;
+        }
+        if (o instanceof BigDecimal) {
+            return nzBigDecimalInt((BigDecimal) o);
+        }
+        if (o instanceof Number) {
+            return ((Number) o).intValue();
+        }
+        try {
+            return new BigDecimal(String.valueOf(o)).intValue();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static int nzBigDecimalInt(BigDecimal v) {
+        return v == null ? 0 : v.intValue();
+    }
+
+    private static int nzInt(Integer v) {
+        return v == null ? 0 : v;
     }
 
     // ==================== 校内实习统计（学院汇总 / 学生选题 / 教师申报题目） ====================
