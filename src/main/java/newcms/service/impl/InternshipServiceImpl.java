@@ -1109,7 +1109,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         List<Integer> slice = from >= total ? Collections.emptyList() : ids.subList(from, to);
         JSONArray rows = new JSONArray();
         for (Integer uid : slice) {
-            rows.add(buildOneInternalTitleRow(uid, mergeMap != null ? mergeMap.get(uid) : null));
+            JSONObject mergeSample = mergeMap != null ? mergeMap.get(uid) : null;
+            JSONObject row = buildOneInternalTitleRow(uid, mergeSample);
+            row.put("selectionStatus", resolveInternalTitleSelectionStatusFromSample(mergeSample));
+            rows.add(row);
         }
         JSONObject block = new JSONObject();
         block.put("rows", rows);
