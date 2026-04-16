@@ -23,7 +23,7 @@ public interface IDiaryService {
      * @return 日志记录的 id（用于后续文件上传）
      */
     Integer submitDiary(Integer relationId, String tableName, Integer periodId,
-                        String content, Boolean submit, Integer currentUserId);
+                        String title, String content, Boolean submit, Integer currentUserId);
 
     /**
      * 获取学生某个岗位/题目的所有期次及日志审核状态。

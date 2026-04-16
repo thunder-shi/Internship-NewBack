@@ -70,7 +70,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
   @Override
   public Integer submitDiary(Integer relationId, String tableName, Integer periodId,
-      String content, Boolean submit, Integer currentUserId) {
+      String title, String content, Boolean submit, Integer currentUserId) {
     boolean isSubmit = Boolean.TRUE.equals(submit);
 
     // 查找已有日志（同一 relationId+tableName+periodId 只存一条）
@@ -82,9 +82,10 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       Integer diaryId = existing.getId();
       boolean wasDraft = !Boolean.TRUE.equals(existing.getSubmit());
 
-      // 更新内容、提交状态、审核进度
+      // 更新标题、内容、提交状态、审核进度
       JSONObject updateDiary = new JSONObject();
       updateDiary.put("id", diaryId);
+      updateDiary.put("title", title);
       updateDiary.put("content", content);
       updateDiary.put("submit", isSubmit);
       updateDiary.put("currentVerifyTypeId",
@@ -103,6 +104,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     diaryJson.put("relationId", relationId);
     diaryJson.put("tableName", tableName);
     diaryJson.put("periodId", periodId);
+    diaryJson.put("title", title);
     diaryJson.put("content", content);
     diaryJson.put("submit", isSubmit);
     diaryJson.put("verifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);

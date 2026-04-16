@@ -36,13 +36,14 @@ public class DiaryController {
         Integer relationId = node.getInteger("relationId");
         String tableName = node.getString("tableName");
         Integer periodId = node.getInteger("periodId");
+        String title = node.getString("title");
         String content = node.getString("content");
         Boolean submit = node.getBoolean("submit");
         if (relationId == null) throw BaseResponse.parameterInvalid.error("relationId 不能为空");
         if (tableName == null || tableName.isBlank()) throw BaseResponse.parameterInvalid.error("tableName 不能为空");
         if (periodId == null) throw BaseResponse.parameterInvalid.error("periodId 不能为空");
         return BaseResponse.ok(
-                iDiaryService.submitDiary(relationId, tableName, periodId, content, submit, Base.getLoginUserId())
+                iDiaryService.submitDiary(relationId, tableName, periodId, title, content, submit, Base.getLoginUserId())
         );
     }
 

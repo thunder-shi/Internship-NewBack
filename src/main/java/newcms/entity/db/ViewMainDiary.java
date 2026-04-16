@@ -24,6 +24,7 @@ public class ViewMainDiary extends BaseInfo {
     private Integer relationId;     // 关联 rel_stu_internship_post 或 rel_title_student 的 id
     private String tableName;       // "RelStuInternshipPost" 或 "RelTitleStudent"
     private Integer periodId;       // 关联 main_diary_period.id
+    private String title;           // 日志标题
     private String content;         // 日志正文
     private Boolean submit;         // false=草稿，true=已提交
     private Integer verifyTypeId;

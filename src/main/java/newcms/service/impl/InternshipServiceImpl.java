@@ -1312,6 +1312,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     Integer isAudit = node.getInteger("isAudit");
     Integer Id = node.getInteger("id");
 
+    // 不通过/退回时：将 verifyUserId 改写为当前操作人，与待审核过滤逻辑对称。
+    // 前端 useVerifyFilter 按 verifyUserId 判断可见性，此处保证只有做出决定的那级审核人能看到该记录。
+    if (isAudit != null && (isAudit == Constant.AUDIT_STATUS.NOTPASS || isAudit == Constant.AUDIT_STATUS.BACK)) {
+      node.put("verifyUserId", String.valueOf(Base.getLoginUserId()));
+    }
+
     // 提前读取记录以判断 tableName（save 不会改变 tableName，提前读不影响逻辑）
     Object verifyObj = Id != null ? iCommonService.getOneRecordById("MainVerifyProcess", Id) : null;
     String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
@@ -1324,8 +1330,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
       Integer createUserId = verifyJson.getInteger("createUserId");
       String reason = node.getString("reason");
 
-      // 将审核意见写回 MainDiary.remarks（仅有内容时写入）
-      if (isAudit != null && isAudit >= 1 && diaryId != null
+      // 将审核意见写回 MainDiary.remarks（通过/未通过时写入；退回时 reason 已存于 MainVerifyProcess，无需再复制）
+      if (isAudit != null && isAudit >= 1 && isAudit != Constant.AUDIT_STATUS.BACK && diaryId != null
           && reason != null && !reason.isEmpty()) {
         JSONObject updateDiary = new JSONObject();
         updateDiary.put("id", diaryId);
@@ -1367,6 +1373,20 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         resetDiary.put("submit", false);
         resetDiary.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
         iCommonService.saveOneRecord("MainDiary", resetDiary);
+        // 新建 isAudit=-1 的待提交记录，保留完整审核历史；reason 保持干净，不复制退回意见
+        JSONObject diaryForBack = FastJsonUtil.toJson(iCommonService.getOneRecordById("MainDiary", diaryId));
+        Integer firstRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(diaryForBack, Constant.VERIFY_LEVEL.ONE_VERIFY);
+        if (firstRoleId != null && firstRoleId > 0) {
+          String pendingVerifyUserId = iVerifyProcessService.GetVerifyUserId(firstRoleId, createUserId);
+          JSONObject newPending = new JSONObject();
+          newPending.put("relationId", diaryId);
+          newPending.put("createUserId", createUserId);
+          newPending.put("verifyUserId", pendingVerifyUserId);
+          newPending.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+          newPending.put("reason", "");
+          newPending.put("tableName", "MainDiary");
+          iCommonService.saveOneRecord("MainVerifyProcess", newPending);
+        }
       }
       return saved;
     }
