@@ -291,7 +291,7 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "本学院校外实习项目报名汇总",
-            description = "按学院部门（departmentId）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、本学院已选岗学生数等。"
+            description = "按学院部门树（departmentId 含其全部子部门）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、已选岗学生数等。"
     )
     @PostMapping(value = "/listExternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listExternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
@@ -338,7 +338,8 @@ public class InternshipProcessController {
             summary = "校外实习项目-学生选岗情况",
             description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
                     + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
-                    + "counts 始终为三类全量人数。分页：pageInfo.page、pageInfo.size。"
+                    + "departmentId 可选：传则只含所属部门为该节点或其下级（BaseDepartment 子树）的用户；不传则与原先一致，不按部门过滤。"
+                    + "counts 为当前过滤范围内三类人数。分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object getExternalInternshipStudentPostBreakdown(@RequestBody JSONObject requestJson) {
@@ -349,6 +350,7 @@ public class InternshipProcessController {
         JSONObject node = requestJson.getJSONObject("node");
         Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
         String status = node != null ? node.getString("status") : requestJson.getString("status");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
         JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
         int page = pageInfo != null && pageInfo.getInteger("page") != null
                 ? pageInfo.getInteger("page")
@@ -356,7 +358,8 @@ public class InternshipProcessController {
         int size = pageInfo != null && pageInfo.getInteger("size") != null
                 ? pageInfo.getInteger("size")
                 : Constant.DEFAULT_SIZE;
-        return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status));
+        return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status,
+                departmentId));
     }
 
     @Operation(

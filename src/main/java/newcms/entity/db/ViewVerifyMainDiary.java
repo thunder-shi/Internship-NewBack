@@ -37,6 +37,7 @@ public class ViewVerifyMainDiary extends BaseInfo {
     private Integer verifyFifthRoleId;
     private Integer currentVerifyTypeId;
     private Boolean submit;
+    private String title;                   // 日志标题
     private String remarks;                 // 老师批阅意见
 
     // 审核角色名（来自 sys_role）

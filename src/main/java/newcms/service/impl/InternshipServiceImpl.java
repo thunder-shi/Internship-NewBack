@@ -710,7 +710,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status) {
+    public Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                            Integer departmentId) {
         assertExternalInternship(internshipId);
         String st = normalizeStudentPostBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;

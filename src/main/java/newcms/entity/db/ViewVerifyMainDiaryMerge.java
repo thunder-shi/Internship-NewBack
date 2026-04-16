@@ -37,6 +37,7 @@ public class ViewVerifyMainDiaryMerge extends BaseInfo {
     private Integer verifyFifthRoleId;
     private Integer currentVerifyTypeId;
     private Boolean submit;
+    private String title;                   // 日志标题
     private String content;                 // 日志正文
     private String remarks;                 // 老师批阅意见
 

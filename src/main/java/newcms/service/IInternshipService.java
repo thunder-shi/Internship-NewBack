@@ -114,9 +114,9 @@ public interface IInternshipService {
     // Object getNowInternship(String processTypeCode);
 
     /**
-     * 本学院校外实习项目报名汇总（按学院部门统计各项目指标）。
+     * 本学院校外实习项目报名汇总（按部门树：含 departmentId 及其全部子部门）。
      *
-     * @param departmentId 学院部门 ID（ViewBaseUser.departmentId）
+     * @param departmentId 学院/部门节点 ID（与 BaseDepartment 树一致）
      * @param page         页码，从 1 开始
      * @param size         每页条数
      */
@@ -142,9 +142,8 @@ public interface IInternshipService {
      * @param page         页码，从 1 开始
      * @param size         每页条数
      * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
+     * @param departmentId 可选；若传则只统计用户所属部门为该节点或其下级部门（与 BaseDepartment 树一致）的学生；{@code null} 不按部门过滤
      */
-    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status);
-
     /**
      * 本学院校内实习项目汇总：报名师生数、题目审核通过数、未提交题目教师数、学生选题三类人数等。
      */
@@ -161,4 +160,6 @@ public interface IInternshipService {
      * 校内实习项目：尚未提交申报题目的教师列表（可选按学院过滤）。{@code departmentId} 为 {@code null} 时为本项目全部报名教师。
      */
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
+    Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                     Integer departmentId);
 }

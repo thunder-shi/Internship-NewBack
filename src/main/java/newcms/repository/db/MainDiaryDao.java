@@ -16,4 +16,8 @@ public interface MainDiaryDao extends BaseDao<MainDiary, Integer> {
     // 批量：多个 relationId + 同一 tableName + 同一 periodId
     List<MainDiary> findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(Iterable<Integer> relationIds, String tableName, Integer periodId);
     List<MainDiary> findByRelationIdInAndTableNameAndIsDeletedFalse(Iterable<Integer> relationIds, String tableName);
+
+    // 按 periodId 批量查询（用于期次重新生成时的安全检查和旧桩清理）
+    boolean existsByPeriodIdInAndSubmitTrueAndIsDeletedFalse(Iterable<Integer> periodIds);
+    List<MainDiary> findByPeriodIdInAndSubmitFalseAndIsDeletedFalse(Iterable<Integer> periodIds);
 }

@@ -16,7 +16,7 @@ public class MainVerifyProcess extends BaseInfo {
     @Column(nullable = false, columnDefinition = "integer unsigned comment '外键,关联表9、11、15、16、21、22、23'")
     private Integer relationId;
 
-    @Column(nullable = false, columnDefinition = "integer unsigned comment '外键,关联表 20'")
+    @Column(nullable = true, columnDefinition = "integer unsigned comment '外键,关联表 20（RelProcessInternship），日志等独立流程可为 null'")
     private Integer processId;
 
     @Column(nullable = false, columnDefinition = "integer unsigned comment '外键,关联表1,当前流程创建人'")

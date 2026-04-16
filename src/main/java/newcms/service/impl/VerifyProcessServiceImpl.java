@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.fastjson.JSONObject;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -181,6 +182,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     @SuppressWarnings("unchecked")
     public int refreshPendingVerifyUsersByUser(Integer userId) {
         if (userId == null) {
@@ -295,7 +297,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     @Override
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.REQUIRED)
     public Object activateProcess(JSONObject node) {
         if (node == null) return null;
         Integer relationId  = node.getInteger("relationId");
@@ -386,13 +388,23 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer relationId = verifyProcess.getRelationId();
         String tableName = verifyProcess.getTableName();
         Integer createUserId = verifyProcess.getCreateUserId();
-        // 获取 RelProcessInternship 记录（获取审核角色配置和 verifyTypeId）
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
-        if (relObj == null) {
-            logger.warn("未找到流程关联记录 {}", processId);
-            return;
+        // processId 为 null 时（如日志审核），直接从业务实体读审核配置；否则走 RelProcessInternship
+        JSONObject relJson;
+        if (processId != null) {
+            Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+            if (relObj == null) {
+                logger.warn("未找到流程关联记录 {}", processId);
+                return;
+            }
+            relJson = FastJsonUtil.toJson(relObj);
+        } else {
+            Object entityObj = iCommonService.getOneRecordById(tableName, relationId);
+            if (entityObj == null) {
+                logger.warn("未找到业务实体配置 {} id={}", tableName, relationId);
+                return;
+            }
+            relJson = FastJsonUtil.toJson(entityObj);
         }
-        JSONObject relJson = FastJsonUtil.toJson(relObj);
         Integer verifyTypeId = relJson.getInteger("verifyTypeId");
 
         // 从对应的业务实体表获取 currentVerifyTypeId（每个审核条目独立跟踪审核级别）
@@ -482,13 +494,21 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         }
         JSONObject relJson = FastJsonUtil.toJson(relObj);
 
-        // 2. 查询该流程下所有待处理的 MainVerifyProcess 记录（isAudit = -1 或 0）
+        // 2. 分页查询该流程下所有 MainVerifyProcess 记录（PERF-05: 避免 10000 硬编码截断）
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("processId", processId);
-        Page<Object> allPage = (Page<Object>) iCommonService.getSomeRecords(
-                "MainVerifyProcess", searchKeys, null,
-                Sort.by(Sort.Direction.ASC, "id"), 1, 10000);
-        List<Object> allRecords = allPage.getContent();
+        List<Object> allRecords = new ArrayList<>();
+        int pageNum = 1;
+        final int PAGE_SIZE = 1000;
+        while (true) {
+            Page<Object> pageResult = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainVerifyProcess", searchKeys, null,
+                    Sort.by(Sort.Direction.ASC, "id"), pageNum, PAGE_SIZE);
+            List<Object> pageContent = pageResult.getContent();
+            allRecords.addAll(pageContent);
+            if (pageContent.size() < PAGE_SIZE) break;
+            pageNum++;
+        }
 
         // 4. 用行走算法推断每条记录的审核级别，并刷新待处理记录的 verifyUserId
         int updatedCount = 0;

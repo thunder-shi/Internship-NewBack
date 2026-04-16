@@ -26,6 +26,9 @@ public class MainDiary extends NameRemarkInfo {
     @Column(columnDefinition = "int unsigned not null comment '外键，关联表34（MainDiaryPeriod）'")
     private Integer periodId;
 
+    @Column(columnDefinition = "varchar(200) comment '日志标题'")
+    private String title;
+
     @Column(columnDefinition = "text comment '日志文字内容'")
     private String content;
 

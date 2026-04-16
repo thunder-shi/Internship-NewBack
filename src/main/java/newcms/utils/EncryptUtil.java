@@ -24,19 +24,20 @@ public class EncryptUtil {
     @Resource
     protected RedisUtil redis;
 
-
-    private final String KEY = "abcdefgabcdefg12";
+    // SEC-01: ALGORITHMSTR 使用 ECB 模式（前后端协议约定，改动需同步前端）
     private final String ALGORITHMSTR = "AES/ECB/PKCS5Padding";
 
     // Key 过期时间（毫秒）
     private static final long KEY_EXPIRE_TIME = 300000;
 
-    // 添加读写锁防止并发问题
-    private static final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    // BUG-07/SEC-04: 最大密钥槽数限制为 99，保证 2 位索引编码不越界
+    private static final int MAX_KEY_SLOTS = 99;
 
-    public static List<String> allKeys = new ArrayList<>();
-    public static List<Boolean> haveKeys = new ArrayList<>();
-    public static List<Instant> KeysDate = new ArrayList<>();
+    // SEC-04: 敏感字段改为 private，避免外部直接修改
+    private static final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private static final List<String> allKeys = new ArrayList<>();
+    private static final List<Boolean> haveKeys = new ArrayList<>();
+    private static final List<Instant> KeysDate = new ArrayList<>();
 
     private Integer getSuitablePos() {
         // 此方法应在持有写锁时调用
@@ -63,22 +64,35 @@ public class EncryptUtil {
         try {
             Integer pos = getSuitablePos();
             if (pos == -1) {
-                allKeys.add(key);
-                haveKeys.add(true);
-                KeysDate.add(Instant.now());
-                JSONObject val = new JSONObject();
-                val.put("key", key);
-                val.put("value", allKeys.size()-1);
-                return val;
+                // BUG-07: 当已达到最大槽数时，强制复用最旧的槽，防止索引超过 2 位编码上限
+                if (allKeys.size() >= MAX_KEY_SLOTS) {
+                    int evictPos = 0;
+                    Instant oldest = KeysDate.get(0);
+                    for (int i = 1; i < KeysDate.size(); i++) {
+                        if (KeysDate.get(i).isBefore(oldest)) {
+                            oldest = KeysDate.get(i);
+                            evictPos = i;
+                        }
+                    }
+                    pos = evictPos;
+                    allKeys.set(pos, key);
+                    haveKeys.set(pos, true);
+                    KeysDate.set(pos, Instant.now());
+                } else {
+                    allKeys.add(key);
+                    haveKeys.add(true);
+                    KeysDate.add(Instant.now());
+                    pos = allKeys.size() - 1;
+                }
             } else {
-                allKeys.set(pos, key);  // 更新 key
+                allKeys.set(pos, key);
                 haveKeys.set(pos, true);
                 KeysDate.set(pos, Instant.now());
-                JSONObject val = new JSONObject();
-                val.put("key", key);
-                val.put("value", pos);
-                return val;
             }
+            JSONObject val = new JSONObject();
+            val.put("key", key);
+            val.put("value", pos);
+            return val;
         } finally {
             lock.writeLock().unlock();
         }
