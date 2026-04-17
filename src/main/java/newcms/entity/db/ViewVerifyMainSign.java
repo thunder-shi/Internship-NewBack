@@ -7,20 +7,21 @@ import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
 /**
- * 实习打卡审核视图（列表用）
- * 对应 view_verify_main_sign（与 view_verify_main_diary 列结构对齐；打卡扩展 address、img、type）
+ * 实习打卡审核视图：{@code main_verify_process} 与 {@code view_main_sign} 按 relation_id 关联，
+ * 仅 {@code table_name = 'MainSign'} 且未逻辑删除的审核记录（一条审核一行）。
+ * <p>列与数据库视图 {@code view_verify_main_sign} 定义一致。</p>
  */
 @Getter
 @Setter
 @Entity(name = "view_verify_main_sign")
 public class ViewVerifyMainSign extends BaseInfo {
-    // 来自 main_verify_process
-    private Integer relationId;             // main_sign.id
+
+    private Integer relationId;
     private Integer createUserId;
     private String verifyUserId;
     private Integer isAudit;
     private String reason;
-    private String tableName;               // = "MainSign"
+    private String tableName;
 
     private String verifyUserName;
     private String createUserName;
@@ -31,30 +32,21 @@ public class ViewVerifyMainSign extends BaseInfo {
     private Integer verifyThirdRoleId;
     private Integer verifyFourthRoleId;
     private Integer verifyFifthRoleId;
-    private Integer currentVerifyTypeId;
-    private Boolean submit;
-    private String remarks;
 
-    private String verifyFirstRoleName;
-    private String verifySecondRoleName;
-    private String verifyThirdRoleName;
-    private String verifyFourthRoleName;
-    private String verifyFifthRoleName;
-
+    @Column(name = "internship_post_name")
     private String internshipPostName;
-    private String postCompanyName;
-
-    private String internshipName;
 
     private Integer studentId;
     private String studentName;
-    private Integer schoolId;
-    private String studentDepartmentName;
 
-    // 来自 main_sign / view_main_sign
     private String address;
     private Integer imgId;
 
     @Column(name = "type")
     private Byte signType;
+
+    private Integer stuInternshipId;
+
+    private String remarks;
+    private Integer currentVerifyTypeId;
 }
