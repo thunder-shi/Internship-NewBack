@@ -6,6 +6,7 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.entity.db.ViewBaseUser;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
@@ -469,19 +470,192 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .collect(Collectors.toSet());
     }
 
+    /**
+     * 实习统计（校内/校外学院汇总）数据范围：校级管理员看全校；院系管理员固定本院系子树，忽略前端传入的 departmentId。
+     */
+    private static final class CollegeStatsUserScope {
+        private final Integer reportDepartmentId;
+        private final Set<Integer> studentUserIds;
+        private final Set<Integer> schoolTeacherUserIds;
+
+        private CollegeStatsUserScope(Integer reportDepartmentId, Set<Integer> studentUserIds, Set<Integer> schoolTeacherUserIds) {
+            this.reportDepartmentId = reportDepartmentId;
+            this.studentUserIds = studentUserIds;
+            this.schoolTeacherUserIds = schoolTeacherUserIds;
+        }
+    }
+
+    private ViewBaseUser requireLoginViewBaseUser() {
+        Object uo = iCommonService.getOneRecordById("ViewBaseUser", getLoginUserId());
+        if (uo == null) {
+            throw BaseResponse.moreInfoError.error("用户信息不存在");
+        }
+        return (ViewBaseUser) uo;
+    }
+
+    private static boolean isSchoolWideCollegeStatsRole(String jobCode) {
+        if (jobCode == null) {
+            return false;
+        }
+        return Constant.USER_JOB_CODE.SUPER_ADMIN.equals(jobCode)
+                || Constant.USER_JOB_CODE.SCHOOL_ADMIN.equals(jobCode)
+                || Constant.USER_JOB_CODE.ACADEMIC_AFFAIRS_ADMIN.equals(jobCode);
+    }
+
+    private static boolean isDepartmentCollegeStatsRole(String jobCode) {
+        return jobCode != null && Constant.USER_JOB_CODE.DEPARTMENT_ADMIN.equals(jobCode);
+    }
+
+    private void assertDepartmentAccessibleToStatsUser(Integer departmentId, ViewBaseUser u) {
+        if (departmentId == null) {
+            return;
+        }
+        if (Constant.USER_JOB_CODE.SUPER_ADMIN.equals(u.getJobCode())) {
+            return;
+        }
+        Object dObj = iCommonService.getOneRecordById("ViewBaseDepartment", departmentId);
+        if (dObj == null) {
+            throw BaseResponse.parameterInvalid.error("部门不存在");
+        }
+        Integer deptSchoolId = FastJsonUtil.toJson(dObj).getInteger("schoolId");
+        Integer userSchoolId = u.getSchoolId();
+        if (userSchoolId == null || !userSchoolId.equals(deptSchoolId)) {
+            throw BaseResponse.lackPermissions.error("仅能查看本校学院数据");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Integer> loadAllDepartmentIdsPaged(String tableName, JSONObject searchKeys) {
+        List<Integer> out = new ArrayList<>();
+        int p = 1;
+        while (true) {
+            Page<Object> pg = (Page<Object>) iCommonService.getSomeRecords(
+                    tableName, searchKeys, null, Sort.unsorted(), p, POST_PAGE_SIZE);
+            List<Object> c = pg.getContent();
+            if (c == null || c.isEmpty()) {
+                break;
+            }
+            for (Object o : c) {
+                Integer id = FastJsonUtil.toJson(o).getInteger("id");
+                if (id != null) {
+                    out.add(id);
+                }
+            }
+            if (c.size() < POST_PAGE_SIZE) {
+                break;
+            }
+            p++;
+        }
+        return out.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<Integer> loadAllViewDepartmentIdsForSchool(Integer schoolId) {
+        JSONObject sk = new JSONObject();
+        sk.put("schoolId", schoolId);
+        return loadAllDepartmentIdsPaged("ViewBaseDepartment", sk);
+    }
+
+    private List<Integer> loadAllViewDepartmentIdsGlobal() {
+        return loadAllDepartmentIdsPaged("ViewBaseDepartment", new JSONObject());
+    }
+
+    private List<Integer> resolveExternalCollegeStatsDepartmentIds(Integer requestDepartmentId) {
+        ViewBaseUser u = requireLoginViewBaseUser();
+        String jc = u.getJobCode();
+        if (isDepartmentCollegeStatsRole(jc)) {
+            Integer anchor = u.getDepartmentId();
+            if (anchor == null || anchor <= 0) {
+                throw BaseResponse.parameterInvalid.error("院系管理员未关联部门");
+            }
+            List<Integer> ids = iDataTreeService.getAllChildIndex("BaseDepartment", anchor);
+            if (ids == null || ids.isEmpty()) {
+                throw BaseResponse.parameterInvalid.error("部门不存在或无效");
+            }
+            return ids;
+        }
+        if (isSchoolWideCollegeStatsRole(jc)) {
+            if (requestDepartmentId != null) {
+                assertDepartmentAccessibleToStatsUser(requestDepartmentId, u);
+                List<Integer> ids = iDataTreeService.getAllChildIndex("BaseDepartment", requestDepartmentId);
+                if (ids == null || ids.isEmpty()) {
+                    throw BaseResponse.parameterInvalid.error("部门不存在或无效");
+                }
+                return ids;
+            }
+            if (Constant.USER_JOB_CODE.SUPER_ADMIN.equals(jc)) {
+                List<Integer> all = loadAllViewDepartmentIdsGlobal();
+                if (all.isEmpty()) {
+                    throw BaseResponse.parameterInvalid.error("无部门数据");
+                }
+                return all;
+            }
+            Integer sid = u.getSchoolId();
+            if (sid == null || sid <= 0) {
+                throw BaseResponse.parameterInvalid.error("无法确定所属学校，请传入 departmentId");
+            }
+            List<Integer> schoolDepts = loadAllViewDepartmentIdsForSchool(sid);
+            if (schoolDepts.isEmpty()) {
+                throw BaseResponse.parameterInvalid.error("本校无部门数据");
+            }
+            return schoolDepts;
+        }
+        throw BaseResponse.lackPermissions.error("无权查看实习统计");
+    }
+
+    private CollegeStatsUserScope resolveInternalCollegeStatsUserScope(Integer requestDepartmentId) {
+        ViewBaseUser u = requireLoginViewBaseUser();
+        String jc = u.getJobCode();
+        if (isDepartmentCollegeStatsRole(jc)) {
+            Integer anchor = u.getDepartmentId();
+            if (anchor == null || anchor <= 0) {
+                throw BaseResponse.parameterInvalid.error("院系管理员未关联部门");
+            }
+            return new CollegeStatsUserScope(
+                    anchor,
+                    loadUserIdsByDepartmentSubtreeAndJobCode(anchor, Constant.USER_JOB_CODE.STUDENT),
+                    loadUserIdsByDepartmentSubtreeAndJobCode(anchor, Constant.USER_JOB_CODE.SCHOOL_TEACHER));
+        }
+        if (isSchoolWideCollegeStatsRole(jc)) {
+            if (requestDepartmentId != null) {
+                assertDepartmentAccessibleToStatsUser(requestDepartmentId, u);
+                return new CollegeStatsUserScope(
+                        requestDepartmentId,
+                        loadUserIdsByDepartmentSubtreeAndJobCode(requestDepartmentId, Constant.USER_JOB_CODE.STUDENT),
+                        loadUserIdsByDepartmentSubtreeAndJobCode(requestDepartmentId, Constant.USER_JOB_CODE.SCHOOL_TEACHER));
+            }
+            if (Constant.USER_JOB_CODE.SUPER_ADMIN.equals(jc)) {
+                List<Integer> allDeptIds = loadAllViewDepartmentIdsGlobal();
+                if (allDeptIds.isEmpty()) {
+                    throw BaseResponse.parameterInvalid.error("无部门数据");
+                }
+                return new CollegeStatsUserScope(
+                        null,
+                        loadUserIdsByDepartmentIdsAndJobCode(allDeptIds, Constant.USER_JOB_CODE.STUDENT),
+                        loadUserIdsByDepartmentIdsAndJobCode(allDeptIds, Constant.USER_JOB_CODE.SCHOOL_TEACHER));
+            }
+            Integer sid = u.getSchoolId();
+            if (sid == null || sid <= 0) {
+                throw BaseResponse.parameterInvalid.error("无法确定所属学校，请传入 departmentId");
+            }
+            List<Integer> schoolDeptIds = loadAllViewDepartmentIdsForSchool(sid);
+            if (schoolDeptIds.isEmpty()) {
+                throw BaseResponse.parameterInvalid.error("本校无部门数据");
+            }
+            return new CollegeStatsUserScope(
+                    null,
+                    loadUserIdsByDepartmentIdsAndJobCode(schoolDeptIds, Constant.USER_JOB_CODE.STUDENT),
+                    loadUserIdsByDepartmentIdsAndJobCode(schoolDeptIds, Constant.USER_JOB_CODE.SCHOOL_TEACHER));
+        }
+        throw BaseResponse.lackPermissions.error("无权查看实习统计");
+    }
+
     // ==================== 校外实习统计（学院汇总 / 岗位 / 学生选岗） ====================
 
     @Override
     public Object listExternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size) {
-        if (departmentId == null) {
-            throw BaseResponse.parameterInvalid.error("departmentId 不能为空");
-        }
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
-        List<Integer> deptIds = iDataTreeService.getAllChildIndex("BaseDepartment", departmentId);
-        if (deptIds == null || deptIds.isEmpty()) {
-            throw BaseResponse.parameterInvalid.error("部门不存在或无效");
-        }
+        List<Integer> deptIds = resolveExternalCollegeStatsDepartmentIds(departmentId);
         Page<Object[]> statsPage = viewExternalInternshipCollegeStatsDao.findAggregatedByDepartmentIds(
                 deptIds, PageRequest.of(pageNum - 1, pageSize));
         JSONArray rows = new JSONArray();
@@ -552,15 +726,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object listInternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size) {
-        if (departmentId == null) {
-            throw BaseResponse.parameterInvalid.error("departmentId 不能为空");
-        }
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
 
-        // 按学院（根部门）子树聚合：用户挂在班级等子部门时，与单一 departmentId 精确匹配会得到 0
-        Set<Integer> deptStudentIds = loadUserIdsByDepartmentSubtreeAndJobCode(departmentId, Constant.USER_JOB_CODE.STUDENT);
-        Set<Integer> deptSchoolTeacherIds = loadUserIdsByDepartmentSubtreeAndJobCode(departmentId, Constant.USER_JOB_CODE.SCHOOL_TEACHER);
+        CollegeStatsUserScope scope = resolveInternalCollegeStatsUserScope(departmentId);
+        Set<Integer> deptStudentIds = scope.studentUserIds;
+        Set<Integer> deptSchoolTeacherIds = scope.schoolTeacherUserIds;
+        Integer reportDepartmentId = scope.reportDepartmentId;
 
         JSONObject internshipSk = new JSONObject();
         internshipSk.put("intTypeName", INTERNAL_INT_TYPE_NAME);
@@ -571,7 +743,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         List<Object> internshipList = internshipPage.getContent();
         if (internshipList == null || internshipList.isEmpty()) {
             JSONObject empty = new JSONObject();
-            empty.put("departmentId", departmentId);
+            empty.put("departmentId", reportDepartmentId);
             empty.put("rows", new JSONArray());
             empty.put("totalElements", internshipPage.getTotalElements());
             empty.put("totalPages", internshipPage.getTotalPages());
@@ -633,7 +805,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         JSONObject result = new JSONObject();
-        result.put("departmentId", departmentId);
+        result.put("departmentId", reportDepartmentId);
         result.put("rows", rows);
         result.put("totalElements", internshipPage.getTotalElements());
         result.put("totalPages", internshipPage.getTotalPages());
@@ -644,13 +816,16 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     @SuppressWarnings("unchecked")
-    public Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status) {
+    public Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                               Integer departmentId) {
         assertInternalInternship(internshipId);
         String st = normalizeTitleSelectionBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
 
-        Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
+        CollegeStatsUserScope statsScope = resolveInternalCollegeStatsUserScope(departmentId);
+        Set<Integer> projectStudentUserIds = mergeProjectUserIdsInAllowed(
+                internshipId, Constant.USER_JOB_CODE.STUDENT, statsScope.studentUserIds);
         List<Object> mergeAll = fetchAllTitleStudentMergeByInternship(internshipId);
 
         Map<Integer, JSONObject> stuToBestMerge = new HashMap<>();
@@ -712,6 +887,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             result.put("totalElements", total);
             result.put("totalPages", totalPages);
             result.put("rows", rows);
+            result.put("departmentId", statsScope.reportDepartmentId);
             return result;
         }
 
@@ -739,6 +915,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         result.put("totalElements", paged.getInteger("totalElements"));
         result.put("totalPages", paged.getInteger("totalPages"));
         result.put("rows", paged.get("rows"));
+        result.put("departmentId", statsScope.reportDepartmentId);
         return result;
     }
 
@@ -748,13 +925,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
 
-        Set<Integer> enrolledTeachers;
-        if (departmentId != null) {
-            Set<Integer> deptT = loadUserIdsByDepartmentAndJobCode(departmentId, Constant.USER_JOB_CODE.SCHOOL_TEACHER);
-            enrolledTeachers = mergeProjectUserIdsInAllowed(internshipId, Constant.USER_JOB_CODE.SCHOOL_TEACHER, deptT);
-        } else {
-            enrolledTeachers = loadInternshipProjectUserIds(internshipId, Constant.USER_JOB_CODE.SCHOOL_TEACHER);
-        }
+        CollegeStatsUserScope statsScope = resolveInternalCollegeStatsUserScope(departmentId);
+        Set<Integer> enrolledTeachers = mergeProjectUserIdsInAllowed(
+                internshipId, Constant.USER_JOB_CODE.SCHOOL_TEACHER, statsScope.schoolTeacherUserIds);
 
         List<Object> titleMerges = fetchAllTitleTeacherMergeByInternship(internshipId);
         Set<Integer> submitted = collectTeacherIdsWithNonSaveTopicAudit(titleMerges);
@@ -781,7 +954,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         JSONObject result = new JSONObject();
         result.put("internshipId", internshipId);
         result.put("internshipName", invJ.getString("name"));
-        result.put("departmentId", departmentId);
+        result.put("departmentId", statsScope.reportDepartmentId);
         result.put("notSubmittedCount", total);
         result.put("page", pageNum);
         result.put("size", pageSize);
@@ -1429,6 +1602,40 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             return loadUserIdsByDepartmentAndJobCode(rootDepartmentId, jobCode);
         }
         String idStr = deptIds.stream().map(String::valueOf).collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
+        JSONObject userSearchKeys = new JSONObject();
+        userSearchKeys.put("departmentId", idStr);
+        userSearchKeys.put("jobCode", jobCode);
+        Map<String, String> repMap = new HashMap<>();
+        repMap.put("departmentId", Constant.IN);
+        @SuppressWarnings("unchecked")
+        Page<Object> userPage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewBaseUser", userSearchKeys, repMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> userList = userPage.getContent();
+        if (userList == null || userList.isEmpty()) {
+            return new HashSet<>();
+        }
+        return userList.stream()
+                .map(FastJsonUtil::toJson)
+                .map(json -> json.getInteger("id"))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    private Set<Integer> loadUserIdsByDepartmentIdsAndJobCode(Collection<Integer> departmentIds, String jobCode) {
+        if (departmentIds == null || departmentIds.isEmpty() || jobCode == null || jobCode.trim().isEmpty()) {
+            return new HashSet<>();
+        }
+        List<Integer> idList = departmentIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+        if (idList.isEmpty()) {
+            return new HashSet<>();
+        }
+        if (idList.size() == 1) {
+            return loadUserIdsByDepartmentAndJobCode(idList.get(0), jobCode);
+        }
+        String idStr = idList.stream().map(String::valueOf).collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
         JSONObject userSearchKeys = new JSONObject();
         userSearchKeys.put("departmentId", idStr);
         userSearchKeys.put("jobCode", jobCode);

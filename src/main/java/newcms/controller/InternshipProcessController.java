@@ -364,7 +364,9 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "本学院校外实习项目报名汇总",
-            description = "按学院部门树（departmentId 含其全部子部门）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、已选岗学生数等。"
+            description = "权限：超级管理员/学校管理员/教务处管理员可看全校（不传 departmentId 时按当前用户 schoolId 下全部部门聚合；超级管理员无 schoolId 时聚合全部部门）；"
+                    + "院系管理员仅看本部门子树，忽略请求中的 departmentId。"
+                    + "按学院部门树（departmentId 含其全部子部门）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、已选岗学生数等。"
     )
     @PostMapping(value = "/listExternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listExternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
@@ -437,7 +439,9 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "本学院校内实习项目报名与选题汇总",
-            description = "departmentId 必填；分页 ViewMainInternship（校内实习）。每行含：报名学生/老师数、题目审核通过数、"
+            description = "权限：超级管理员/学校管理员/教务处管理员可看全校（不传 departmentId 时按 schoolId 下全部部门口径统计；超级管理员无 schoolId 时按全部部门）；"
+                    + "院系管理员仅看本部门子树，忽略请求中的 departmentId。"
+                    + "departmentId 对校级管理员可选，用于下钻某一学院子树；分页 ViewMainInternship（校内实习）。每行含：报名学生/老师数、题目审核通过数、"
                     + "未提交题目教师数、学生选题通过/审核中/尚未选题人数（本院已报名学生口径）。"
     )
     @PostMapping(value = "/listInternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -461,7 +465,8 @@ public class InternshipProcessController {
     @Operation(
             summary = "校内实习项目-学生选题情况",
             description = "internshipId 必填；status：all / notSubmitted / pendingAudit / titleApproved。"
-                    + "counts 为三类全量人数；分页 pageInfo。"
+                    + "departmentId 与学院汇总下钻一致（与 listInternalInternshipCollegeStats 同一节点）；不传则按登录角色全校/本院口径。"
+                    + "counts 为当前部门范围内三类人数；分页 pageInfo。"
     )
     @PostMapping(value = "/getInternalInternshipTitleSelectionBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object getInternalInternshipTitleSelectionBreakdown(@RequestBody JSONObject requestJson) {
@@ -472,6 +477,7 @@ public class InternshipProcessController {
         JSONObject node = requestJson.getJSONObject("node");
         Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
         String status = node != null ? node.getString("status") : requestJson.getString("status");
+        Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
         JSONObject pageInfo = node != null ? node.getJSONObject("pageInfo") : requestJson.getJSONObject("pageInfo");
         int page = pageInfo != null && pageInfo.getInteger("page") != null
                 ? pageInfo.getInteger("page")
@@ -479,12 +485,13 @@ public class InternshipProcessController {
         int size = pageInfo != null && pageInfo.getInteger("size") != null
                 ? pageInfo.getInteger("size")
                 : Constant.DEFAULT_SIZE;
-        return BaseResponse.ok(iInternshipService.getInternalInternshipTitleSelectionBreakdown(internshipId, page, size, status));
+        return BaseResponse.ok(iInternshipService.getInternalInternshipTitleSelectionBreakdown(internshipId, page, size, status,
+                departmentId));
     }
 
     @Operation(
             summary = "校内实习项目-未提交申报题目的教师",
-            description = "internshipId 必填；departmentId 可选（不传则本项目全部报名教师中未提交者）。"
+            description = "internshipId 必填；departmentId 与学院汇总/选题详情下钻一致（含子部门内教师；权限同 listInternalInternshipCollegeStats）。"
                     + "未提交：无任何 isAudit≠保存(-1) 的申报题目审核记录。分页 pageInfo。"
     )
     @PostMapping(value = "/listInternalInternshipTeachersNotSubmittedTopic", consumes = MediaType.APPLICATION_JSON_VALUE)

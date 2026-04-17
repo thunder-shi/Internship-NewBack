@@ -131,8 +131,10 @@ public interface IInternshipService {
 
     /**
      * 本学院校外实习项目报名汇总（按部门树：含 departmentId 及其全部子部门）。
+     * <p>权限：{@code SUPER_ADMIN}、{@code SCHOOL_ADMIN}、{@code ACADEMIC_AFFAIRS_ADMIN} 可看全校（{@code departmentId} 为 {@code null} 时按用户学校全部部门；超级管理员无 school 时按全部部门）；
+     * {@code DEPARTMENT_ADMIN} 仅本院系，忽略传入的 {@code departmentId}。</p>
      *
-     * @param departmentId 学院/部门节点 ID（与 BaseDepartment 树一致）
+     * @param departmentId 学院/部门节点 ID（校级管理员可选，用于下钻子树）
      * @param page         页码，从 1 开始
      * @param size         每页条数
      */
@@ -162,18 +164,23 @@ public interface IInternshipService {
      */
     /**
      * 本学院校内实习项目汇总：报名师生数、题目审核通过数、未提交题目教师数、学生选题三类人数等。
+     * <p>权限规则同 {@link #listExternalInternshipCollegeStats(Integer, Integer, Integer)}。</p>
      */
     Object listInternalInternshipCollegeStats(Integer departmentId, Integer page, Integer size);
 
     /**
      * 校内实习项目学生选题三类名单（与校外选岗 breakdown 用法类似）。
+     * <p>{@code departmentId} 与 {@link #listInternalInternshipCollegeStats(Integer, Integer, Integer)} 一致：下钻某学院时传入同一节点；
+     * 不传时按当前登录人权限使用全校或本院口径。</p>
      *
      * @param status {@code all}、{@code notSubmitted}、{@code pendingAudit}、{@code titleApproved}
      */
-    Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status);
+    Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status,
+                                                        Integer departmentId);
 
     /**
-     * 校内实习项目：尚未提交申报题目的教师列表（可选按学院过滤）。{@code departmentId} 为 {@code null} 时为本项目全部报名教师。
+     * 校内实习项目：尚未提交申报题目的教师列表。
+     * <p>{@code departmentId} 规则同 {@link #listInternalInternshipCollegeStats(Integer, Integer, Integer)}（子树内报名教师）。</p>
      */
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
