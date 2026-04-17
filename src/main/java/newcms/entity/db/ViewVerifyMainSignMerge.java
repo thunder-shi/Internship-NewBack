@@ -7,13 +7,14 @@ import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
 /**
- * 实习打卡审核综合视图（每条打卡取最新审核记录）
- * 对应 view_verify_main_sign_merge（与 view_verify_main_diary_merge 列结构对齐）
+ * 实习打卡审核综合视图：每条打卡关联 main_verify_process 中该 relation下 id 最大的一条（最新审核）。
+ * <p>列与数据库视图 {@code view_verify_main_sign_merge} 定义一致。</p>
  */
 @Getter
 @Setter
 @Entity(name = "view_verify_main_sign_merge")
 public class ViewVerifyMainSignMerge extends BaseInfo {
+
     private Integer relationId;
     private Integer createUserId;
     private String verifyUserId;
@@ -30,38 +31,22 @@ public class ViewVerifyMainSignMerge extends BaseInfo {
     private Integer verifyThirdRoleId;
     private Integer verifyFourthRoleId;
     private Integer verifyFifthRoleId;
-    private Integer currentVerifyTypeId;
-    private Boolean submit;
-    private String content;
-    private String remarks;
 
-    private String verifyFirstRoleName;
-    private String verifySecondRoleName;
-    private String verifyThirdRoleName;
-    private String verifyFourthRoleName;
-    private String verifyFifthRoleName;
-
-    private String currentRoleName;
-    private Boolean isAllVerified;
-
-    private String internshipPostCode;
+    /** 来自 view_main_sign.post_name */
+    @Column(name = "internship_post_name")
     private String internshipPostName;
-    private String internshipPostRemarks;
-    private String postCompanyName;
-
-    private String internshipName;
 
     private Integer studentId;
     private String studentName;
-    private Integer schoolId;
-    private String studentPhone;
-    private String studentDepartmentName;
-    private String studentAccount;
-    private String studentMajorName;
 
     private String address;
     private Integer imgId;
-    private Integer stuInternshipId;
+
     @Column(name = "type")
     private Byte signType;
+
+    private Integer stuInternshipId;
+
+    private String remarks;
+    private Integer currentVerifyTypeId;
 }

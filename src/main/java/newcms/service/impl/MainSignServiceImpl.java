@@ -70,6 +70,20 @@ public class MainSignServiceImpl extends Base implements IMainSignService {
             reason = "系统自动通过";
         }
 
+        JSONObject signState = new JSONObject();
+        signState.put("id", signId);
+        Integer verifyTypeId = sign.getVerifyTypeId();
+        if (verifyTypeId == null) {
+            verifyTypeId = Constant.VERIFY_LEVEL.ONE_VERIFY;
+            signState.put("verifyTypeId", verifyTypeId);
+        }
+        if (isAudit == Constant.AUDIT_STATUS.PASS) {
+            signState.put("currentVerifyTypeId", verifyTypeId + 1);
+        } else {
+            signState.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);
+        }
+        iCommonService.saveOneRecord("MainSign", signState);
+
         JSONObject verifyJson = new JSONObject();
         verifyJson.put("relationId", signId);
         verifyJson.put("createUserId", currentUserId);

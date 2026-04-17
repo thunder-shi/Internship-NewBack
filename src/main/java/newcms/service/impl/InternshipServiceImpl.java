@@ -2153,6 +2153,63 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
+     * 实习日志、实习打卡等多级审核：{@code MainVerifyProcess.relationId} 为业务主键。
+     *
+     * @param clearSubmitOnBack 为 true 时（MainDiary）退回同时 {@code submit=false}；MainSign 传 false，不写入 submit。
+     */
+    private Object auditProcessMultiLevelRelationBiz(JSONObject node, Object verifyObj, String bizTableName,
+            Integer isAudit, boolean clearSubmitOnBack) {
+        Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
+        JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
+        Integer bizId = verifyJson.getInteger("relationId");
+        Integer createUserId = verifyJson.getInteger("createUserId");
+        String reason = node.getString("reason");
+
+        if (isAudit != null && isAudit >= 1 && bizId != null
+                && reason != null && !reason.isEmpty()) {
+            JSONObject updateBiz = new JSONObject();
+            updateBiz.put("id", bizId);
+            updateBiz.put("remarks", reason);
+            iCommonService.saveOneRecord(bizTableName, updateBiz);
+        }
+
+        if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && bizId != null) {
+            JSONObject bizJson = FastJsonUtil.toJson(iCommonService.getOneRecordById(bizTableName, bizId));
+            Integer currentLevel = bizJson.getInteger("currentVerifyTypeId");
+            Integer verifyTypeId = bizJson.getInteger("verifyTypeId");
+            if (currentLevel != null && verifyTypeId != null) {
+                Integer nextLevel = currentLevel + 1;
+                JSONObject levelUpdate = new JSONObject();
+                levelUpdate.put("id", bizId);
+                levelUpdate.put("currentVerifyTypeId", nextLevel);
+                iCommonService.saveOneRecord(bizTableName, levelUpdate);
+                if (nextLevel <= verifyTypeId) {
+                    Integer nextRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(bizJson, nextLevel);
+                    if (nextRoleId != null && nextRoleId > 0) {
+                        String nextVerifyUserId = iVerifyProcessService.GetVerifyUserId(nextRoleId, createUserId);
+                        JSONObject newVerify = new JSONObject();
+                        newVerify.put("relationId", bizId);
+                        newVerify.put("createUserId", createUserId);
+                        newVerify.put("verifyUserId", nextVerifyUserId);
+                        newVerify.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+                        newVerify.put("tableName", bizTableName);
+                        iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
+                    }
+                }
+            }
+        } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && bizId != null) {
+            JSONObject resetBiz = new JSONObject();
+            resetBiz.put("id", bizId);
+            if (clearSubmitOnBack) {
+                resetBiz.put("submit", false);
+            }
+            resetBiz.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+            iCommonService.saveOneRecord(bizTableName, resetBiz);
+        }
+        return saved;
+    }
+
+    /**
      * 单条审核推进（原 auditProcess 逻辑）。
      */
     private Object auditProcessOne(JSONObject node) {
@@ -2179,59 +2236,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             limitedTitleAutoApproved = true;
         }
 
-        // 日志审核：使用日志自身的审核配置，支持多级流程
+        // 日志 / 打卡：业务表自带审核配置的多级流程（relationId = 业务主键）；打卡无 submit，退回只重置审核级别
         if ("MainDiary".equals(tableName)) {
-            Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
-            JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
-            Integer diaryId = verifyJson.getInteger("relationId");
-            Integer createUserId = verifyJson.getInteger("createUserId");
-            String reason = node.getString("reason");
-
-            // 将审核意见写回 MainDiary.remarks（仅有内容时写入）
-            if (isAudit != null && isAudit >= 1 && diaryId != null
-                    && reason != null && !reason.isEmpty()) {
-                JSONObject updateDiary = new JSONObject();
-                updateDiary.put("id", diaryId);
-                updateDiary.put("remarks", reason);
-                iCommonService.saveOneRecord("MainDiary", updateDiary);
-            }
-
-            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && diaryId != null) {
-                // 审核通过：读取日志自身的审核配置推进多级流程
-                JSONObject diaryJson = FastJsonUtil.toJson(iCommonService.getOneRecordById("MainDiary", diaryId));
-                Integer currentLevel = diaryJson.getInteger("currentVerifyTypeId");
-                Integer verifyTypeId  = diaryJson.getInteger("verifyTypeId");
-                if (currentLevel != null && verifyTypeId != null) {
-                    Integer nextLevel = currentLevel + 1;
-                    // 更新日志当前审核级别
-                    JSONObject levelUpdate = new JSONObject();
-                    levelUpdate.put("id", diaryId);
-                    levelUpdate.put("currentVerifyTypeId", nextLevel);
-                    iCommonService.saveOneRecord("MainDiary", levelUpdate);
-                    // 若还有下一级，创建下一级审核记录
-                    if (nextLevel <= verifyTypeId) {
-                        Integer nextRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(diaryJson, nextLevel);
-                        if (nextRoleId != null && nextRoleId > 0) {
-                            String nextVerifyUserId = iVerifyProcessService.GetVerifyUserId(nextRoleId, createUserId);
-                            JSONObject newVerify = new JSONObject();
-                            newVerify.put("relationId", diaryId);
-                            newVerify.put("createUserId", createUserId);
-                            newVerify.put("verifyUserId", nextVerifyUserId);
-                            newVerify.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
-                            newVerify.put("tableName", "MainDiary");
-                            iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
-                        }
-                    }
-                }
-            } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && diaryId != null) {
-                // 退回：将日志重置为草稿，学生可重新修改提交（重新走第一级）
-                JSONObject resetDiary = new JSONObject();
-                resetDiary.put("id", diaryId);
-                resetDiary.put("submit", false);
-                resetDiary.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
-                iCommonService.saveOneRecord("MainDiary", resetDiary);
-            }
-            return saved;
+            return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
+        }
+        if ("MainSign".equals(tableName)) {
+            return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainSign", isAudit, false);
         }
 
         if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved) {

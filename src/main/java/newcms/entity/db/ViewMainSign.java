@@ -8,10 +8,8 @@ import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
 /**
- * 实习打卡视图：main_sign + rel_stu_internship_post + view_base_user + main_internship_post。
- * <p>对应数据库视图 {@code view_main_sign}，列名需与视图定义一致。</p>
- * <p>未标注 Immutable，以便与 {@link newcms.repository.base.BaseDao} 的逻辑删除等更新共存；
- * 实际是否可写取决于库中该视图是否允许 UPDATE（通常查询为主，写操作宜走 {@link MainSign}）。</p>
+ * 实习打卡视图：{@code main_sign} 关联 {@code rel_stu_internship_post}、{@code view_base_user}、{@code main_internship_post}。
+ * <p>列与数据库视图 {@code view_main_sign} 定义一致。</p>
  */
 @Getter
 @Setter
@@ -28,19 +26,21 @@ public class ViewMainSign extends BaseInfo {
 
     private String address;
     private Integer imgId;
-
-    /** 外键，关联 rel_stu_internship_post.id */
     private Integer stuInternshipId;
 
-    /** 视图列名为 {@code type} */
     @Column(name = "type")
     private Byte signType;
 
     private Integer studentId;
 
     /** 来自 main_internship_post.name */
+    @Column(name = "post_name")
     private String postName;
 
     /** 来自 view_base_user.NAME */
+    @Column(name = "student_name")
     private String studentName;
+
+    private String remarks;
+    private Integer currentVerifyTypeId;
 }
