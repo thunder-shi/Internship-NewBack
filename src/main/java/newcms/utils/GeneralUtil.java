@@ -93,7 +93,17 @@ public class GeneralUtil {
     }
 
     /**
-     * 用“,”分隔的String转化为Integer类型的数组
+     * 将 ids 集合以逗号分隔写入 searchKeys，并在 regMap 中标记 IN 运算符。
+     * 调用方需保证 ids 非空。
+     */
+    public static void addInCondition(JSONObject searchKeys, Map<String, String> regMap,
+                                      String field, Iterable<Integer> ids) {
+        searchKeys.put(field, iteratorToString(ids));
+        regMap.put(field, Constant.IN);
+    }
+
+    /**
+     * 用”,”分隔的String转化为Integer类型的数组
      * @param string
      * @return
      */

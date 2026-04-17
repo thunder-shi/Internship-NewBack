@@ -143,9 +143,8 @@ public Object getLoginUser(Date date, String userAgent) {
         if (!roleIdSet.isEmpty()) {
             Set<Integer> menuIdSet = new HashSet<>();
             JSONObject jsRoleMenuSearch = new JSONObject();
-            jsRoleMenuSearch.put("roleId", StringUtils.collectionToDelimitedString(roleIdSet, ","));
             Map<String, String> roleMenuMap = new HashMap<>(1);
-            roleMenuMap.put("roleId", Constant.IN);
+            GeneralUtil.addInCondition(jsRoleMenuSearch, roleMenuMap, "roleId", roleIdSet);
             @SuppressWarnings("unchecked")
             Page<RelRoleMenu> roleMenuPage = (Page<RelRoleMenu>)iCommonService.getSomeRecords("RelRoleMenu", jsRoleMenuSearch, roleMenuMap);
             List<RelRoleMenu> roleMenuRelList = roleMenuPage.getContent();
@@ -402,29 +401,7 @@ public Object getLoginUser(Date date, String userAgent) {
         for (Object obj : resJson.getJSONArray("content")) {
             userIds.add(FastJsonUtil.toJson(obj).getInteger("id"));
         }
-        Map<Integer, Set<Integer>> userRoleMap = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            JSONObject batchSearchKeys = new JSONObject();
-            batchSearchKeys.put("userId", StringUtils.collectionToDelimitedString(userIds, ","));
-            Map<String, String> batchRegMap = new HashMap<>();
-            batchRegMap.put("userId", Constant.IN);
-            JSONObject batchPageInfo = new JSONObject();
-            batchPageInfo.put("page", -1);
-            batchPageInfo.put("size", 100);
-            @SuppressWarnings("unchecked")
-            ArrayList<Object> allRoles = (ArrayList<Object>) iDataListService.getSomeRecords(
-                    "RelUserRole", batchSearchKeys, batchRegMap, null,
-                    GeneralUtil.getPageInfo(batchPageInfo).get("page"),
-                    GeneralUtil.getPageInfo(batchPageInfo).get("size"));
-            for (Object roleObj : allRoles) {
-                JSONObject roleJson = FastJsonUtil.toJson(roleObj);
-                Integer uid = roleJson.getInteger("userId");
-                Integer rid = roleJson.getInteger("roleId");
-                if (uid != null && rid != null) {
-                    userRoleMap.computeIfAbsent(uid, k -> new HashSet<>()).add(rid);
-                }
-            }
-        }
+        Map<Integer, Set<Integer>> userRoleMap = loadRoleIdsForUsers(userIds);
         for (Object obj : resJson.getJSONArray("content")) {
             int userId = FastJsonUtil.toJson(obj).getInteger("id");
             ((JSONObject) obj).put("roleIds", userRoleMap.getOrDefault(userId, new HashSet<>()));
@@ -509,26 +486,10 @@ public Object getLoginUser(Date date, String userAgent) {
         for (Object obj : resJson.getJSONArray("content")) {
             userIds.add(FastJsonUtil.toJson(obj).getInteger("id"));
         }
-        Map<Integer, Set<Integer>> userRoleIdsMap = new HashMap<>();
-        Set<Integer> allRoleIds = new HashSet<>();
-        if (!userIds.isEmpty()) {
-            JSONObject roleSearchKey = new JSONObject();
-            roleSearchKey.put("userId", StringUtils.collectionToDelimitedString(userIds, ","));
-            Map<String, String> roleRepMap = new HashMap<>();
-            roleRepMap.put("userId", Constant.IN);
-            @SuppressWarnings("unchecked")
-            Page<Object> batchRolePage = (Page<Object>) iCommonService.getSomeRecords(
-                    "RelUserRole", roleSearchKey, roleRepMap, Sort.unsorted(), 1, userIds.size() * 20 + 1);
-            for (Object roleObj : batchRolePage.getContent()) {
-                JSONObject roleJson = FastJsonUtil.toJson(roleObj);
-                Integer uid = roleJson.getInteger("userId");
-                Integer rid = roleJson.getInteger("roleId");
-                if (uid != null && rid != null) {
-                    userRoleIdsMap.computeIfAbsent(uid, k -> new HashSet<>()).add(rid);
-                    allRoleIds.add(rid);
-                }
-            }
-        }
+        Map<Integer, Set<Integer>> userRoleIdsMap = loadRoleIdsForUsers(userIds);
+        Set<Integer> allRoleIds = userRoleIdsMap.values().stream()
+                .flatMap(Set::stream)
+                .collect(Collectors.toSet());
         // 批量查询角色名称
         Map<Integer, String> roleNameMap = new HashMap<>();
         if (!allRoleIds.isEmpty()) {
@@ -670,30 +631,20 @@ public Object getLoginUser(Date date, String userAgent) {
     }
     @Override
     public Object getUserRoles(String userId) {
+        List<RelUserRole> relations = getRelUserRolesByUserId(userId);
+        Set<Integer> roleIdSet = relations.stream().map(RelUserRole::getRoleId).collect(Collectors.toSet());
+        if (roleIdSet.isEmpty()) return new ArrayList<>();
         JSONObject searchKey = new JSONObject();
-        searchKey.put("userId", userId);
+        Map<String, String> repMap = new HashMap<>();
+        GeneralUtil.addInCondition(searchKey, repMap, "id", roleIdSet);
         @SuppressWarnings("unchecked")
-        Page<RelUserRole> relationsPage = (Page<RelUserRole>) iCommonService.getSomeRecords("RelUserRole", searchKey);
-        List<RelUserRole> relations = relationsPage.getContent();
-        searchKey.clear();
-        Set<Integer> RoleIdSet = relations.stream().map(RelUserRole::getRoleId).collect(Collectors.toSet());
-        searchKey.put("id", StringUtils.collectionToDelimitedString(RoleIdSet, ","));
-        Map<String, String> repMap=new HashMap<>();
-        repMap.put("id", Constant.IN);
-        @SuppressWarnings("unchecked")
-        Page<SysRole> rolesPage = (Page<SysRole>)iCommonService.getSomeRecords("SysRole", searchKey, repMap);
-        List<SysRole> roles = rolesPage.getContent();
-        return roles;
+        Page<SysRole> rolesPage = (Page<SysRole>) iCommonService.getSomeRecords("SysRole", searchKey, repMap);
+        return rolesPage.getContent();
     }
     @Override
     public Object saveUserRoles(String userId, Integer[] roleIds) {
         // 先查看下有否修改
-        JSONObject searchKey = new JSONObject();
-        searchKey.put("userId", userId);
-        @SuppressWarnings("unchecked")
-        Page<RelUserRole> relationsPage = (Page<RelUserRole>) iCommonService.getSomeRecords("RelUserRole", searchKey);
-        List<RelUserRole> relations = relationsPage.getContent();
-        searchKey.clear();
+        List<RelUserRole> relations = getRelUserRolesByUserId(userId);
         @SuppressWarnings("unused")
         List<Integer> oldIds = relations.stream().map(RelUserRole::getId).collect(Collectors.toList());
         Set<Integer> oldRoleIdSet = relations.stream().map(RelUserRole::getRoleId).collect(Collectors.toSet());
@@ -731,6 +682,34 @@ public Object getLoginUser(Date date, String userAgent) {
         }
     }
 
+
+    private Map<Integer, Set<Integer>> loadRoleIdsForUsers(List<Integer> userIds) {
+        Map<Integer, Set<Integer>> userRoleMap = new HashMap<>();
+        if (userIds.isEmpty()) return userRoleMap;
+        JSONObject searchKeys = new JSONObject();
+        Map<String, String> regMap = new HashMap<>();
+        GeneralUtil.addInCondition(searchKeys, regMap, "userId", userIds);
+        @SuppressWarnings("unchecked")
+        Page<Object> rolePage = (Page<Object>) iCommonService.getSomeRecords(
+                "RelUserRole", searchKeys, regMap, Sort.unsorted(), 1, userIds.size() * 20 + 100);
+        for (Object roleObj : rolePage.getContent()) {
+            JSONObject roleJson = FastJsonUtil.toJson(roleObj);
+            Integer uid = roleJson.getInteger("userId");
+            Integer rid = roleJson.getInteger("roleId");
+            if (uid != null && rid != null) {
+                userRoleMap.computeIfAbsent(uid, k -> new HashSet<>()).add(rid);
+            }
+        }
+        return userRoleMap;
+    }
+
+    private List<RelUserRole> getRelUserRolesByUserId(String userId) {
+        JSONObject searchKey = new JSONObject();
+        searchKey.put("userId", userId);
+        @SuppressWarnings("unchecked")
+        Page<RelUserRole> relationsPage = (Page<RelUserRole>) iCommonService.getSomeRecords("RelUserRole", searchKey);
+        return relationsPage.getContent();
+    }
 
     @Override
     public Object getDepartment(String parentId) {
