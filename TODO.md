@@ -200,7 +200,7 @@ SELECT ... WHERE NOT EXISTS (SELECT 1 FROM main_verify_process WHERE relation_id
 | 步骤 | 任务 | DB | Java | 说明 |
 |------|------|----|----|------|
 | 1 | **CONC-07 + CONC-08** 唯一约束 | ✅ | ⬜ 友好报错 | DDL 已完成，Java 侧捕获异常即可 |
-| 2 | **CONC-01 + CONC-02** 岗位人数原子化 | — | ⬜ | 纯 DAO 层改 SQL，无 DDL |
+| 2 | **CONC-01 + CONC-02** 岗位人数原子化 | — | ✅ | `MainInternshipPostDao` 新增两个 `@Modifying @Query` 原子方法；`InternshipPostServiceImpl` 和 `InternshipServiceImpl` 均已切换为原子调用 |
 | 3 | **BIZ-01 + BIZ-02 + BIZ-03** 录取级联拒绝 | — | ⬜ | 核心新功能，需新增方法 |
 | 4 | **CONC-04 + CONC-05** 录取并发锁 | — | ⬜ | 依赖步骤 3 完成后加锁保护 |
 | 5 | **CONC-03** 乐观锁 @Version | ✅ | ⬜ 实体加注解 | DB 列已加，Java 加 @Version 注解 |

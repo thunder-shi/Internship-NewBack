@@ -5,6 +5,8 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.entity.db.MainInternshipPost;
+import newcms.repository.db.MainInternshipPostDao;
 import newcms.service.ICommonService;
 import newcms.service.IInternshipPostService;
 import newcms.service.IVerifyProcessService;
@@ -26,9 +28,11 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     @Resource
     private IVerifyProcessService iVerifyProcessService;
 
+    @Resource
+    private MainInternshipPostDao mainInternshipPostDao;
+
     private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternshipPost";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
-    private static final String TABLE_MAIN_INTERNSHIP_POST = "MainInternshipPost";
     private static final String VIEW_VERIFY_PROCESS_REL_STU_INTERNSHIP = "ViewVerifyProcessRelStuInternshipPost";
 
     @Override
@@ -96,16 +100,19 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         // 2. 删除 RelStuInternshipPost 记录
         iCommonService.deleteRecordByDelflag(TABLE_REL_STU_INTERNSHIP, recordAId);
 
-        // 3. 更新 MainInternshipPost 的 nowPersonNum - 1
-        decreasePostPersonNum(oldPostId);
+        // 3. 原子性扣减 nowPersonNum（nowPersonNum > 0 时才更新，防止负值）
+        mainInternshipPostDao.decrementNowPersonNum(oldPostId);
     }
 
     /**
      * 更换岗位
      */
     private void changePost(JSONObject recordA, Integer oldPostId, Integer newPostId) {
-        // 检查新岗位是否已满
-        checkPostCapacity(newPostId);
+        // 原子性尝试为新岗位 +1（同时完成容量检查，影响行数=0 表示岗位已满）
+        int affected = mainInternshipPostDao.incrementNowPersonNumIfNotFull(newPostId);
+        if (affected == 0) {
+            throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
+        }
 
         Integer recordAId = recordA.getInteger("id");
 
@@ -115,9 +122,8 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         // 2. 修改 MainVerifyProcess 的 isAudit 为 0（已提交）
         updateMainVerifyProcessIsAudit(recordAId, Constant.AUDIT_STATUS.SUBMIT);
 
-        // 3. 更新 MainInternshipPost 的 nowPersonNum
-        decreasePostPersonNum(oldPostId);
-        increasePostPersonNum(newPostId);
+        // 3. 原子性扣减旧岗位人数
+        mainInternshipPostDao.decrementNowPersonNum(oldPostId);
     }
 
     /**
@@ -182,69 +188,15 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     }
 
     /**
-     * 检查岗位是否已达最大可选人数
-     */
-    private void checkPostCapacity(Integer postId) {
-        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, postId);
-        if (postObj == null) {
-            throw BaseResponse.moreInfoError.error("未找到岗位记录，ID: " + postId);
-        }
-        JSONObject postJson = FastJsonUtil.toJson(postObj);
-        Integer nowPersonNum = postJson.getInteger("nowPersonNum");
-        Integer allPersonNum = postJson.getInteger("allPersonNum");
-        if (nowPersonNum == null) nowPersonNum = 0;
-        if (allPersonNum != null && allPersonNum > 0 && nowPersonNum >= allPersonNum) {
-            throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
-        }
-    }
-
-    /**
-     * 减少岗位当前人数
-     */
-    private void decreasePostPersonNum(Integer postId) {
-        updatePostPersonNum(postId, -1);
-    }
-
-    /**
-     * 增加岗位当前人数
-     */
-    private void increasePostPersonNum(Integer postId) {
-        updatePostPersonNum(postId, 1);
-    }
-
-    /**
-     * 更新岗位当前人数（通用方法）
-     */
-    private void updatePostPersonNum(Integer postId, int delta) {
-        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, postId);
-        if (postObj == null) {
-            throw BaseResponse.moreInfoError.error("未找到岗位记录，ID: " + postId);
-        }
-
-        JSONObject postJson = FastJsonUtil.toJson(postObj);
-        Integer currentNum = postJson.getInteger("nowPersonNum");
-        if (currentNum == null) {
-            currentNum = 0;
-        }
-
-        int newNum = currentNum + delta;
-        if (newNum < 0) {
-            throw BaseResponse.moreInfoError.error("岗位当前人数不能为负数");
-        }
-
-        JSONObject updateJson = new JSONObject();
-        updateJson.put("id", postId);
-        updateJson.put("nowPersonNum", newNum);
-        iCommonService.saveOneRecord(TABLE_MAIN_INTERNSHIP_POST, updateJson);
-    }
-
-    /**
      * 第一次选择岗位
      * @return 创建的 RelStuInternshipPost 记录
      */
     private JSONObject selectPostFirstTime(Integer studentId, Integer newPostId) {
-        // 1. 检查岗位是否已满
-        checkPostCapacity(newPostId);
+        // 1. 原子性尝试占位（容量检查 + +1 合并为一条 SQL）
+        int affected = mainInternshipPostDao.incrementNowPersonNumIfNotFull(newPostId);
+        if (affected == 0) {
+            throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
+        }
 
         // 2. 新增 RelStuInternshipPost 记录
         JSONObject newRelJson = new JSONObject();
@@ -254,13 +206,12 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         JSONObject recordA = FastJsonUtil.toJson(savedRelObj);
         Integer recordAId = recordA.getInteger("id");
 
-        // 3. 更新 MainInternshipPost 的 nowPersonNum + 1
-        increasePostPersonNum(newPostId);
-
-        // 4. 获取 internshipId
-        Object postObj = iCommonService.getOneRecordById(TABLE_MAIN_INTERNSHIP_POST, newPostId);
-        JSONObject postJson = FastJsonUtil.toJson(postObj);
-        Integer internshipId = postJson.getInteger("internshipId");
+        // 3. 获取 internshipId
+        MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(newPostId);
+        if (post == null) {
+            throw BaseResponse.moreInfoError.error("未找到岗位记录，ID: " + newPostId);
+        }
+        Integer internshipId = post.getInternshipId();
         if (internshipId == null) {
             throw BaseResponse.moreInfoError.error("岗位记录缺少 internshipId");
         }

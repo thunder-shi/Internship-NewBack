@@ -7,6 +7,7 @@ import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.ViewBaseUser;
+import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
@@ -57,6 +58,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IDataTreeService iDataTreeService;
+
+    @Resource
+    private MainInternshipPostDao mainInternshipPostDao;
 
     // ==================== 实习项目管理====================
 
@@ -2475,9 +2479,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             boolean isStuPost = "RelStuInternshipPost".equals(tableName);
 
             if (isStuPost) {
-                // 学生报名岗位：退回/未通过都直接减人数，不新建重新提交记录
+                // 学生报名岗位：退回/未通过 → 减人数 + 软删除选岗记录及其全部关联审核记录
+                // 这样学生可以干净地重新选择同一岗位，不产生重复活跃记录
                 Integer relationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
                 decreasePostPersonNumByRelation(relationId);
+                deleteVerifyProcessByRelationIdAndTableName(relationId, "RelStuInternshipPost");
+                iCommonService.deleteRecordByDelflag("RelStuInternshipPost", relationId);
             } else if (isAudit == 3) {
                 // 其他类型：退回时新建 isAudit=-1 的记录，允许用户修改后重新提交
                 createPendingRecordAfterBack(Id);
@@ -2626,7 +2633,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
-     * 学生报名岗位被拒绝/退回时，根据 RelStuInternshipPost 的 relationId 减少对应岗位的当前人数
+     * 学生报名岗位被拒绝/退回时，根据 RelStuInternshipPost 的 relationId 原子性扣减对应岗位的当前人数
      */
     private void decreasePostPersonNumByRelation(Integer relationId) {
         if (relationId == null) return;
@@ -2636,16 +2643,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Integer postId = relJson.getInteger("internshipPostId");
         if (postId == null) return;
 
-        Object postObj = iCommonService.getOneRecordById("MainInternshipPost", postId);
-        if (postObj == null) return;
-        JSONObject postJson = FastJsonUtil.toJson(postObj);
-        Integer currentNum = postJson.getInteger("nowPersonNum");
-        if (currentNum == null || currentNum <= 0) return;
-
-        JSONObject updateJson = new JSONObject();
-        updateJson.put("id", postId);
-        updateJson.put("nowPersonNum", currentNum - 1);
-        iCommonService.saveOneRecord("MainInternshipPost", updateJson);
+        // 原子性扣减：nowPersonNum - 1 WHERE nowPersonNum > 0，无需额外读取当前值
+        mainInternshipPostDao.decrementNowPersonNum(postId);
     }
 
     /**
