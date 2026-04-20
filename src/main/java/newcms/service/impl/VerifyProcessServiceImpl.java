@@ -4,7 +4,11 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
+import newcms.entity.db.RelStuInternshipPost;
+import newcms.repository.db.MainInternshipPostDao;
+import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.service.ICommonService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -32,6 +36,12 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
     @Resource
     private ICommonService iCommonService;
+
+    @Resource
+    private MainInternshipPostDao mainInternshipPostDao;
+
+    @Resource
+    private RelStuInternshipPostDao relStuInternshipPostDao;
 
     @Override
     @SuppressWarnings("unchecked")
@@ -408,6 +418,18 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             // 审核全部完成（currentVerifyTypeId > verifyTypeId）
             logger.info("审核记录 {} 通过，流程 {} 审核全部完成（currentVerifyTypeId 更新为 {}，verifyTypeId {}）",
                     Id, relationId, nextLevel, verifyTypeId);
+
+            // 学生选岗：审核全部通过 → 级联软删除同实习项目下其余报名记录
+            if ("RelStuInternshipPost".equals(tableName)) {
+                Integer studentId = entityJson.getInteger("studentId");
+                Integer internshipPostId = entityJson.getInteger("internshipPostId");
+                if (studentId != null && internshipPostId != null) {
+                    MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(internshipPostId);
+                    if (post != null && post.getInternshipId() != null) {
+                        cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
+                    }
+                }
+            }
         }
     }
 
@@ -519,6 +541,62 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             }
         }
         return updatedCount;
+    }
+
+    /**
+     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余报名记录。
+     * <p>对每条"其他报名"：原子性扣减岗位人数 → 软删除 MainVerifyProcess → 软删除 RelStuInternshipPost。</p>
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public void cancelOtherStuPostsOnApproval(Integer approvedRelStuPostId,
+                                               Integer studentId,
+                                               Integer internshipId) {
+        if (approvedRelStuPostId == null || studentId == null || internshipId == null) {
+            return;
+        }
+
+        // 取该实习项目下所有岗位 ID
+        List<MainInternshipPost> posts = mainInternshipPostDao.findByInternshipIdAndIsDeletedFalse(internshipId);
+        if (posts == null || posts.isEmpty()) {
+            return;
+        }
+        List<Integer> postIds = posts.stream()
+                .map(p -> p.getId())
+                .collect(Collectors.toList());
+
+        // 取学生在这些岗位中的全部有效报名记录（Spring Data JPA 自动生成查询）
+        List<RelStuInternshipPost> others = relStuInternshipPostDao
+                .findByStudentIdAndInternshipPostIdInAndIsDeletedFalse(studentId, postIds);
+
+        for (RelStuInternshipPost other : others) {
+            if (approvedRelStuPostId.equals(other.getId())) {
+                continue; // 跳过已通过的那条
+            }
+            Integer otherId = other.getId();
+            Integer postId  = other.getInternshipPostId();
+
+            // 1. 原子性扣减岗位当前人数
+            mainInternshipPostDao.decrementNowPersonNum(postId);
+
+            // 2. 软删除关联的 MainVerifyProcess 记录
+            JSONObject sk = new JSONObject();
+            sk.put("relationId", otherId);
+            sk.put("tableName", "RelStuInternshipPost");
+            Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+            for (Object vp : vpPage.getContent()) {
+                Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
+                if (vpId != null) {
+                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
+                }
+            }
+
+            // 3. 软删除 RelStuInternshipPost 记录
+            iCommonService.deleteRecordByDelflag("RelStuInternshipPost", otherId);
+
+            logger.info("学生 {} 岗位 {} 报名通过，级联删除其他报名记录 id={}", studentId, approvedRelStuPostId, otherId);
+        }
     }
 
 }

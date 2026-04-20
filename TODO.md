@@ -203,8 +203,8 @@ SELECT ... WHERE NOT EXISTS (SELECT 1 FROM main_verify_process WHERE relation_id
 | 2 | **CONC-01 + CONC-02** 岗位人数原子化 | — | ✅ | `MainInternshipPostDao` 新增两个 `@Modifying @Query` 原子方法；`InternshipPostServiceImpl` 和 `InternshipServiceImpl` 均已切换为原子调用 |
 | 3 | **BIZ-01 + BIZ-02 + BIZ-03** 录取级联拒绝 | — | ⬜ | 核心新功能，需新增方法 |
 | 4 | **CONC-04 + CONC-05** 录取并发锁 | — | ⬜ | 依赖步骤 3 完成后加锁保护 |
-| 5 | **CONC-03** 乐观锁 @Version | ✅ | ⬜ 实体加注解 | DB 列已加，Java 加 @Version 注解 |
-| 6 | **CONC-06** 打卡/日志审核幂等 | — | ⬜ | 捕获异常或应用层锁 |
+| 5 | **CONC-03** 乐观锁 @Version | ✅ | ✅ | 5个实体均已加 `@Version private Integer version` |
+| 6 | **CONC-06** 打卡/日志审核幂等 | — | ✅ | `MainSignServiceImpl` 和 `DiaryServiceImpl` 均加了按 id 分段的 `ConcurrentHashMap` 应用层锁 |
 | 7 | **BIZ-04** BACK 对 RelTitleStudent 特殊处理 | — | ⬜ | 小改动 |
 | 8 | **BIZ-05** 批量确认被拒申请 | — | ⬜ | 待前后端联调后决定 |
 

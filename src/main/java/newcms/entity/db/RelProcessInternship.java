@@ -2,6 +2,7 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.VerifyConfigInfo;
@@ -24,4 +25,8 @@ public class RelProcessInternship extends VerifyConfigInfo {
     private LocalDateTime startTime;
     @Column(columnDefinition = "datetime comment '流程结束时间'")
     private LocalDateTime endTime;
+
+    @Version
+    @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
+    private Integer version;
 }

@@ -2,6 +2,7 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.VerifyConfigInfo;
@@ -35,4 +36,8 @@ public class MainSign extends VerifyConfigInfo {
     /** 当前审核级别，与 Constant.VERIFY_LEVEL 一致；打卡无 submit 字段，退回时仅重置本字段 */
     @Column(columnDefinition = "integer default '1' comment '流程当前处在的审核级别id'")
     private Integer currentVerifyTypeId = 1;
+
+    @Version
+    @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
+    private Integer version;
 }

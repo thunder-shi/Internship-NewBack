@@ -2,6 +2,7 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkInfo;
@@ -59,4 +60,8 @@ public class MainDiary extends NameRemarkInfo {
 
     @Column(columnDefinition = "integer default '1' comment '流程当前处在的审核级别id'")
     private Integer currentVerifyTypeId = 1;
+
+    @Version
+    @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
+    private Integer version;
 }

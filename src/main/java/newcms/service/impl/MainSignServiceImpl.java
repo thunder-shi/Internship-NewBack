@@ -17,10 +17,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class MainSignServiceImpl extends Base implements IMainSignService {
+
+    /** 按 signId 分段的应用层锁，防止并发提交同一打卡记录时重复创建审核行（CONC-06） */
+    private static final ConcurrentHashMap<Integer, Object> SIGN_LOCKS = new ConcurrentHashMap<>();
 
     @Resource
     private ICommonService iCommonService;
@@ -37,6 +41,10 @@ public class MainSignServiceImpl extends Base implements IMainSignService {
         if (sign == null) {
             throw BaseResponse.parameterInvalid.error("打卡记录不存在");
         }
+
+        // 按 signId 加锁，防止并发提交同一打卡记录时重复创建审核行（CONC-06）
+        Object lock = SIGN_LOCKS.computeIfAbsent(signId, k -> new Object());
+        synchronized (lock) {
 
         List<MainVerifyProcess> existing = mainVerifyProcessDao
                 .findByRelationIdAndTableNameAndIsDeletedFalse(signId, "MainSign");
@@ -92,5 +100,7 @@ public class MainSignServiceImpl extends Base implements IMainSignService {
         verifyJson.put("reason", reason);
         verifyJson.put("tableName", "MainSign");
         iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+
+        } // end synchronized
     }
 }

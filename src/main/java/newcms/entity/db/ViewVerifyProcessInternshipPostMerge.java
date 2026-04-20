@@ -48,6 +48,7 @@ public class ViewVerifyProcessInternshipPostMerge extends BaseInfo {
     private Integer nowPersonNum;
     private String companyName;
     private Integer companyId;
+    private Integer salary;
 
     // 计算字段
     private String currentRoleName;

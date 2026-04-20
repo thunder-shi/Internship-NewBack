@@ -83,4 +83,16 @@ public interface IVerifyProcessService {
      * @return 更新的记录数量
      */
     int refreshPendingVerifyUsersByProcess(Integer processId);
+
+    /**
+     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余报名记录及其审核记录，
+     * 并原子性扣减对应岗位的 nowPersonNum。
+     *
+     * @param approvedRelStuPostId 已通过的 RelStuInternshipPost.id（本条不删）
+     * @param studentId            学生 ID
+     * @param internshipId         实习项目 ID
+     */
+    void cancelOtherStuPostsOnApproval(Integer approvedRelStuPostId,
+                                        Integer studentId,
+                                        Integer internshipId);
 }

@@ -21,11 +21,15 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class DiaryServiceImpl extends Base implements IDiaryService {
+
+    /** 按 diaryId 分段的应用层锁，防止并发提交同一期日志时重复创建审核行（CONC-06） */
+    private static final ConcurrentHashMap<Integer, Object> DIARY_LOCKS = new ConcurrentHashMap<>();
 
   @Resource
   private ICommonService iCommonService;
@@ -124,6 +128,10 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
    */
   private void ensureDiaryVerifyProcess(Integer diaryId, Integer relationId,
       String tableName, Integer currentUserId) {
+    // 按 diaryId 加锁，防止并发提交同一期日志时重复创建审核行（CONC-06）
+    Object lock = DIARY_LOCKS.computeIfAbsent(diaryId, k -> new Object());
+    synchronized (lock) {
+
     List<MainVerifyProcess> existing = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(diaryId,
         "MainDiary");
     boolean hasPending = existing.stream()
@@ -153,6 +161,8 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     verifyJson.put("reason", "");
     verifyJson.put("tableName", "MainDiary");
     iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+
+    } // end synchronized
   }
 
   /**
