@@ -12,6 +12,8 @@ import java.util.List;
 public interface RelStuInternshipPostDao extends BaseDao<RelStuInternshipPost, Integer> {
     List<RelStuInternshipPost> findByInternshipPostIdInAndIsDeletedFalse(Iterable<Integer> internshipPostIds);
 
+    List<RelStuInternshipPost> findByInternshipPostIdAndIsDeletedFalse(Integer internshipPostId);
+
     /**
      * 查询学生在指定岗位集合中的所有未删除报名记录（用于级联删除其他报名）。
      */

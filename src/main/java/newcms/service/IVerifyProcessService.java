@@ -85,8 +85,7 @@ public interface IVerifyProcessService {
     int refreshPendingVerifyUsersByProcess(Integer processId);
 
     /**
-     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余报名记录及其审核记录，
-     * 并原子性扣减对应岗位的 nowPersonNum。
+     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余报名记录及其审核记录。
      *
      * @param approvedRelStuPostId 已通过的 RelStuInternshipPost.id（本条不删）
      * @param studentId            学生 ID
@@ -95,4 +94,12 @@ public interface IVerifyProcessService {
     void cancelOtherStuPostsOnApproval(Integer approvedRelStuPostId,
                                         Integer studentId,
                                         Integer internshipId);
+
+    /**
+     * 当某岗位因一名学生审核通过而已招满时，级联软删除该岗位剩余的待审核报名记录。
+     *
+     * @param postId               已招满的岗位 ID（MainInternshipPost.id）
+     * @param approvedRelStuPostId 已通过的 RelStuInternshipPost.id（本条不删）
+     */
+    void cancelPendingApplicationsIfPostFull(Integer postId, Integer approvedRelStuPostId);
 }

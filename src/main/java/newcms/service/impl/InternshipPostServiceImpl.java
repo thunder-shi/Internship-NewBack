@@ -89,9 +89,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         // 2. 服务端兜底：已有通过审核的报名则拦截
         checkNoApprovedPostInSameInternship(studentId, internshipId);
 
-        // 3. 原子性占位（容量检查 + nowPersonNum+1 合并为一条 SQL）
-        int affected = mainInternshipPostDao.incrementNowPersonNumIfNotFull(newPostId);
-        if (affected == 0) {
+        // 3. 容量校验：已录用人数 >= 岗位上限则拒绝（nowPersonNum 仅统计审核通过的报名）
+        if (post.getAllPersonNum() != null && post.getNowPersonNum() != null
+                && post.getNowPersonNum() >= post.getAllPersonNum()) {
             throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
         }
 
@@ -103,7 +103,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         Integer recordAId = FastJsonUtil.toJson(savedRelObj).getInteger("id");
 
         // 5. 创建 MainVerifyProcess，获取最终 isAudit 和 verifyTypeId
-        int[] verifyResult = createVerifyProcessForSelection(recordAId, internshipId, studentId);
+        int[] verifyResult = createVerifyProcessForSelection(recordAId, internshipId, studentId, newPostId);
         int isAudit = verifyResult[0];
         int verifyTypeId = verifyResult[1];
 
@@ -132,9 +132,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         // 服务端兜底：已有通过审核的报名则拦截（含当前 oldPost 若已通过）
         checkNoApprovedPostInSameInternship(studentId, internshipId);
 
-        // 原子性尝试为新岗位 +1
-        int affected = mainInternshipPostDao.incrementNowPersonNumIfNotFull(newPostId);
-        if (affected == 0) {
+        // 容量校验：已录用人数 >= 岗位上限则拒绝
+        if (newPost.getAllPersonNum() != null && newPost.getNowPersonNum() != null
+                && newPost.getNowPersonNum() >= newPost.getAllPersonNum()) {
             throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
         }
 
@@ -145,9 +145,6 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
         // 重置 MainVerifyProcess.isAudit 为 SUBMIT（0）
         updateMainVerifyProcessIsAudit(recordAId, Constant.AUDIT_STATUS.SUBMIT);
-
-        // 原子性扣减旧岗位人数
-        mainInternshipPostDao.decrementNowPersonNum(oldPostId);
 
         // 取 verifyTypeId 用于返回
         Object processObj = iVerifyProcessService.GetInternshipProcess(
@@ -167,7 +164,7 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     private void cancelPostSelection(Integer recordAId, Integer oldPostId) {
         deleteMainVerifyProcessRecord(recordAId);
         iCommonService.deleteRecordByDelflag(TABLE_REL_STU_INTERNSHIP, recordAId);
-        mainInternshipPostDao.decrementNowPersonNum(oldPostId);
+        // nowPersonNum 仅在审核通过时递增，取消待审核报名无需递减
     }
 
     // ─────────────────────────── 辅助方法 ───────────────────────────
@@ -192,7 +189,8 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
      */
     private int[] createVerifyProcessForSelection(Integer relationId,
                                                    Integer internshipId,
-                                                   Integer createUserId) {
+                                                   Integer createUserId,
+                                                   Integer internshipPostId) {
         Object processObj = iVerifyProcessService.GetInternshipProcess(
                 internshipId, Constant.PROCESS_TYPE.EXTERNAL_STUDENT_SELECT_POST);
         JSONObject processJson = FastJsonUtil.toJson(processObj);
@@ -246,6 +244,10 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
             isAudit = Constant.AUDIT_STATUS.PASS;
 
+            // 审核通过后递增岗位已录用人数
+            mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
+            // 若岗位已满，级联删除该岗位其余待审核报名
+            iVerifyProcessService.cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
             // 级联软删除同实习项目下该学生的其余报名记录
             iVerifyProcessService.cancelOtherStuPostsOnApproval(relationId, createUserId, internshipId);
         }

@@ -99,6 +99,9 @@ public class ViewVerifyProcessRelTitleStudentMerge extends NameRemarkInfo {
     @Column(name = "student_name")
     private String studentName;
 
+    @Column(name = "student_account")
+    private String studentAccount;
+
     @Column(name = "current_verify_type_name")
     private String currentVerifyTypeName;
 

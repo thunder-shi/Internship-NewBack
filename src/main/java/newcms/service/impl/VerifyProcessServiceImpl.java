@@ -419,11 +419,16 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             logger.info("审核记录 {} 通过，流程 {} 审核全部完成（currentVerifyTypeId 更新为 {}，verifyTypeId {}）",
                     Id, relationId, nextLevel, verifyTypeId);
 
-            // 学生选岗：审核全部通过 → 级联软删除同实习项目下其余报名记录
+            // 学生选岗：审核全部通过 → 递增岗位人数，若已满清理该岗位其余报名，再清理学生其余报名
             if ("RelStuInternshipPost".equals(tableName)) {
                 Integer studentId = entityJson.getInteger("studentId");
                 Integer internshipPostId = entityJson.getInteger("internshipPostId");
                 if (studentId != null && internshipPostId != null) {
+                    // 审核通过后递增岗位已录用人数
+                    mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
+                    // 若岗位已满，级联删除该岗位其余待审核报名
+                    cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
+                    // 级联软删除同实习项目下该学生的其余报名记录
                     MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(internshipPostId);
                     if (post != null && post.getInternshipId() != null) {
                         cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
@@ -574,12 +579,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 continue; // 跳过已通过的那条
             }
             Integer otherId = other.getId();
-            Integer postId  = other.getInternshipPostId();
 
-            // 1. 原子性扣减岗位当前人数
-            mainInternshipPostDao.decrementNowPersonNum(postId);
-
-            // 2. 软删除关联的 MainVerifyProcess 记录
+            // 1. 软删除关联的 MainVerifyProcess 记录（nowPersonNum 仅在审核通过时递增，无需递减）
             JSONObject sk = new JSONObject();
             sk.put("relationId", otherId);
             sk.put("tableName", "RelStuInternshipPost");
@@ -592,10 +593,48 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 }
             }
 
-            // 3. 软删除 RelStuInternshipPost 记录
+            // 2. 软删除 RelStuInternshipPost 记录
             iCommonService.deleteRecordByDelflag("RelStuInternshipPost", otherId);
 
             logger.info("学生 {} 岗位 {} 报名通过，级联删除其他报名记录 id={}", studentId, approvedRelStuPostId, otherId);
+        }
+    }
+
+    /**
+     * 若某岗位审核通过后已招满，级联软删除该岗位剩余待审核报名记录。
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public void cancelPendingApplicationsIfPostFull(Integer postId, Integer approvedRelStuPostId) {
+        if (postId == null) return;
+        MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(postId);
+        if (post == null || post.getNowPersonNum() == null || post.getAllPersonNum() == null
+                || post.getNowPersonNum() < post.getAllPersonNum()) {
+            return; // 未满，无需处理
+        }
+        // 岗位已满，删除该岗位所有剩余报名（已通过的除外）
+        List<RelStuInternshipPost> records = relStuInternshipPostDao.findByInternshipPostIdAndIsDeletedFalse(postId);
+        for (RelStuInternshipPost record : records) {
+            if (approvedRelStuPostId != null && approvedRelStuPostId.equals(record.getId())) {
+                continue; // 跳过刚通过的记录
+            }
+            Integer recordId = record.getId();
+            // 软删除关联的 MainVerifyProcess 记录
+            JSONObject sk = new JSONObject();
+            sk.put("relationId", recordId);
+            sk.put("tableName", "RelStuInternshipPost");
+            Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+            for (Object vp : vpPage.getContent()) {
+                Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
+                if (vpId != null) {
+                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
+                }
+            }
+            // 软删除 RelStuInternshipPost 记录
+            iCommonService.deleteRecordByDelflag("RelStuInternshipPost", recordId);
+            logger.info("岗位 {} 已满（{}/{}），级联删除待审核报名记录 id={}",
+                    postId, post.getNowPersonNum(), post.getAllPersonNum(), recordId);
         }
     }
 

@@ -50,6 +50,7 @@ public class ViewVerifyProcessRelStuInternshipPostMerge extends BaseInfo {
     private String companyName;
     private Integer companyId;
     private String studentName;
+    private String studentAccount;
     private String studentId;
     private Integer departmentId;
     private String departmentName;

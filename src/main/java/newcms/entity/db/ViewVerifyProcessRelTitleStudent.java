@@ -77,6 +77,9 @@ public class ViewVerifyProcessRelTitleStudent extends NameRemarkInfo {
     @Column(name = "student_name")
     private String studentName;
 
+    @Column(name = "student_account")
+    private String studentAccount;
+
     @Column(name = "teacher_name")
     private String teacherName;
 

@@ -24,6 +24,9 @@ public class ViewRelTitleStudent extends NameRemarkInfo {
     @Column(name = "student_name")
     private String studentName;
 
+    @Column(name = "student_account")
+    private String studentAccount;
+
     private String name;
 
     private String remarks;

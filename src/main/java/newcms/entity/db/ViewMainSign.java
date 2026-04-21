@@ -41,6 +41,10 @@ public class ViewMainSign extends BaseInfo {
     @Column(name = "student_name")
     private String studentName;
 
+    /** 来自 view_base_user.ACCOUNT */
+    @Column(name = "student_account")
+    private String studentAccount;
+
     private String remarks;
     private Integer currentVerifyTypeId;
 }

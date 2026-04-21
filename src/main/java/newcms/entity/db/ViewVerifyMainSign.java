@@ -38,6 +38,7 @@ public class ViewVerifyMainSign extends BaseInfo {
 
     private Integer studentId;
     private String studentName;
+    private String studentAccount;
 
     private String address;
     private Integer imgId;

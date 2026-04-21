@@ -2431,6 +2431,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Object verifyObj = Id != null ? iCommonService.getOneRecordById("MainVerifyProcess", Id) : null;
         String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
 
+        // 记录不存在（已被级联删除，如批量审核中岗位满额后 cancelPendingApplicationsIfPostFull 删除了后续项）
+        if (Id != null && verifyObj == null) {
+            logger.info("auditProcessOne: MainVerifyProcess id={} 不存在或已取消，跳过", Id);
+            return null;
+        }
+
         // 非限选题目：学生提交阶段不允许直接传审核通过，统一落到提交待审核。
         if (shouldForceSubmitForNonLimitedTitleSelection(isAudit, tableName, verifyObj)) {
             isAudit = Constant.AUDIT_STATUS.SUBMIT;
@@ -2479,10 +2485,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             boolean isStuPost = "RelStuInternshipPost".equals(tableName);
 
             if (isStuPost) {
-                // 学生报名岗位：退回/未通过 → 减人数 + 软删除选岗记录及其全部关联审核记录
+                // 学生报名岗位：退回/未通过 → 软删除选岗记录及其全部关联审核记录
+                // nowPersonNum 仅在审核全部通过时递增，拒绝待审中的报名无需递减
                 // 这样学生可以干净地重新选择同一岗位，不产生重复活跃记录
                 Integer relationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
-                decreasePostPersonNumByRelation(relationId);
                 deleteVerifyProcessByRelationIdAndTableName(relationId, "RelStuInternshipPost");
                 iCommonService.deleteRecordByDelflag("RelStuInternshipPost", relationId);
             } else if (isAudit == 3) {

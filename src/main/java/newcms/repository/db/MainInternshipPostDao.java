@@ -27,4 +27,12 @@ public interface MainInternshipPostDao extends BaseDao<MainInternshipPost, Integ
     @Modifying
     @Query("UPDATE MainInternshipPost p SET p.nowPersonNum = p.nowPersonNum + 1 WHERE p.id = :id AND p.nowPersonNum < p.allPersonNum AND p.isDeleted = false")
     int incrementNowPersonNumIfNotFull(@Param("id") Integer id);
+
+    /**
+     * 无条件原子性增加 nowPersonNum（审核通过后调用），返回影响行数。
+     * clearAutomatically = true 确保后续读取不使用 JPA 一级缓存的旧值（避免 cancelPendingApplicationsIfPostFull 误判）。
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE MainInternshipPost p SET p.nowPersonNum = p.nowPersonNum + 1 WHERE p.id = :id AND p.isDeleted = false")
+    int incrementNowPersonNum(@Param("id") Integer id);
 }

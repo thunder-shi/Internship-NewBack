@@ -73,6 +73,7 @@ public class ViewVerifyMainDiary extends BaseInfo {
     // 学生信息
     private Integer studentId;
     private String studentName;
+    private String studentAccount;
     private Integer schoolId;
     private String studentDepartmentName;
 }

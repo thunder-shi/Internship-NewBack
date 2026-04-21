@@ -25,6 +25,9 @@ public class ViewRelStuInternshipPost extends BaseInfo {
     @Column(columnDefinition = "varchar(50) comment '学生姓名'")
     private String studentName;
 
+    @Column(columnDefinition = "varchar(50) comment '学生学号'")
+    private String studentAccount;
+
     @Column(columnDefinition = "integer unsigned comment '部门ID'")
     private Integer departmentId;
 
