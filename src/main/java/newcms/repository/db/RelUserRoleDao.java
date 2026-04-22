@@ -19,4 +19,6 @@ public interface RelUserRoleDao extends BaseDao<RelUserRole, Integer> {
     void deleteRoleRel(Integer uid);
 
     List<RelUserRole> findByRoleIdAndIsDeletedFalse(Integer roleId);
+
+    List<RelUserRole> findByUserIdAndIsDeletedFalse(Integer userId);
 }

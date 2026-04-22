@@ -340,12 +340,6 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         Map<Integer, ViewVerifyMainDiaryMerge> mergeMap = fetchMergeByDiaryIds(
             new ArrayList<>(stuPostIdToDiaryId.values()));
 
-        Set<Integer> studentIdsWithoutDiary = relStuPosts.stream()
-            .filter(r -> !stuPostIdToDiaryId.containsKey(r.getId()))
-            .map(RelStuInternshipPost::getStudentId)
-            .collect(Collectors.toSet());
-        Map<Integer, ViewBaseUser> studentIdToUser = batchLoadUsers(studentIdsWithoutDiary);
-
         for (RelStuInternshipPost rsp : relStuPosts) {
           JSONObject item = new JSONObject();
           item.put("stuRelationId", rsp.getId());
@@ -353,6 +347,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           ViewRelStuInternshipPost v = idToView.get(rsp.getId());
           if (v != null) {
             item.put("studentName", v.getStudentName());
+            item.put("studentAccount", v.getStudentAccount());
             item.put("internshipPostName", v.getInternshipPostName());
             item.put("companyName", v.getCompanyName());
             item.put("postDescription", v.getInternshipPostRemarks());
@@ -367,13 +362,10 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           Integer diaryId = stuPostIdToDiaryId.get(rsp.getId());
           ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
           if (merge != null) {
-            item.put("studentNo", merge.getStudentAccount());
             item.put("majorName", merge.getStudentMajorName());
             if (item.getString("className") == null)
               item.put("className", merge.getStudentDepartmentName());
           } else {
-            ViewBaseUser bu = studentIdToUser.get(rsp.getStudentId());
-            item.put("studentNo", bu != null ? bu.getAccount() : null);
             item.put("majorName", null);
           }
           item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
@@ -420,6 +412,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       item.put("titleRelationId", rts.getRelTitleStudentId());
       item.put("studentId", rts.getStuId());
       item.put("studentName", rts.getStudentName());
+      item.put("studentAccount", rts.getStudentAccount());
       item.put("titleName", rts.getName());
       item.put("titleDescription", rts.getRemarks());
       item.put("teacherId", rts.getTeacherId());
@@ -429,12 +422,10 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       Integer diaryId = relTitleStudentIdToDiaryId.get(rts.getRelTitleStudentId());
       ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
       if (merge != null) {
-        item.put("studentNo", merge.getStudentAccount());
         item.put("majorName", merge.getStudentMajorName());
         item.put("className", merge.getStudentDepartmentName());
       } else {
         ViewBaseUser bu = studentIdToUser.get(rts.getStuId());
-        item.put("studentNo", bu != null ? bu.getAccount() : null);
         item.put("majorName", null);
         item.put("className", bu != null ? bu.getDepartmentName() : null);
       }

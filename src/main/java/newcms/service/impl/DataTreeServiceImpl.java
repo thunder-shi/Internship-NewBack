@@ -2,7 +2,12 @@ package newcms.service.impl;
 
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.entity.base.BaseTreeInfo;
+import newcms.entity.db.BaseDepartment;
+import newcms.entity.db.RelUserRole;
+import newcms.entity.db.SysRole;
+import newcms.repository.db.RelUserRoleDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.utils.DateUtil;
@@ -17,8 +22,10 @@ import org.springframework.transaction.annotation.Transactional;
 import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -29,9 +36,133 @@ import java.util.stream.Collectors;
 public class DataTreeServiceImpl extends Base implements IDataTreeService {
     @Resource
     protected ICommonService iCommonService;
+    @Resource
+    private RelUserRoleDao relUserRoleDao;
 
     //树接口多结果查询排序默认按theOrder
     private final Sort orderSort = Sort.by(Sort.Direction.ASC, "theOrder");
+
+    // ===================== 部门树访问范围控制 =====================
+
+    /** 封装用户对部门树的可见范围 */
+    private static class DeptScope {
+        /** null 表示超级管理员，无任何限制 */
+        final Integer rootId;
+        /** true=rootId 节点及其全部子树；false=仅 rootId 节点本身 */
+        final boolean includeSubtree;
+
+        private DeptScope(Integer rootId, boolean includeSubtree) {
+            this.rootId = rootId;
+            this.includeSubtree = includeSubtree;
+        }
+
+        static DeptScope noRestriction()           { return new DeptScope(null, true); }
+        static DeptScope subtree(Integer rootId)   { return new DeptScope(rootId, true); }
+        static DeptScope singleNode(Integer rootId){ return new DeptScope(rootId, false); }
+
+        boolean isRestricted() { return rootId != null; }
+    }
+
+    /**
+     * 根据当前登录用户的角色，计算其对 BaseDepartment 树的可见范围。
+     * <p>
+     * 注意：Shiro Realm 的 doGetAuthorizationInfo 未加载角色，不能用 subject.hasRole()。
+     * 角色通过 RelUserRole → SysRole.code 查询，与 DB 里的角色 ID 无关，只依赖 code 字符串。
+     * </p>
+     */
+    private DeptScope getDeptScope() {
+        Integer userId = getLoginUserId();
+
+        // 查当前用户的所有角色 code（RelUserRole → SysRole.code）
+        Set<String> roleCodes = relUserRoleDao.findByUserIdAndIsDeletedFalse(userId)
+                .stream()
+                .map(rel -> tblRoleInfoDao.findById(rel.getRoleId())
+                        .map(role -> role.getCode())
+                        .orElse(null))
+                .filter(code -> code != null)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        // 超级管理员：全量，不限制
+        if (roleCodes.contains(Constant.USER_JOB_CODE.SUPER_ADMIN)) {
+            return DeptScope.noRestriction();
+        }
+
+        Integer deptId = getLoginDepartmentId();
+        if (deptId == null || deptId <= 0) {
+            return DeptScope.noRestriction(); // 未设置部门，放行
+        }
+
+        // 校级管理员 / 教务管理员：本校全树（向上溯源到根节点）
+        if (roleCodes.contains(Constant.USER_JOB_CODE.SCHOOL_ADMIN)
+                || roleCodes.contains(Constant.USER_JOB_CODE.ACADEMIC_AFFAIRS_ADMIN)) {
+            return DeptScope.subtree(findSchoolRootId(deptId));
+        }
+
+        // 院系管理员 / 校内教师：本院子树
+        if (roleCodes.contains(Constant.USER_JOB_CODE.DEPARTMENT_ADMIN)
+                || roleCodes.contains(Constant.USER_JOB_CODE.SCHOOL_TEACHER)) {
+            return DeptScope.subtree(deptId);
+        }
+
+        // 企业管理员 / 企业导师 / 学生：仅本节点（不含子树）
+        if (roleCodes.contains(Constant.USER_JOB_CODE.COMPANY_ADMIN)
+                || roleCodes.contains(Constant.USER_JOB_CODE.COMPANY_TUTOR)
+                || roleCodes.contains(Constant.USER_JOB_CODE.STUDENT)) {
+            return DeptScope.singleNode(deptId);
+        }
+
+        return DeptScope.noRestriction(); // 未知角色，放行
+    }
+
+    /**
+     * 从 deptId 向上遍历，直到找到根节点（parentId == -1）作为"学校"入口。
+     */
+    private Integer findSchoolRootId(Integer deptId) {
+        int maxDepth = 20;
+        Integer cur = deptId;
+        while (cur != null && cur > 0 && maxDepth-- > 0) {
+            BaseDepartment dept = tblDepartmentInfoDao.findById(cur).orElse(null);
+            if (dept == null) return deptId;
+            Integer pid = dept.getParentId();
+            if (pid == null || pid == -1) return cur;
+            cur = pid;
+        }
+        return deptId;
+    }
+
+    /**
+     * 判断 tblName 是否为部门树（需要权限限制）。
+     */
+    private boolean isDeptTblName(String tblName) {
+        return Constant.DEPARTMENT_INFO.equals(tblName) || "ViewBaseDepartment".equals(tblName);
+    }
+
+    /**
+     * 构建 scopeRootId 子树的全部节点 ID 集合（总是用 BaseDepartment 实体查询）。
+     */
+    private Set<Integer> buildAllowedIds(Integer scopeRootId) {
+        List<Integer> ids = new ArrayList<>();
+        getAllChildIdsRecursive(scopeRootId, Constant.DEPARTMENT_INFO, ids);
+        return new HashSet<>(ids);
+    }
+
+    /**
+     * 校验 nodeId 在授权范围内；不在则抛 401。
+     */
+    private void requireInScope(Integer nodeId, DeptScope scope) {
+        if (!scope.isRestricted()) return;
+        if (!scope.includeSubtree) {
+            if (!scope.rootId.equals(nodeId)) {
+                throw BaseResponse.unAuthorization.error("无权操作该节点");
+            }
+        } else {
+            if (!buildAllowedIds(scope.rootId).contains(nodeId)) {
+                throw BaseResponse.unAuthorization.error("无权操作该节点");
+            }
+        }
+    }
+
+    // ===================== 原有树形结构辅助方法 =====================
 
     //region 一些private
     public List<Object> getSubNodes(Object wholeObj, Integer parentId, Boolean lazy, String preName) {
@@ -88,29 +219,103 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
     }
     //endregion
 
+    // ===================== getTreeList（含角色权限控制） =====================
+
     /**
      * 查询树结构
-     * @return
      */
     @Override
-    public Object getTreeList(String tblName, Boolean virtualRootFlag, JSONObject searchKey, Boolean lazy, String preName, Integer parentId,Sort sortJson) {
-        if (lazy) {
-            if ( searchKey == null) {
-                searchKey = new JSONObject();
+    public Object getTreeList(String tblName, Boolean virtualRootFlag, JSONObject searchKey, Boolean lazy, String preName, Integer parentId, Sort sortJson) {
+
+        // --- 1. 计算访问范围 ---
+        DeptScope scope = isDeptTblName(tblName) ? getDeptScope() : DeptScope.noRestriction();
+
+        // --- 2. 有范围限制时的分支处理 ---
+        if (scope.isRestricted()) {
+
+            if (lazy) {
+                if (searchKey == null) searchKey = new JSONObject();
+                if (!searchKey.containsKey("parentId")) {
+
+                    if (parentId == null || parentId == -1) {
+                        // 根级懒加载：直接返回授权根节点本身（前端点击后再展开子节点）
+                        Object obj = iCommonService.getOneRecordById(tblName, scope.rootId);
+                        if (obj == null) return new ArrayList<>();
+                        @SuppressWarnings("unchecked")
+                        BaseTreeInfo<Object> rootNode = (BaseTreeInfo<Object>) obj;
+                        if (!scope.includeSubtree) {
+                            // 单节点权限：强制标记为叶子，不可展开
+                            rootNode.setIsLeaf(true);
+                            rootNode.setHasChildren(false);
+                        } else {
+                            rootNode.setHasChildren(!rootNode.getIsLeaf());
+                        }
+                        List<Object> result = new ArrayList<>();
+                        result.add(FastJsonUtil.toJson(rootNode));
+                        return result;
+                    } else {
+                        // 展开子节点：单节点权限不允许展开
+                        if (!scope.includeSubtree) {
+                            return new ArrayList<>();
+                        }
+                        // 验证 parentId 在授权子树内
+                        if (!buildAllowedIds(scope.rootId).contains(parentId)) {
+                            return new ArrayList<>();
+                        }
+                        searchKey.put("parentId", parentId);
+                    }
+                }
+                // lazy + 已设好 searchKey → 走下方通用 fetch 流程
+            } else {
+                // 非懒加载：一次性拉取全部，过滤后重建树
+                @SuppressWarnings("unchecked")
+                Page<BaseTreeInfo<Object>> pageResult = (Page<BaseTreeInfo<Object>>) iCommonService.getSomeRecords(tblName, searchKey, null, sortJson);
+                List<BaseTreeInfo<Object>> array = new ArrayList<>(pageResult.getContent());
+
+                // 计算允许节点集合
+                Set<Integer> allowed = scope.includeSubtree
+                        ? buildAllowedIds(scope.rootId)
+                        : new HashSet<>(List.of(scope.rootId));
+                array = array.stream()
+                        .filter(n -> allowed.contains(n.getId()))
+                        .collect(Collectors.toList());
+
+                // 以授权根节点的父节点作为 parentId，使授权根节点出现在树顶层
+                BaseDepartment scopeRootDept = tblDepartmentInfoDao.findById(scope.rootId).orElse(null);
+                int effectiveParentId = (scopeRootDept != null && scopeRootDept.getParentId() != null)
+                        ? scopeRootDept.getParentId() : -1;
+
+                List<Object> tree = new ArrayList<>();
+                if (!array.isEmpty()) {
+                    if (!virtualRootFlag) {
+                        tree = getSubNodes(array, effectiveParentId, false, preName);
+                    } else {
+                        BaseTreeInfo<Object> root = new BaseTreeInfo<>();
+                        root.setName("全部");
+                        root.setId(-1);
+                        root.setChildren(getSubNodes(array, effectiveParentId, false, preName));
+                        tree.add(root);
+                    }
+                }
+                return tree;
             }
+        }
+
+        // --- 3. 无范围限制（或 lazy 已处理好 searchKey）的通用流程 ---
+        if (lazy) {
+            if (searchKey == null) searchKey = new JSONObject();
             if (!searchKey.containsKey("parentId")) {
                 searchKey.put("parentId", parentId);
             }
         }
-        List<BaseTreeInfo<Object>> array = new ArrayList<>();
-        //array = ((Page<BaseTreeInfo<Object>>) iCommonService.getSomeRecords(tblName, searchKey,null, orderSort)).getContent();
         @SuppressWarnings("unchecked")
-        Page<BaseTreeInfo<Object>> pageResult = (Page<BaseTreeInfo<Object>>) iCommonService.getSomeRecords(tblName, searchKey,null, sortJson);
-        array = pageResult.getContent();
+        Page<BaseTreeInfo<Object>> pageResult = (Page<BaseTreeInfo<Object>>) iCommonService.getSomeRecords(tblName, searchKey, null, sortJson);
+        List<BaseTreeInfo<Object>> array = pageResult.getContent();
+
         List<Object> tree = new ArrayList<>();
         BaseTreeInfo<Object> root = new BaseTreeInfo<>();
         if (array.size() != 0) {
-            if(!virtualRootFlag) {
+            if (!virtualRootFlag) {
                 tree = getSubNodes(array, parentId, lazy, preName);
             } else {
                 root.setName("全部");
@@ -121,6 +326,7 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         }
         return tree;
     }
+
     @Override
     public Object getTreeArrayList(String tblName, JSONObject searchKey) {
         if (searchKey == null) {
@@ -138,19 +344,12 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 交换两个节点顺序。上移/下移按钮用到，修改TheOrder
-     * @param tblName
-     * @param nodeId
-     * @param nodeChangeId
-     * @return
      */
     @Override
     public Object changeTwoNodes(String tblName, int nodeId, int nodeChangeId) {
         JSONObject obj1 = FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, nodeId));
         JSONObject obj2 = FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, nodeChangeId));
-        //step1判断
-        //todo:未判空
         if(!obj1.getInteger("parentId").equals(obj2.getInteger("parentId"))){
-            //处理
             throw BaseResponse.moreInfoError.error("节点交换失败，parentId不一致");
         } else {
             int order1 = obj1.getInteger("theOrder");
@@ -166,12 +365,23 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
     /**
      * 编辑/新增节点。如果node中的ID=0就是新增；否则就是修改。
      * 新增操作需要修改父节点的childNum和isLeaf
-     * @param tblName
-     * @param node
-     * @return
      */
     @Override
     public Object editOneNode(String tblName, JSONObject node) {
+        // 部门树：校验操作节点（或其父节点）在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                Integer nodeId = node.getInteger("id");
+                Integer parentNodeId = node.getInteger("parentId");
+                if (nodeId != null && nodeId != 0) {
+                    requireInScope(nodeId, scope); // 更新：校验目标节点
+                } else if (parentNodeId != null) {
+                    requireInScope(parentNodeId, scope); // 新增：校验父节点
+                }
+            }
+        }
+
         JSONObject retuInfo = new JSONObject();
         Integer nodeId = node.getInteger("id");
         int parentNodeId = node.getInteger("parentId");
@@ -181,7 +391,6 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
             } else {
                 node.put("theLevel", FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, parentNodeId)).getInteger("theLevel") + 1);
             }
-            //获取最大值theOrder, +1后加入
             JSONObject searchKey = new JSONObject();
             searchKey.put("parentId", parentNodeId);
             Object rawRet = iCommonService.getSomeRecords(tblName, searchKey,null, Sort.by(Sort.Direction.DESC, "theOrder"), 1, 1,true);
@@ -196,15 +405,11 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
             node.put("childNum", 0);
             node.put("isLeaf", 1);
             Object objAdd = iCommonService.saveOneRecord(tblName, node);
-            /**新增后更新父节点参数,childNum和isLeaf
-             * 如果是根节点，则无父节点，无需更新
-             * */
             if(parentNodeId != -1) {
                 Object objParent = iCommonService.getOneRecordById(tblName, parentNodeId);
                 JSONObject json = FastJsonUtil.toJson(objParent);
                 Integer childNum = (Integer) json.get("childNum");
                 json.put("childNum", ++childNum);
-                //新增后，children节点不为0，则标记为非叶子节点
                 json.put("isLeaf", 0);
                 iCommonService.saveOneRecord(tblName, json);
             }
@@ -220,19 +425,20 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 删除节点。注意还需要修改上级节点相关信息
-     * 如果这里数据库字段有问题，直接修改数据库
-     * @param tblName
-     * @param node
-     * @return
      */
     @Override
     public Object delOneNode(String tblName, JSONObject node) {
+        // 部门树：校验节点在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                requireInScope(node.getInteger("id"), scope);
+            }
+        }
+
         int nodeId = node.getInteger("id");
         int parentNodeId = node.getInteger("parentId");
         iCommonService.deleteRecordByDelflag(tblName, nodeId);
-        //此处有个问题，上面那个语句，删除一个不存在的节点返回时null，正常删除一个节点也返回null
-        //删除一个不存在的节点时，下面这个语句时不用执行的
-        //即流程可能要优化为先查再删
         if (parentNodeId != -1) {
             Object obj = iCommonService.getOneRecordById(tblName, parentNodeId);
             JSONObject json = FastJsonUtil.toJson(obj);
@@ -249,25 +455,13 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 删除一个节点-包括非叶子节点
-     * @param tblName
-     * @param node
-     * @return
      */
     public Object delOneNodeIncludeNoLeaf(String tblName, JSONObject node) {
-        //首先判断是否是非叶子节点
-//        if(!node.getBoolean("isLeaf")){
-            ArrayList<JSONObject> children = new ArrayList<>();
-            getChildren(node,tblName,children);
-            iCommonService.deleteSomeRecords(tblName, children.stream().map(p->p.getInteger("id")).collect(Collectors.toList()));
-//        }else{
-//            int nodeId = node.getInteger("id");
-//            iCommonService.deleteRecordByDelflag(tblName, nodeId);
-//        }
+        ArrayList<JSONObject> children = new ArrayList<>();
+        getChildren(node,tblName,children);
+        iCommonService.deleteSomeRecords(tblName, children.stream().map(p->p.getInteger("id")).collect(Collectors.toList()));
 
         int parentNodeId = node.getInteger("parentId");
-        //此处有个问题，上面那个语句，删除一个不存在的节点返回时null，正常删除一个节点也返回null
-        //删除一个不存在的节点时，下面这个语句时不用执行的
-        //即流程可能要优化为先查再删
         if (parentNodeId != -1) {
             Object obj = iCommonService.getOneRecordById(tblName, parentNodeId);
             JSONObject json = FastJsonUtil.toJson(obj);
@@ -287,8 +481,18 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
     public Object delManyNodes(String tblName, JSONArray nodes) {
         List<BaseTreeInfo> rawTreeNodes = nodes.toJavaList(BaseTreeInfo.class);
         List<BaseTreeInfo<Object>> treeNodes = (List<BaseTreeInfo<Object>>)(List<?>)rawTreeNodes;
+
+        // 部门树：批量校验所有节点在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                for (BaseTreeInfo<Object> n : treeNodes) {
+                    requireInScope(n.getId(), scope);
+                }
+            }
+        }
+
         treeNodes.sort(((o1, o2) -> o2.getTheLevel() -o1.getTheLevel()));
-        //暂时这么做，后续优化下算法，减少下时间复杂度
         for(BaseTreeInfo<Object> nodeInfo : treeNodes){
             delOneNodeIncludeNoLeaf(tblName , FastJsonUtil.toJson(nodeInfo));
         }
@@ -296,13 +500,18 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
     }
 
     /**
-     * 返回当前节点和其所有父节点。循环返回直至到根节点，即 parentId = -1;
-     * @param tblName
-     * @param nodeId
-     * @return
+     * 返回当前节点和其所有父节点。
      */
     @Override
     public Object getAllParentIndex(String tblName, Integer nodeId) {
+        // 部门树：校验起始节点在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                requireInScope(nodeId, scope);
+            }
+        }
+
         if (nodeId > 0) {
             List<Object> list = new ArrayList<>();
             Object obj = iCommonService.getOneRecordById(tblName, nodeId, true);
@@ -324,9 +533,6 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 返回当前节点直接父节点信息
-     * @param tblName
-     * @param nodeId
-     * @return
      */
     @Override
     public Object getNearestParent(String tblName, Integer nodeId) {
@@ -356,10 +562,6 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 获取当前节点的父亲根节点，即 parentId=-1;
-     * @param tblName
-     * @param nodeId
-     * @param theLevel 如果有值，找到就结束
-     * @return
      */
     @Override
     public Object getFirstParent(String tblName, Integer nodeId, Integer theLevel) {
@@ -367,7 +569,6 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         if(nodeId == 0){
             return objTemp;
         }
-        //循环获取父节点id，直至获取到根节点，即parentId == -1;
         try{
             while(nodeId != null && nodeId != -1){
                 objTemp = iCommonService.getOneRecordById(tblName, nodeId);
@@ -384,12 +585,17 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 获取所有的兄弟节点
-     * @param tblName
-     * @param nodeId
-     * @return
      */
     @Override
     public Object getAllBrotherIndex(String tblName, Integer nodeId) {
+        // 部门树：校验起始节点在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                requireInScope(nodeId, scope);
+            }
+        }
+
         Object listObject = null;
         try{
             JSONObject json = FastJsonUtil.toJson(iCommonService.getOneRecordById(tblName, nodeId));
@@ -415,34 +621,11 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         return treeNodeIds;
     }
 
-
-
     /**
      * 树结构关联查询列表结构
-     * @param treeInfo
-     * @param listTblName
-     * @return 返回所有属于treeNodeId及其子节点的列表元素
      */
     @Override
     public Object getTreeJointList(JSONArray treeInfo, String listTblName, JSONObject searchKey, Map<String ,String> regMap, Sort sort, Integer page, Integer size){
-//        ArrayList<Integer> treeNodeIds = new ArrayList<>();
-//        if (treeInfo == null) {
-//            return null;
-//        }
-//        for(Object tree : treeInfo){
-//            String treeTblName = FastJsonUtil.toJson(tree).getString("treeKeyWords");
-//            int treeNodeId = FastJsonUtil.toJson(tree).getInteger("treeNodeId");
-//
-//            //step1 :获取当前树节点及其子节点
-//            Object nodeInfo = iCommonService.getOneRecordById(treeTblName, treeNodeId);
-//            getChildren(FastJsonUtil.toJson(nodeInfo), treeTblName, treeNodeIds);
-//            //step2: 获取treeTblNameId在allTreeNodeIds数组中的列表元素
-//            String resTreeTblName = GeneralUtil.dealTblName(treeTblName);
-//            searchKey.put(resTreeTblName, GeneralUtil.iteratorToString(treeNodeIds));
-//            regMap.put(resTreeTblName, Constant.IN);
-//        }
-//        Object res = iDataListService.getSomeRecords(listTblName, searchKey, regMap, sort, page, size);
-//        return res;
         return null;
     }
 
@@ -464,22 +647,14 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
 
     /**
      * 递归获取指定节点的所有子节点 ID（包括当前节点）
-     * @param nodeId 当前节点 ID
-     * @param treeTblName 表名
-     * @param nodeIds 用于存储节点 ID 的列表
      */
     private void getAllChildIdsRecursive(Integer nodeId, String treeTblName, List<Integer> nodeIds) {
-        // 添加当前节点 ID
         nodeIds.add(nodeId);
-        
-        // 查询当前节点的子节点
         JSONObject searchKey = new JSONObject();
         searchKey.put("parentId", nodeId);
         @SuppressWarnings("unchecked")
         Page<Object> pageResult = (Page<Object>) iCommonService.getSomeRecords(treeTblName, searchKey);
         List<Object> children = pageResult.getContent();
-        
-        // 递归处理每个子节点
         if (children != null && !children.isEmpty()) {
             for (Object obj : children) {
                 JSONObject childJson = FastJsonUtil.toJson(obj);
@@ -509,17 +684,21 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         if (nodeId == null || nodeId <= 0) {
             return new ArrayList<>();
         }
-        
-        // 验证节点是否存在
+
+        // 部门树：校验起始节点在授权范围内
+        if (isDeptTblName(tblName)) {
+            DeptScope scope = getDeptScope();
+            if (scope.isRestricted()) {
+                requireInScope(nodeId, scope);
+            }
+        }
+
         Object nodeObj = iCommonService.getOneRecordById(tblName, nodeId);
         if (nodeObj == null) {
             return new ArrayList<>();
         }
-        
-        // 递归获取所有子节点 ID（包括当前节点）
         List<Integer> nodeIds = new ArrayList<>();
         getAllChildIdsRecursive(nodeId, tblName, nodeIds);
-        
         return nodeIds;
     }
 

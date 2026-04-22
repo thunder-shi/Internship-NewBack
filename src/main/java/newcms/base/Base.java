@@ -81,6 +81,22 @@ public class Base extends Constant {
         }
     }
 
+    /**
+     * 当前登录用户的部门ID
+     *
+     * @return departmentId, 或 null（未设置/获取失败）
+     */
+    public Integer getLoginDepartmentId() {
+        try {
+            newcms.entity.db.BaseUser user = tblUserInfoDao.findById(getLoginUserId()).orElse(null);
+            if (user == null) return null;
+            return user.getDepartmentId();
+        } catch (Exception e) {
+            logger.error("获取用户部门ID失败", e);
+            return null;
+        }
+    }
+
     
 
     // /**
