@@ -172,6 +172,19 @@ public class CommonController extends Base {
     }
 
     /**
+     * 获取文件预览链接（presigned URL，有效期 10 分钟，不含 Content-Disposition 覆写参数）。
+     * 供 kkFileView 等预览服务调用，避免 MinIO 因签名不匹配返回 400。
+     * GET /common/minio/preview/{id}
+     */
+    @GetMapping(value = "/minio/preview/{id}")
+    public Object previewUrl(@PathVariable Integer id) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        String url = minIOUtils.presignedPreviewUrl(ossFile.getBucketName(), ossFile.getOssPath(), 600);
+        return BaseResponse.ok(url);
+    }
+
+    /**
      * 获取文件下载链接（presigned URL，有效期 10 分钟）。
      * GET /common/minio/download/{id}
      */

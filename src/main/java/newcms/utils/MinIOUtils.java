@@ -127,6 +127,25 @@ public class MinIOUtils {
     }
 
     /**
+     * 生成 presigned 预览链接（供 kkFileView 等预览服务调用），有效期 expireSeconds 秒。
+     * 不附加 response-content-disposition / response-content-type 覆写参数，
+     * 避免 MinIO 因签名不匹配返回 400。
+     */
+    public String presignedPreviewUrl(String bucketName, String ossPath, int expireSeconds) {
+        try {
+            return minioClient.getPresignedObjectUrl(
+                    io.minio.GetPresignedObjectUrlArgs.builder()
+                            .method(io.minio.http.Method.GET)
+                            .bucket(bucketName)
+                            .object(ossPath)
+                            .expiry(expireSeconds, java.util.concurrent.TimeUnit.SECONDS)
+                            .build());
+        } catch (Exception e) {
+            throw new RuntimeException("生成预览链接失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * 生成 presigned 下载链接，有效期 expireSeconds 秒。
      * 附加 response-content-disposition 和 response-content-type，
      * 确保浏览器直连 MinIO 时强制下载并使用原始文件名。
