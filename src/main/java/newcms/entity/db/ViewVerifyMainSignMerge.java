@@ -39,7 +39,7 @@ public class ViewVerifyMainSignMerge extends BaseInfo {
     private Integer studentId;
     private String studentName;
     private String studentAccount;
-
+    private Integer internshipPostId;
     private String address;
     private Integer imgId;
 

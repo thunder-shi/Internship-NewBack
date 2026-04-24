@@ -1,6 +1,7 @@
 package newcms.controller;
 
 import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +21,7 @@ import org.springframework.data.domain.Sort;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Tag(name = "实习项目管理")
@@ -158,7 +160,7 @@ public class InternshipProcessController {
 
         Integer internshipId = searchKey.getInteger("internshipId");
         String jobCode = searchKey.getString("jobCode");
-        Integer departmentId = searchKey.getInteger("departmentId");
+        List<Integer> departmentIds = parseDepartmentIds(searchKey, "departmentId");
 
          if (internshipId == null) {
              throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
@@ -199,9 +201,118 @@ public class InternshipProcessController {
          }
 
          return BaseResponse.ok(
-                iInternshipService.getAvailableUsersForInternship(internshipId, jobCode, departmentId, page, size, sort)
+               iInternshipService.getAvailableUsersForInternship(internshipId, jobCode, departmentIds, page, size, sort)
          );
      }
+
+    @Operation(
+            summary = "按可选用户口径批量初始化实习用户与审核记录",
+            description = "先按 internshipId、jobCode、departmentId 获取 getAvailableUsersForInternship 的全部用户，"
+                    + "再批量创建 RelIntershipUser（currentVerifyTypeId 使用传参）与 MainVerifyProcess（isAudit=SAVE，tableName=RelIntershipUser）。"
+                    + "verifyUserId 由 verifyRoleId、createUserId、internshipId 自动计算。"
+    )
+    @PostMapping(value = "/batchInitRelIntershipUserFromAvailable", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object batchInitRelIntershipUserFromAvailable(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("batchInitRelIntershipUserFromAvailable", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        String jobCode = node != null ? node.getString("jobCode") : requestJson.getString("jobCode");
+        JSONObject source = node != null ? node : requestJson;
+        List<Integer> departmentIds = parseDepartmentIds(source, "departmentId");
+        Integer currentVerifyTypeId = node != null ? node.getInteger("currentVerifyTypeId") : requestJson.getInteger("currentVerifyTypeId");
+        Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
+        Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
+        Integer verifyRoleId = node != null ? node.getInteger("verifyRoleId") : requestJson.getInteger("verifyRoleId");
+
+        return BaseResponse.ok(iInternshipService.batchInitRelIntershipUserFromAvailable(
+                internshipId, jobCode, departmentIds, processId, createUserId, verifyRoleId, currentVerifyTypeId
+        ));
+    }
+
+    private List<Integer> parseDepartmentIds(JSONObject source, String fieldName) {
+        if (source == null || fieldName == null || fieldName.trim().isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        Object raw = source.get(fieldName);
+        if (raw == null) {
+            return java.util.Collections.emptyList();
+        }
+        if (raw instanceof JSONArray) {
+            JSONArray arr = (JSONArray) raw;
+            return arr.stream()
+                    .map(this::parseToIntegerOrNull)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .collect(Collectors.toList());
+        }
+        if (raw instanceof java.util.Collection<?>) {
+            java.util.Collection<?> coll = (java.util.Collection<?>) raw;
+            return coll.stream()
+                    .map(this::parseToIntegerOrNull)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .collect(Collectors.toList());
+        }
+        if (raw.getClass().isArray()) {
+            Object[] arr = (Object[]) raw;
+            return Arrays.stream(arr)
+                    .map(this::parseToIntegerOrNull)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .collect(Collectors.toList());
+        }
+        if (raw instanceof String) {
+            String s = String.valueOf(raw).trim();
+            if (s.startsWith("[") && s.endsWith("]")) {
+                try {
+                    JSONArray arr = JSON.parseArray(s);
+                    return arr.stream()
+                            .map(this::parseToIntegerOrNull)
+                            .filter(Objects::nonNull)
+                            .distinct()
+                            .collect(Collectors.toList());
+                } catch (Exception ignore) {
+                    // 继续按单值/逗号串解析
+                }
+            }
+            if (s.contains(Constant.SPLIT_OPERATOR.COMMA)) {
+                return Arrays.stream(s.split(Constant.SPLIT_OPERATOR.COMMA))
+                        .map(String::trim)
+                        .filter(v -> !v.isEmpty())
+                        .map(this::parseToIntegerOrNull)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .collect(Collectors.toList());
+            }
+        }
+        Integer single = parseToIntegerOrNull(raw);
+        if (single != null) {
+            return java.util.Collections.singletonList(single);
+        }
+        throw BaseResponse.parameterInvalid.error(fieldName + " 参数格式错误，应为整数或整数数组，实际类型="
+                + raw.getClass().getName() + "，值=" + String.valueOf(raw));
+    }
+
+    private Integer parseToIntegerOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        String s = String.valueOf(value).trim();
+        if (s.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 
     @Operation(
             summary = "查询可分配老师列表",
