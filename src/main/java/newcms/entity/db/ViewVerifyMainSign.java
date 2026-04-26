@@ -22,7 +22,7 @@ public class ViewVerifyMainSign extends BaseInfo {
     private Integer isAudit;
     private String reason;
     private String tableName;
-
+    private Integer internshipPostId;
     private String verifyUserName;
     private String createUserName;
 

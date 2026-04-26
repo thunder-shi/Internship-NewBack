@@ -23,7 +23,7 @@ public class ViewMainSign extends BaseInfo {
     private Integer verifyThirdRoleId;
     private Integer verifyFourthRoleId;
     private Integer verifyFifthRoleId;
-
+    private Integer internshipPostId;
     private String address;
     private Integer imgId;
     private Integer stuInternshipId;

@@ -81,7 +81,14 @@ public interface IInternshipService {
      * @param sort         排序规则
      * @return 可选用户分页结果
      */
-    Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer departmentId, Integer page, Integer size, Sort sort);
+    Object getAvailableUsersForInternship(Integer internshipId, String jobCode, List<Integer> departmentIds, Integer page, Integer size, Sort sort);
+
+    /**
+     * 按 getAvailableUsersForInternship 的同口径批量创建 RelIntershipUser，并同步创建 MainVerifyProcess(SAVE)。
+     */
+    Object batchInitRelIntershipUserFromAvailable(Integer internshipId, String jobCode, List<Integer> departmentIds,
+                                                  Integer processId, Integer createUserId, Integer verifyRoleId,
+                                                  Integer currentVerifyTypeId);
 
     /**
      * 查询当前实习项目下可参与系统分配的校内导师（审核通过），按部门树过滤。
