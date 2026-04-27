@@ -97,7 +97,9 @@ EncryptUtil.getKeyWord(keyWord)  // 解密（用后销毁密钥）
 
 ## MinIO 文件上传限制
 
-- 单次最多 5 个文件，单文件 ≤ 20MB，总计 ≤ 50MB
+- 单次最多 5 个文件
+- **日志(MainDiary)**：单文件 ≤ 50MB，总计 ≤ 100MB
+- **其他场景**：单文件 ≤ 20MB，总计 ≤ 50MB
 - 格式白名单：图片(jpg/png/gif/bmp/webp)、文档(pdf/doc/docx/xls/xlsx/ppt/pptx/txt)、压缩包(zip/rar/7z)、视频(mp4/avi/mkv)
 - 同名文件（原始文件名相同）拒绝上传
 
