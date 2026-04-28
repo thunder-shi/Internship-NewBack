@@ -2741,21 +2741,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
-     * 学生报名岗位被拒绝/退回时，根据 RelStuInternshipPost 的 relationId 原子性扣减对应岗位的当前人数
-     */
-    private void decreasePostPersonNumByRelation(Integer relationId) {
-        if (relationId == null) return;
-        Object relObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
-        if (relObj == null) return;
-        JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer postId = relJson.getInteger("internshipPostId");
-        if (postId == null) return;
-
-        // 原子性扣减：nowPersonNum - 1 WHERE nowPersonNum > 0，无需额外读取当前值
-        mainInternshipPostDao.decrementNowPersonNum(postId);
-    }
-
-    /**
      * 审核退回后，回退 currentVerifyTypeId 并新建一条 isAudit=-1 的记录，等待用户重新提交。
      * 用户重新提交时只需将该记录的 isAudit 改为 0（通过 auditProcess 接口即可），
      * 无需专门的 resubmit 接口。

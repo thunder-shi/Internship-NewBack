@@ -11,6 +11,7 @@ import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
 import newcms.utils.EncryptUtil;
+import newcms.utils.FastJsonUtil;
 import newcms.utils.MinIOUtils;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
@@ -23,7 +24,7 @@ import org.springframework.web.multipart.MultipartFile;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.*;
-// import java.util.stream.Collectors;
+import java.util.stream.Collectors;
 
 /**
  * 查询：@getOneRecordById，@getRecordsByID，@getSomeRecords
@@ -167,6 +168,7 @@ public class CommonController extends Base {
     public void previewFile(@PathVariable Integer id, HttpServletResponse response) {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
         minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
                 ossFile.getFileName(), true, response);
     }
@@ -180,6 +182,7 @@ public class CommonController extends Base {
     public Object previewUrl(@PathVariable Integer id) {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
         String url = minIOUtils.presignedPreviewUrl(ossFile.getBucketName(), ossFile.getOssPath(), 600);
         return BaseResponse.ok(url);
     }
@@ -192,26 +195,53 @@ public class CommonController extends Base {
     public Object downloadFile(@PathVariable Integer id) {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
         String url = minIOUtils.presignedUrl(ossFile.getBucketName(), ossFile.getOssPath(),
                 ossFile.getFileName(), 600);
         return BaseResponse.ok(url);
     }
 
     /**
-     * 批量删除文件（MinIO 对象 + 数据库软删除），传 ossFileIds 数组
+     * 批量删除文件（MinIO 对象 + 数据库软删除），传 ossFileIds 数组。
+     * 只允许删除属于当前登录用户的文件。
      */
     @DeleteMapping(value = "/minio/deleteFile")
     public Object deleteMinioByIds(@RequestParam Integer[] ossFileIds) {
         List<Integer> ids = Arrays.asList(ossFileIds);
+        Integer currentUserId = getLoginUserId();
         List<SysOssFile> ossFiles = sysOssFileDao.getByIdInAndIsDeletedFalse(ids);
+        boolean hasUnowned = ossFiles.stream()
+                .anyMatch(f -> !currentUserId.equals(f.getUserId()));
+        if (hasUnowned) {
+            throw BaseResponse.unAuthorization.error("只能删除自己上传的文件");
+        }
         List<String> ossPaths = ossFiles.stream()
                 .filter(f -> f.getOssPath() != null)
                 .map(SysOssFile::getOssPath)
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
         if (!ObjectUtils.isEmpty(ossPaths)) {
             minIOUtils.removeObjects(Constant.BUCKET_NAME, ossPaths);
         }
         sysOssFileDao.updateByIds(ids);
         return BaseResponse.ok(null);
+    }
+
+    /**
+     * 文件读取权限校验：文件上传者与当前用户必须属于同一学校。
+     * 允许同校跨角色访问（教师查看学生文件等），拒绝跨校访问。
+     */
+    private void checkFileReadAccess(SysOssFile ossFile) {
+        Integer fileOwnerSchoolId = getSchoolIdForUser(ossFile.getUserId());
+        Integer currentUserSchoolId = getSchoolIdForUser(getLoginUserId());
+        if (fileOwnerSchoolId != null && !fileOwnerSchoolId.equals(currentUserSchoolId)) {
+            throw BaseResponse.unAuthorization.error("无权访问此文件");
+        }
+    }
+
+    private Integer getSchoolIdForUser(Integer userId) {
+        if (userId == null) return null;
+        Object userObj = iCommonService.getOneRecordById("ViewBaseUser", userId);
+        if (userObj == null) return null;
+        return FastJsonUtil.toJson(userObj).getInteger("schoolId");
     }
 }
