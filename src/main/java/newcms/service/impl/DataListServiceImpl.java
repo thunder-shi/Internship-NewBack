@@ -58,6 +58,9 @@ public class DataListServiceImpl extends Base implements IDataListService {
                         Object relStuObj = iCommonService.getOneRecordById(tableName, relationId);
                         if (relStuObj != null) {
                             JSONObject relStuJson = FastJsonUtil.toJson(relStuObj);
+                            if (isFinalTitleStudent(relStuJson)) {
+                                return rawRet;
+                            }
                             Integer titleId = relStuJson.getInteger("titleId");
                             Integer stuId = relStuJson.getInteger("stuId");
                             if (titleId != null && stuId != null) {
@@ -138,6 +141,9 @@ public class DataListServiceImpl extends Base implements IDataListService {
                     Integer relationId = row.getInteger("id");
                     Integer internshipId = row.getInteger("internshipId");
                     Integer stuId = row.getInteger("stuId");
+                    if (isFinalTitleStudent(row)) {
+                        continue;
+                    }
                     if (relationId == null || internshipId == null || stuId == null) {
                         continue;
                     }
@@ -211,6 +217,16 @@ public class DataListServiceImpl extends Base implements IDataListService {
             return null;
         }
     }
+
+    private boolean isFinalTitleStudent(JSONObject row) {
+        if (row == null) {
+            return false;
+        }
+        Integer isFinal = row.getInteger("isFinal");
+        String sourceType = row.getString("sourceType");
+        return (isFinal != null && isFinal == 1) || "TEACHER_ASSIGN".equalsIgnoreCase(sourceType);
+    }
+
     @Override
     public Object editOneNode(String tblName, JSONObject node) {
         // MainVerifyProcess 的状态变更统一走 internshipService.auditProcess，
@@ -244,6 +260,9 @@ public class DataListServiceImpl extends Base implements IDataListService {
 
         }
         // 学生选题首次提交时，确保不通过原因字段为空（由老师审核不通过后再写入）
+        if ("RelTitleStudent".equals(tblName) && isNew) {
+            return iInternshipService.createRelTitleStudent(node);
+        }
         if ("RelTitleStudent".equals(tblName) && isNew && !node.containsKey("topicReasons")) {
             node.put("topicReasons", null);
         }

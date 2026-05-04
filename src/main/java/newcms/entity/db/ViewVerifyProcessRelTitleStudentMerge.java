@@ -116,4 +116,16 @@ public class ViewVerifyProcessRelTitleStudentMerge extends NameRemarkInfo {
 
     @Column(name = "topic_Reasons")
     private String topicReasons;
+
+    @Column(name = "source_type")
+    private String sourceType;
+
+    @Column(name = "is_final")
+    private Integer isFinal;
+
+    @Column(name = "confirmed_by")
+    private Integer confirmedBy;
+
+    @Column(name = "confirmed_time")
+    private Date confirmedTime;
 }

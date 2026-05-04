@@ -7,6 +7,8 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkInfo;
 
+import java.util.Date;
+
 @Getter
 @Setter
 @Entity
@@ -45,4 +47,16 @@ public class ViewRelTitleStudent extends NameRemarkInfo {
 
     @Column(name = "topic_Reasons")
     private String topicReasons;
+
+    @Column(name = "source_type")
+    private String sourceType;
+
+    @Column(name = "is_final")
+    private Integer isFinal;
+
+    @Column(name = "confirmed_by")
+    private Integer confirmedBy;
+
+    @Column(name = "confirmed_time")
+    private Date confirmedTime;
 }
