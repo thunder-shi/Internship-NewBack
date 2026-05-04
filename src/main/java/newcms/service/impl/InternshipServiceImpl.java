@@ -6,8 +6,12 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.entity.db.RelTitleStudent;
+import newcms.entity.db.RelTitleTeacher;
 import newcms.entity.db.ViewBaseUser;
 import newcms.repository.db.MainInternshipPostDao;
+import newcms.repository.db.RelTitleStudentDao;
+import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
@@ -23,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
@@ -46,6 +51,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final String TITLE_SEL_STATUS_NOT_SUBMITTED = "notSubmitted";
     private static final String TITLE_SEL_STATUS_PENDING = "pendingAudit";
     private static final String TITLE_SEL_STATUS_APPROVED = "titleApproved";
+    private static final String TITLE_SOURCE_STUDENT_CANDIDATE = "STUDENT_CANDIDATE";
+    private static final String TITLE_SOURCE_TEACHER_ASSIGN = "TEACHER_ASSIGN";
+    private static final ConcurrentHashMap<String, Object> TITLE_STUDENT_LOCKS = new ConcurrentHashMap<>();
 
     @Resource
     private ICommonService iCommonService;
@@ -61,6 +69,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private MainInternshipPostDao mainInternshipPostDao;
+
+    @Resource
+    private RelTitleStudentDao relTitleStudentDao;
+
+    @Resource
+    private RelTitleTeacherDao relTitleTeacherDao;
 
     // ==================== 实习项目管理====================
 
@@ -2682,7 +2696,268 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         JSONObject updateRelTitleStudent = new JSONObject();
         updateRelTitleStudent.put("id", relationId);
         updateRelTitleStudent.put("currentVerifyTypeId", verifyTypeId + 1);
+        RelTitleStudent current = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+        Integer internshipId = resolveTitleStudentInternshipId(current);
+        if (current != null && internshipId != null) {
+            synchronized (titleStudentLock(internshipId)) {
+                validateNoFinalTitleConflict(current.getStuId(), internshipId, current.getTitleId(), relationId);
+                updateRelTitleStudent.put("internshipId", internshipId);
+                updateRelTitleStudent.put("isFinal", 1);
+                if (current.getSourceType() == null || current.getSourceType().isBlank()) {
+                    updateRelTitleStudent.put("sourceType", TITLE_SOURCE_STUDENT_CANDIDATE);
+                }
+                updateRelTitleStudent.put("confirmedBy", resolveCurrentUserId());
+                updateRelTitleStudent.put("confirmedTime", new Date());
+                iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, updateRelTitleStudent);
+                releaseOtherCandidatesOfStudent(current.getStuId(), internshipId, relationId);
+                releaseOtherCandidatesOfTitle(current.getTitleId(), relationId);
+                return;
+            }
+        }
         iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, updateRelTitleStudent);
+    }
+
+    @Override
+    public Object createRelTitleStudent(JSONObject node) {
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node cannot be null");
+        }
+        Integer titleId = node.getInteger("titleId");
+        Integer stuId = node.getInteger("stuId");
+        if (titleId == null || stuId == null) {
+            throw BaseResponse.parameterInvalid.error("titleId and stuId cannot be null");
+        }
+        RelTitleTeacher title = relTitleTeacherDao.getByIdAndIsDeletedFalse(titleId);
+        if (title == null || title.getInternshipId() == null) {
+            throw BaseResponse.parameterInvalid.error("title does not exist or has no internship");
+        }
+        Integer internshipId = title.getInternshipId();
+        boolean teacherAssign = isTeacherAssignedTitleSelection(node);
+        Object lock = titleStudentLock(internshipId);
+        synchronized (lock) {
+            validateNoFinalTitleConflict(stuId, internshipId, titleId, null);
+            List<RelTitleStudent> sameRows = relTitleStudentDao.findByTitleIdAndStuIdAndIsDeletedFalse(titleId, stuId);
+            if (sameRows != null && !sameRows.isEmpty()) {
+                if (!teacherAssign) {
+                    throw BaseResponse.moreInfoError.error("student already selected this title");
+                }
+                RelTitleStudent existing = sameRows.get(0);
+                return confirmTeacherAssignedExistingCandidate(existing.getId(), internshipId);
+            }
+            if (!teacherAssign && hasActiveTitleCandidate(titleId)) {
+                throw BaseResponse.moreInfoError.error("title is already held by another candidate");
+            }
+
+            if (!node.containsKey("topicReasons")) {
+                node.put("topicReasons", null);
+            }
+            node.put("internshipId", internshipId);
+            node.put("sourceType", teacherAssign ? TITLE_SOURCE_TEACHER_ASSIGN : TITLE_SOURCE_STUDENT_CANDIDATE);
+            node.put("isFinal", teacherAssign ? 1 : 0);
+            if (!node.containsKey("currentVerifyTypeId")) {
+                node.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+            }
+            if (teacherAssign) {
+                node.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+                node.put("confirmedBy", resolveCurrentUserId());
+                node.put("confirmedTime", new Date());
+            }
+
+            Object saved = iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, node);
+            JSONObject savedJson = FastJsonUtil.toJson(saved);
+            Integer relationId = savedJson.getInteger("id");
+            if (teacherAssign) {
+                releaseOtherCandidatesOfStudent(stuId, internshipId, relationId);
+                releaseOtherCandidatesOfTitle(titleId, relationId);
+            } else {
+                createFirstVerifyProcessForRelTeacherStudent(relationId, internshipId, stuId, TABLE_REL_TITLE_STUDENT);
+            }
+            return saved;
+        }
+    }
+
+    private Object confirmTeacherAssignedExistingCandidate(Integer relationId, Integer internshipId) {
+        RelTitleStudent existing = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+        if (existing == null) {
+            throw BaseResponse.parameterInvalid.error("title selection does not exist");
+        }
+        validateNoFinalTitleConflict(existing.getStuId(), internshipId, existing.getTitleId(), relationId);
+        JSONObject update = new JSONObject();
+        update.put("id", relationId);
+        update.put("sourceType", TITLE_SOURCE_TEACHER_ASSIGN);
+        update.put("isFinal", 1);
+        update.put("internshipId", internshipId);
+        update.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+        update.put("confirmedBy", resolveCurrentUserId());
+        update.put("confirmedTime", new Date());
+        Object saved = iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, update);
+        deleteVerifyProcessByRelationIdAndTableName(relationId, TABLE_REL_TITLE_STUDENT);
+        releaseOtherCandidatesOfStudent(existing.getStuId(), internshipId, relationId);
+        releaseOtherCandidatesOfTitle(existing.getTitleId(), relationId);
+        return saved;
+    }
+
+    private boolean isTeacherAssignedTitleSelection(JSONObject node) {
+        String sourceType = normalizeTitleSourceType(node.getString("sourceType"));
+        Integer isFinal = node.getInteger("isFinal");
+        return TITLE_SOURCE_TEACHER_ASSIGN.equals(sourceType)
+                || (isFinal != null && isFinal == 1);
+    }
+
+    private String normalizeTitleSourceType(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return TITLE_SOURCE_STUDENT_CANDIDATE;
+        }
+        String normalized = sourceType.trim().toUpperCase(Locale.ROOT);
+        return TITLE_SOURCE_TEACHER_ASSIGN.equals(normalized)
+                ? TITLE_SOURCE_TEACHER_ASSIGN
+                : TITLE_SOURCE_STUDENT_CANDIDATE;
+    }
+
+    private Object titleStudentLock(Integer internshipId) {
+        String key = "title-student:" + (internshipId == null ? "none" : internshipId);
+        return TITLE_STUDENT_LOCKS.computeIfAbsent(key, k -> new Object());
+    }
+
+    private Integer resolveTitleStudentInternshipId(RelTitleStudent row) {
+        if (row == null) {
+            return null;
+        }
+        if (row.getInternshipId() != null) {
+            return row.getInternshipId();
+        }
+        if (row.getTitleId() == null) {
+            return null;
+        }
+        RelTitleTeacher title = relTitleTeacherDao.getByIdAndIsDeletedFalse(row.getTitleId());
+        return title != null ? title.getInternshipId() : null;
+    }
+
+    private Integer resolveCurrentUserId() {
+        try {
+            Integer userId = Base.getLoginUserId();
+            return userId != null ? userId : 0;
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    private void validateNoFinalTitleConflict(Integer stuId, Integer internshipId, Integer titleId, Integer keepRelationId) {
+        if (stuId == null || internshipId == null || titleId == null) {
+            throw BaseResponse.parameterInvalid.error("stuId, internshipId and titleId cannot be null");
+        }
+        boolean studentHasFinal = relTitleStudentDao
+                .findByStuIdAndInternshipIdAndIsFinalAndIsDeletedFalse(stuId, internshipId, 1)
+                .stream()
+                .anyMatch(row -> !row.getId().equals(keepRelationId));
+        if (studentHasFinal) {
+            throw BaseResponse.moreInfoError.error("student already has a final title in this internship");
+        }
+        boolean titleHasFinal = relTitleStudentDao
+                .findByTitleIdAndIsFinalAndIsDeletedFalse(titleId, 1)
+                .stream()
+                .anyMatch(row -> !row.getId().equals(keepRelationId));
+        if (titleHasFinal) {
+            throw BaseResponse.moreInfoError.error("title already has a final student");
+        }
+    }
+
+    private boolean hasActiveTitleCandidate(Integer titleId) {
+        return relTitleStudentDao.findByTitleIdAndIsDeletedFalse(titleId)
+                .stream()
+                .anyMatch(row -> row.getIsFinal() == null || row.getIsFinal() != 1);
+    }
+
+    private void releaseOtherCandidatesOfStudent(Integer stuId, Integer internshipId, Integer keepRelationId) {
+        if (stuId == null || internshipId == null) {
+            return;
+        }
+        for (RelTitleStudent row : relTitleStudentDao.findByStuIdAndInternshipIdAndIsDeletedFalse(stuId, internshipId)) {
+            releaseCandidate(row, keepRelationId);
+        }
+    }
+
+    private void releaseOtherCandidatesOfTitle(Integer titleId, Integer keepRelationId) {
+        if (titleId == null) {
+            return;
+        }
+        for (RelTitleStudent row : relTitleStudentDao.findByTitleIdAndIsDeletedFalse(titleId)) {
+            releaseCandidate(row, keepRelationId);
+        }
+    }
+
+    private void releaseCandidate(RelTitleStudent row, Integer keepRelationId) {
+        if (row == null || row.getId() == null || row.getId().equals(keepRelationId)) {
+            return;
+        }
+        if (row.getIsFinal() != null && row.getIsFinal() == 1) {
+            return;
+        }
+        deleteVerifyProcessByRelationIdAndTableName(row.getId(), TABLE_REL_TITLE_STUDENT);
+        iCommonService.deleteRecordByDelflag(TABLE_REL_TITLE_STUDENT, row.getId());
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Object confirmStudentTopicSelection(JSONObject node) {
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node cannot be null");
+        }
+        Integer relationId = node.getInteger("relationId");
+        if (relationId == null) {
+            relationId = node.getInteger("relTitleStudentId");
+        }
+        if (relationId == null) {
+            throw BaseResponse.parameterInvalid.error("relationId cannot be null");
+        }
+        RelTitleStudent selection = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+        if (selection == null) {
+            throw BaseResponse.parameterInvalid.error("title selection does not exist");
+        }
+        Integer internshipId = resolveTitleStudentInternshipId(selection);
+        assertOptionalEquals(node.getInteger("stuId"), selection.getStuId(), "stuId");
+        assertOptionalEquals(node.getInteger("titleId"), selection.getTitleId(), "titleId");
+        assertOptionalEquals(node.getInteger("internshipId"), internshipId, "internshipId");
+        validateNoFinalTitleConflict(selection.getStuId(), internshipId, selection.getTitleId(), relationId);
+
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("relationId", relationId);
+        searchKeys.put("tableName", TABLE_REL_TITLE_STUDENT);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                TABLE_MAIN_VERIFY_PROCESS, searchKeys, null, Sort.by(Sort.Direction.DESC, "id"), 1, 1);
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            if (selection.getIsFinal() != null && selection.getIsFinal() == 1) {
+                return selection;
+            }
+            throw BaseResponse.moreInfoError.error("title selection has no audit process");
+        }
+        JSONObject verifyProcessJson = FastJsonUtil.toJson(page.getContent().get(0));
+        Integer currentAudit = verifyProcessJson.getInteger("isAudit");
+        if (currentAudit != null && currentAudit == Constant.AUDIT_STATUS.PASS
+                && selection.getIsFinal() != null && selection.getIsFinal() == 1) {
+            return selection;
+        }
+        if (currentAudit == null || currentAudit != Constant.AUDIT_STATUS.SUBMIT) {
+            throw BaseResponse.parameterInvalid.error("only submitted title candidates can be confirmed");
+        }
+        JSONObject auditNode = new JSONObject();
+        auditNode.put("id", verifyProcessJson.getInteger("id"));
+        auditNode.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        String reason = node.getString("reason");
+        if (reason != null) {
+            auditNode.put("reason", reason);
+        }
+        String verifyUserId = node.getString("verifyUserId");
+        if (verifyUserId != null && !verifyUserId.isBlank()) {
+            auditNode.put("verifyUserId", verifyUserId);
+        }
+        return auditProcess(auditNode);
+    }
+
+    private void assertOptionalEquals(Integer expected, Integer actual, String fieldName) {
+        if (expected != null && actual != null && !expected.equals(actual)) {
+            throw BaseResponse.parameterInvalid.error(fieldName + " does not match title selection");
+        }
     }
 
     @Override
@@ -2921,6 +3196,14 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         Integer verifyTypeId = processJson.getInteger("verifyTypeId");
         boolean needsVerify = verifyTypeId != null && verifyTypeId >= Constant.VERIFY_LEVEL.ONE_VERIFY;
+
+        // Keep the business row aligned with the process definition so the first approval
+        // advances from the real starting level instead of from NO_VERIFY.
+        JSONObject levelUpdate = new JSONObject();
+        levelUpdate.put("id", relationId);
+        levelUpdate.put("currentVerifyTypeId",
+                needsVerify ? Constant.VERIFY_LEVEL.ONE_VERIFY : Constant.VERIFY_LEVEL.NO_VERIFY);
+        iCommonService.saveOneRecord(targetTableName, levelUpdate);
 
         String verifyUserId;
         int isAudit;

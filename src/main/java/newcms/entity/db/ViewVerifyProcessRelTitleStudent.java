@@ -7,6 +7,8 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkInfo;
 
+import java.util.Date;
+
 /**
  * 审核流程-学生选题视图（view_verify_process_rel_title_student）
  * 包含审核流程信息、学生选题信息、题目信息以及相关用户姓名。
@@ -98,5 +100,17 @@ public class ViewVerifyProcessRelTitleStudent extends NameRemarkInfo {
 
     @Column(name = "topic_Reasons")
     private String topicReasons;
+
+    @Column(name = "source_type")
+    private String sourceType;
+
+    @Column(name = "is_final")
+    private Integer isFinal;
+
+    @Column(name = "confirmed_by")
+    private Integer confirmedBy;
+
+    @Column(name = "confirmed_time")
+    private Date confirmedTime;
 }
 

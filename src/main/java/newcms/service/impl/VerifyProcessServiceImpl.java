@@ -7,8 +7,12 @@ import newcms.base.Constant;
 import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
 import newcms.entity.db.RelStuInternshipPost;
+import newcms.entity.db.RelTitleStudent;
+import newcms.entity.db.RelTitleTeacher;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.RelStuInternshipPostDao;
+import newcms.repository.db.RelTitleStudentDao;
+import newcms.repository.db.RelTitleTeacherDao;
 import newcms.service.ICommonService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -21,10 +25,12 @@ import org.springframework.transaction.annotation.Transactional;
 import com.alibaba.fastjson.JSONObject;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +39,10 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class VerifyProcessServiceImpl extends Base implements IVerifyProcessService {
+    private static final String TABLE_REL_TITLE_STUDENT = "RelTitleStudent";
+    private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
+    private static final String TITLE_SOURCE_STUDENT_CANDIDATE = "STUDENT_CANDIDATE";
+    private static final ConcurrentHashMap<String, Object> TITLE_CONFIRM_LOCKS = new ConcurrentHashMap<>();
 
     @Resource
     private ICommonService iCommonService;
@@ -42,6 +52,12 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
     @Resource
     private RelStuInternshipPostDao relStuInternshipPostDao;
+
+    @Resource
+    private RelTitleStudentDao relTitleStudentDao;
+
+    @Resource
+    private RelTitleTeacherDao relTitleTeacherDao;
 
     @Override
     @SuppressWarnings("unchecked")
@@ -400,6 +416,15 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             verifyTypeId = 1; // 默认无需审核
         }
 
+        if (verifyTypeId >= Constant.VERIFY_LEVEL.ONE_VERIFY
+                && currentVerifyTypeId < Constant.VERIFY_LEVEL.ONE_VERIFY) {
+            currentVerifyTypeId = Constant.VERIFY_LEVEL.ONE_VERIFY;
+        }
+        if (verifyTypeId < Constant.VERIFY_LEVEL.ONE_VERIFY
+                && currentVerifyTypeId > Constant.VERIFY_LEVEL.NO_VERIFY) {
+            currentVerifyTypeId = Constant.VERIFY_LEVEL.NO_VERIFY;
+        }
+
         int nextLevel = currentVerifyTypeId + 1;
 
         // 更新业务实体表的 currentVerifyTypeId
@@ -441,6 +466,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                         cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
                     }
                 }
+            } else if (TABLE_REL_TITLE_STUDENT.equals(tableName)) {
+                confirmTitleSelection(relationId);
             }
         }
     }
@@ -452,6 +479,142 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
      * @param verifyLevel 审核级别（2-6）
      * @return 对应级别的审核角色ID
      */
+    private void confirmTitleSelection(Integer relationId) {
+        if (relationId == null) {
+            return;
+        }
+        RelTitleStudent current = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+        if (current == null) {
+            return;
+        }
+        Integer internshipId = resolveTitleSelectionInternshipId(current);
+        if (internshipId == null) {
+            throw BaseResponse.moreInfoError.error("title selection has no internshipId");
+        }
+
+        Object lock = titleConfirmLock(internshipId);
+        synchronized (lock) {
+            current = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+            if (current == null) {
+                return;
+            }
+            internshipId = resolveTitleSelectionInternshipId(current);
+            validateNoFinalTitleConflict(current.getStuId(), internshipId, current.getTitleId(), relationId);
+
+            JSONObject update = new JSONObject();
+            update.put("id", relationId);
+            update.put("internshipId", internshipId);
+            update.put("isFinal", 1);
+            if (current.getSourceType() == null || current.getSourceType().isBlank()) {
+                update.put("sourceType", TITLE_SOURCE_STUDENT_CANDIDATE);
+            }
+            update.put("confirmedBy", resolveCurrentUserId());
+            update.put("confirmedTime", new Date());
+            iCommonService.saveOneRecord(TABLE_REL_TITLE_STUDENT, update);
+
+            releaseOtherCandidatesOfStudent(current.getStuId(), internshipId, relationId);
+            releaseOtherCandidatesOfTitle(current.getTitleId(), relationId);
+        }
+    }
+
+    private Integer resolveTitleSelectionInternshipId(RelTitleStudent row) {
+        if (row == null) {
+            return null;
+        }
+        if (row.getInternshipId() != null) {
+            return row.getInternshipId();
+        }
+        if (row.getTitleId() == null) {
+            return null;
+        }
+        RelTitleTeacher title = relTitleTeacherDao.getByIdAndIsDeletedFalse(row.getTitleId());
+        return title != null ? title.getInternshipId() : null;
+    }
+
+    private Object titleConfirmLock(Integer internshipId) {
+        String key = "title-confirm:" + (internshipId == null ? "none" : internshipId);
+        return TITLE_CONFIRM_LOCKS.computeIfAbsent(key, k -> new Object());
+    }
+
+    private Integer resolveCurrentUserId() {
+        try {
+            Integer userId = Base.getLoginUserId();
+            return userId != null ? userId : 0;
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    private void validateNoFinalTitleConflict(Integer stuId, Integer internshipId, Integer titleId, Integer keepRelationId) {
+        if (stuId == null || internshipId == null || titleId == null) {
+            throw BaseResponse.parameterInvalid.error("stuId, internshipId and titleId cannot be null");
+        }
+        boolean studentHasFinal = relTitleStudentDao
+                .findByStuIdAndInternshipIdAndIsFinalAndIsDeletedFalse(stuId, internshipId, 1)
+                .stream()
+                .anyMatch(row -> !row.getId().equals(keepRelationId));
+        if (studentHasFinal) {
+            throw BaseResponse.moreInfoError.error("student already has a final title in this internship");
+        }
+        boolean titleHasFinal = relTitleStudentDao
+                .findByTitleIdAndIsFinalAndIsDeletedFalse(titleId, 1)
+                .stream()
+                .anyMatch(row -> !row.getId().equals(keepRelationId));
+        if (titleHasFinal) {
+            throw BaseResponse.moreInfoError.error("title already has a final student");
+        }
+    }
+
+    private void releaseOtherCandidatesOfStudent(Integer stuId, Integer internshipId, Integer keepRelationId) {
+        if (stuId == null || internshipId == null) {
+            return;
+        }
+        for (RelTitleStudent row : relTitleStudentDao.findByStuIdAndInternshipIdAndIsDeletedFalse(stuId, internshipId)) {
+            releaseCandidate(row, keepRelationId);
+        }
+    }
+
+    private void releaseOtherCandidatesOfTitle(Integer titleId, Integer keepRelationId) {
+        if (titleId == null) {
+            return;
+        }
+        for (RelTitleStudent row : relTitleStudentDao.findByTitleIdAndIsDeletedFalse(titleId)) {
+            releaseCandidate(row, keepRelationId);
+        }
+    }
+
+    private void releaseCandidate(RelTitleStudent row, Integer keepRelationId) {
+        if (row == null || row.getId() == null || row.getId().equals(keepRelationId)) {
+            return;
+        }
+        if (row.getIsFinal() != null && row.getIsFinal() == 1) {
+            return;
+        }
+        deleteVerifyProcessByRelationIdAndTableName(row.getId(), TABLE_REL_TITLE_STUDENT);
+        iCommonService.deleteRecordByDelflag(TABLE_REL_TITLE_STUDENT, row.getId());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void deleteVerifyProcessByRelationIdAndTableName(Integer relationId, String tableName) {
+        if (relationId == null || tableName == null || tableName.isBlank()) {
+            return;
+        }
+        JSONObject searchKeys = new JSONObject();
+        searchKeys.put("relationId", relationId);
+        searchKeys.put("tableName", tableName);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                TABLE_MAIN_VERIFY_PROCESS, searchKeys, null, Sort.unsorted(), 1, 100);
+        if (page == null || page.getContent() == null) {
+            return;
+        }
+        for (Object obj : page.getContent()) {
+            Integer id = FastJsonUtil.toJson(obj).getInteger("id");
+            if (id != null) {
+                iCommonService.deleteRecordByDelflag(TABLE_MAIN_VERIFY_PROCESS, id);
+            }
+        }
+    }
+
     @Override
     public Integer getVerifyRoleIdByLevel(JSONObject relJson, Integer verifyLevel) {
         if (relJson == null || verifyLevel == null) {

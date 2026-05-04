@@ -88,6 +88,16 @@ public class InternshipProcessController {
         return BaseResponse.ok(iInternshipService.auditProcess(node));
     }
 
+    @PostMapping(value = "/confirmStudentTopicSelection", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object confirmStudentTopicSelection(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("confirmStudentTopicSelection", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) {
+            node = requestJson;
+        }
+        return BaseResponse.ok(iInternshipService.confirmStudentTopicSelection(node));
+    }
+
     @Operation(
             summary = "学生端-查询最近一条选题审核不通过记录",
             description = "按 stuId 查询 view_verify_process_rel_title_student_merge 中最近一条 isAudit=NOTPASS 的记录，返回不通过理由 topicReasons。"

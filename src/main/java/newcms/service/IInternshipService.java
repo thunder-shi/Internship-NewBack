@@ -58,6 +58,16 @@ public interface IInternshipService {
     Object acknowledgeRejectedTitleSelection(Integer relationId, Integer stuId);
 
     /**
+     * Create a RelTitleStudent row with candidate/final-assignment isolation rules.
+     */
+    Object createRelTitleStudent(JSONObject node);
+
+    /**
+     * Atomically approve one student title candidate as the final title.
+     */
+    Object confirmStudentTopicSelection(JSONObject node);
+
+    /**
      * 老师申报题目 / 师生互选-学生选题：新增关联记录后创建首条 MainVerifyProcess。
      * RelTitleTeacher、RelTeacherStudent 走「老师申报题目」流程；RelTitleStudent 走 INTERNAL_STUDENT_TEACHER_MATCH。
      * 需审核时 isAudit=-1（保存未提交），无需审核时 isAudit=1（直接通过）。
