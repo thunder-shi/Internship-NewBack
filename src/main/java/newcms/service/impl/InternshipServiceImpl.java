@@ -2561,10 +2561,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if ("MainDiary".equals(tableName)) {
             return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
         }
-        if ("MainSign".equals(tableName)) {
-            return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainSign", isAudit, false);
-        }
-
         if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved) {
             // 审核通过：推进到下一级
             iVerifyProcessService.onVerifyProcessApproved(Id);

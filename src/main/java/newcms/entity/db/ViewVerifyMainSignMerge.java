@@ -47,7 +47,7 @@ public class ViewVerifyMainSignMerge extends BaseInfo {
     private Byte signType;
 
     private Integer stuInternshipId;
-
+    private Integer isAllVerified;
     private String remarks;
     private Integer currentVerifyTypeId;
 }

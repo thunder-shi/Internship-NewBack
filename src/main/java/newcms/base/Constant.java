@@ -151,6 +151,8 @@ public class Constant {
         public static final String EXTERNAL_STUDENT_ASSIGN_POST = "EXTERNAL_STUDENT_ASSIGN_POST"; // 校外实习-学生岗位安排
         public static final String EXTERNAL_ASSIGN_INTERNAL_TUTOR = "EXTERNAL_ASSIGN_INTERNAL_TUTOR"; // 校外实习-分配校内导师
         public static final String EXTERNAL_ENTERPRISE_ASSIGN_TUTOR = "EXTERNAL_ENTERPRISE_ASSIGN_TUTOR"; // 校外实习-分配企业导师
+        /** 学生实习打卡审核（ViewRelProcessInternship.processTypeCode） */
+        public static final String STUDENT_SIGN = "STUDENT_SIGN";
     }
 
     public static final String BUCKET_NAME = "internship";
