@@ -2373,6 +2373,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
         JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
         Integer bizId = verifyJson.getInteger("relationId");
+        Integer processId = verifyJson.getInteger("processId");
         Integer createUserId = verifyJson.getInteger("createUserId");
         String reason = node.getString("reason");
 
@@ -2400,6 +2401,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                         String nextVerifyUserId = iVerifyProcessService.GetVerifyUserId(nextRoleId, createUserId);
                         JSONObject newVerify = new JSONObject();
                         newVerify.put("relationId", bizId);
+                        newVerify.put("processId", processId);
                         newVerify.put("createUserId", createUserId);
                         newVerify.put("verifyUserId", nextVerifyUserId);
                         newVerify.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
