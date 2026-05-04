@@ -223,12 +223,19 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return 0;
         }
 
-        // 3. 查询所有 MainVerifyProcess 记录（不限 isAudit 状态，覆盖全量数据）
-        //    显式指定大 pageSize 避免被默认的 25 条分页截断
-        Page<MainVerifyProcess> allPage = (Page<MainVerifyProcess>) iCommonService.getSomeRecords(
-                "MainVerifyProcess", new JSONObject(), null,
-                Sort.by(Sort.Direction.ASC, "id"), 1, 10000);
-        List<MainVerifyProcess> allRecords = allPage.getContent();
+        // 3. 分页加载所有 MainVerifyProcess 记录，避免硬编码上限截断大规模数据
+        List<MainVerifyProcess> allRecords = new ArrayList<>();
+        int pageNum = 1;
+        final int PAGE_SIZE = 1000;
+        while (true) {
+            Page<MainVerifyProcess> page = (Page<MainVerifyProcess>) iCommonService.getSomeRecords(
+                    "MainVerifyProcess", new JSONObject(), null,
+                    Sort.by(Sort.Direction.ASC, "id"), pageNum, PAGE_SIZE);
+            List<MainVerifyProcess> pageContent = page.getContent();
+            allRecords.addAll(pageContent);
+            if (pageContent.size() < PAGE_SIZE) break;
+            pageNum++;
+        }
 
         // 4. 只处理创建人在同校的记录
         List<MainVerifyProcess> relevantRecords = allRecords.stream()

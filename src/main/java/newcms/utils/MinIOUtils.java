@@ -39,9 +39,11 @@ public class MinIOUtils {
             "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif",
             "mp4", "avi", "mov", "mkv", "wmv", "flv", "rmvb", "m4v", "webm"
     );
-    private static final long MAX_SINGLE_SIZE = 20L * 1024 * 1024;  // 20 MB
-    private static final long MAX_TOTAL_SIZE  = 50L * 1024 * 1024;  // 50 MB
-    private static final int  MAX_FILE_COUNT  = 5;
+    private static final long MAX_SINGLE_SIZE       = 20L * 1024 * 1024;   // 20 MB（默认）
+    private static final long MAX_TOTAL_SIZE        = 50L * 1024 * 1024;   // 50 MB（默认）
+    private static final long DIARY_MAX_SINGLE_SIZE = 50L * 1024 * 1024;   // 50 MB（日志）
+    private static final long DIARY_MAX_TOTAL_SIZE  = 100L * 1024 * 1024;  // 100 MB（日志）
+    private static final int  MAX_FILE_COUNT        = 5;
 
     /**
      * 上传多个文件，保存元信息到 sys_oss_file。
@@ -57,6 +59,9 @@ public class MinIOUtils {
             throw BaseResponse.parameterInvalid.error("单次最多上传 " + MAX_FILE_COUNT + " 个文件");
 
         // ---- 格式 / 单文件大小 / 总大小校验 ----
+        boolean isDiary = "MainDiary".equals(tableName);
+        long singleLimit = isDiary ? DIARY_MAX_SINGLE_SIZE : MAX_SINGLE_SIZE;
+        long totalLimit  = isDiary ? DIARY_MAX_TOTAL_SIZE  : MAX_TOTAL_SIZE;
         long totalSize = 0;
         for (MultipartFile file : files) {
             String name = file.getOriginalFilename();
@@ -65,13 +70,13 @@ public class MinIOUtils {
             if (!ALLOWED_SUFFIXES.contains(suffix))
                 throw BaseResponse.parameterInvalid.error(
                         "不支持的文件格式：" + suffix + "，支持：文档/表格/演示/PDF/压缩包/图片/视频");
-            if (file.getSize() > MAX_SINGLE_SIZE)
+            if (file.getSize() > singleLimit)
                 throw BaseResponse.parameterInvalid.error(
-                        "文件 [" + name + "] 超过单文件大小限制（最大 20 MB）");
+                        "文件 [" + name + "] 超过单文件大小限制（最大 " + (singleLimit / 1024 / 1024) + " MB）");
             totalSize += file.getSize();
         }
-        if (totalSize > MAX_TOTAL_SIZE)
-            throw BaseResponse.parameterInvalid.error("文件总大小超过限制（最大 50 MB）");
+        if (totalSize > totalLimit)
+            throw BaseResponse.parameterInvalid.error("文件总大小超过限制（最大 " + (totalLimit / 1024 / 1024) + " MB）");
 
         // ---- 重复文件检测（同 relationIds + tableName 下文件名已存在）----
         List<SysOssFile> existing = sysOssFileDao
@@ -124,6 +129,25 @@ public class MinIOUtils {
             result.add(item);
         }
         return result;
+    }
+
+    /**
+     * 生成 presigned 预览链接（供 kkFileView 等预览服务调用），有效期 expireSeconds 秒。
+     * 不附加 response-content-disposition / response-content-type 覆写参数，
+     * 避免 MinIO 因签名不匹配返回 400。
+     */
+    public String presignedPreviewUrl(String bucketName, String ossPath, int expireSeconds) {
+        try {
+            return minioClient.getPresignedObjectUrl(
+                    io.minio.GetPresignedObjectUrlArgs.builder()
+                            .method(io.minio.http.Method.GET)
+                            .bucket(bucketName)
+                            .object(ossPath)
+                            .expiry(expireSeconds, java.util.concurrent.TimeUnit.SECONDS)
+                            .build());
+        } catch (Exception e) {
+            throw new RuntimeException("生成预览链接失败: " + e.getMessage(), e);
+        }
     }
 
     /**

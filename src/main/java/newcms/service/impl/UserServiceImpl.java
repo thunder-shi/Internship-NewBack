@@ -20,6 +20,8 @@ import com.alibaba.fastjson.JSONObject;
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.authc.IncorrectCredentialsException;
 import org.apache.shiro.authc.UnknownAccountException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.apache.shiro.authc.UsernamePasswordToken;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
@@ -444,13 +446,19 @@ public Object getLoginUser(Date date, String userAgent) {
         }
         tblUserInfoDao.save(userInfo);
 
-        // 部门变更后，刷新相关的待审核记录
+        // 部门变更后，待外层事务提交后再刷新，避免 REQUIRES_NEW 读到未提交的旧 departmentId
         if (departmentChanged) {
-            try {
-                iVerifyProcessService.refreshPendingVerifyUsersByUser(userInfo.getId());
-            } catch (Exception e) {
-                logger.warn("刷新待审核记录失败，不影响用户信息保存: {}", e.getMessage());
-            }
+            Integer targetUserId = userInfo.getId();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        iVerifyProcessService.refreshPendingVerifyUsersByUser(targetUserId);
+                    } catch (Exception e) {
+                        logger.warn("刷新待审核记录失败，不影响用户信息保存: {}", e.getMessage());
+                    }
+                }
+            });
         }
 
         return userInfo;
@@ -669,12 +677,19 @@ public Object getLoginUser(Date date, String userAgent) {
             }
             Object res = iCommonService.saveSomeRecords("RelUserRole", userRoleRels);
 
-            // 用户角色变更后，刷新相关的待审核记录（异步执行，避免影响主流程）
-            try {
-                iVerifyProcessService.refreshPendingVerifyUsersByUser(Integer.valueOf(userId));
-            } catch (Exception e) {
-                logger.warn("刷新待审核记录失败，不影响角色保存: {}", e.getMessage());
-            }
+            // 必须在本事务提交后再刷新：refreshPendingVerifyUsersByUser 使用 REQUIRES_NEW 新事务，
+            // 若在提交前调用，新事务读不到当前事务未提交的 RelUserRole 记录，导致新角色不生效。
+            Integer userIdInt = Integer.valueOf(userId);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        iVerifyProcessService.refreshPendingVerifyUsersByUser(userIdInt);
+                    } catch (Exception e) {
+                        logger.warn("刷新待审核记录失败，不影响角色保存: {}", e.getMessage());
+                    }
+                }
+            });
 
             return res;
         } else {

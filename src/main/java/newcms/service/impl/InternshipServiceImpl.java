@@ -225,14 +225,14 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object getAvailableUsersForInternship(Integer internshipId, String jobCode, Integer departmentId, Integer page, Integer size, Sort sort) {
+    public Object getAvailableUsersForInternship(Integer internshipId, String jobCode, List<Integer> departmentIds, Integer page, Integer size, Sort sort) {
         if (internshipId == null || jobCode == null || jobCode.trim().isEmpty()) {
             throw BaseResponse.parameterInvalid.error("internshipId 和 jobCode 不能为空");
         }
 
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
-        if (departmentId == null) {
+        if (departmentIds == null || departmentIds.isEmpty()) {
             return new PageImpl<>(Collections.emptyList(), PageRequest.of(pageNum - 1, pageSize), 0);
         }
 
@@ -255,15 +255,31 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         // 2. 组装 ViewBaseUser 的查询条件：
         //    - jobCode = 前端传入 jobCode
-        //    - departmentId = 前端可选传入 departmentId
+        //    - departmentId IN (传入部门及其全部子部门)
         //    - id NOT IN (已关联且未删除的 userId 列表)
         JSONObject userSearchKeys = new JSONObject();
         userSearchKeys.put("jobCode", jobCode);
-        if (departmentId != null) {
-            userSearchKeys.put("departmentId", departmentId);
-        }
 
         Map<String, String> repMap = new HashMap<>();
+        Set<Integer> allowedDepartmentIds = new HashSet<>();
+        for (Integer departmentId : departmentIds) {
+            if (departmentId == null) {
+                continue;
+            }
+            allowedDepartmentIds.addAll(collectDepartmentIdsInSubtree(departmentId));
+        }
+        if (allowedDepartmentIds.isEmpty()) {
+            return new PageImpl<>(Collections.emptyList(), PageRequest.of(pageNum - 1, pageSize), 0);
+        }
+        if (allowedDepartmentIds.size() == 1) {
+            userSearchKeys.put("departmentId", allowedDepartmentIds.iterator().next());
+        } else {
+            String departmentIdStr = allowedDepartmentIds.stream()
+                    .map(String::valueOf)
+                    .collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
+            userSearchKeys.put("departmentId", departmentIdStr);
+            repMap.put("departmentId", Constant.IN);
+        }
 
         if (!usedUserIdSet.isEmpty()) {
             String idStr = usedUserIdSet.stream()
@@ -283,6 +299,92 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 finalSort,
                 pageNum,
                 pageSize);
+    }
+
+    @Override
+    public Object batchInitRelIntershipUserFromAvailable(Integer internshipId, String jobCode, List<Integer> departmentIds,
+                                                         Integer processId, Integer createUserId, Integer verifyRoleId,
+                                                         Integer currentVerifyTypeId) {
+        if (internshipId == null || processId == null || createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
+        }
+        if (jobCode == null || jobCode.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("jobCode 不能为空");
+        }
+        if (departmentIds == null || departmentIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("departmentIds 不能为空");
+        }
+        int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
+
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+
+        List<Integer> candidateUserIds = new ArrayList<>();
+        int pageNum = 1;
+        while (true) {
+            Object pageObj = getAvailableUsersForInternship(
+                    internshipId, jobCode, departmentIds, pageNum, LARGE_PAGE_SIZE, Sort.by(Sort.Direction.ASC, "id"));
+            if (!(pageObj instanceof Page)) {
+                throw BaseResponse.moreInfoError.error("查询可选用户结果异常");
+            }
+            Page<?> userPage = (Page<?>) pageObj;
+            List<?> rows = userPage.getContent();
+            if (rows == null || rows.isEmpty()) {
+                break;
+            }
+            for (Object rowObj : rows) {
+                JSONObject row = FastJsonUtil.toJson(rowObj);
+                Integer userId = row.getInteger("id");
+                if (userId != null) {
+                    candidateUserIds.add(userId);
+                }
+            }
+            if (pageNum >= userPage.getTotalPages()) {
+                break;
+            }
+            pageNum++;
+        }
+
+        int createdRelIntershipUserCount = 0;
+        int createdVerifyProcessCount = 0;
+        for (Integer userId : candidateUserIds) {
+            if (userId == null) {
+                continue;
+            }
+            JSONObject relIntershipUserJson = new JSONObject();
+            relIntershipUserJson.put("internshipId", internshipId);
+            relIntershipUserJson.put("userId", userId);
+            relIntershipUserJson.put("currentVerifyTypeId", verifyType);
+            Object savedRelIntershipUser = iCommonService.saveOneRecord("RelIntershipUser", relIntershipUserJson);
+            Integer relationId = FastJsonUtil.toJson(savedRelIntershipUser).getInteger("id");
+            if (relationId == null) {
+                continue;
+            }
+            createdRelIntershipUserCount++;
+
+            JSONObject verifyJson = new JSONObject();
+            verifyJson.put("relationId", relationId);
+            verifyJson.put("processId", processId);
+            verifyJson.put("createUserId", createUserId);
+            verifyJson.put("verifyUserId", verifyUserId);
+            verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+            verifyJson.put("reason", "");
+            verifyJson.put("tableName", "RelIntershipUser");
+            iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+            createdVerifyProcessCount++;
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("createdRelIntershipUserCount", createdRelIntershipUserCount);
+        result.put("createdVerifyProcessCount", createdVerifyProcessCount);
+        result.put("totalCandidateCount", candidateUserIds.size());
+        result.put("verifyUserId", verifyUserId);
+        return result;
     }
 
     @Override
@@ -2638,21 +2740,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         deleteVerifyProcessByRelationIdAndTableName(relationId, TABLE_REL_TITLE_STUDENT);
         iCommonService.deleteRecordByDelflag(TABLE_REL_TITLE_STUDENT, relationId);
         return "确认成功，已清理该条不通过选题记录";
-    }
-
-    /**
-     * 学生报名岗位被拒绝/退回时，根据 RelStuInternshipPost 的 relationId 原子性扣减对应岗位的当前人数
-     */
-    private void decreasePostPersonNumByRelation(Integer relationId) {
-        if (relationId == null) return;
-        Object relObj = iCommonService.getOneRecordById("RelStuInternshipPost", relationId);
-        if (relObj == null) return;
-        JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer postId = relJson.getInteger("internshipPostId");
-        if (postId == null) return;
-
-        // 原子性扣减：nowPersonNum - 1 WHERE nowPersonNum > 0，无需额外读取当前值
-        mainInternshipPostDao.decrementNowPersonNum(postId);
     }
 
     /**

@@ -33,7 +33,6 @@ build/
 .vscode/
 
 ### Claude ###
-.claude/
 
 .cursor/
 .gemini/
