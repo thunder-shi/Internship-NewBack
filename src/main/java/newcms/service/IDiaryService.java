@@ -1,5 +1,6 @@
 package newcms.service;
 
+import com.alibaba.fastjson.JSONObject;
 import newcms.entity.db.MainDiaryPeriod;
 import org.springframework.stereotype.Service;
 
@@ -110,4 +111,13 @@ public interface IDiaryService {
      * @param ids 要删除的期次 ID 列表
      */
     void deletePeriods(List<Integer> ids);
+
+    /**
+     * 批量提交/保存日志。逐条调用 submitDiary，单条失败不阻断其余。
+     *
+     * @param nodes         每项含 relationId, tableName, periodId, title, content, submit
+     * @param currentUserId 当前登录用户 ID
+     * @return { successCount, results: [{ periodId, diaryId, message }] }
+     */
+    JSONObject submitDiaryBatch(List<JSONObject> nodes, Integer currentUserId);
 }

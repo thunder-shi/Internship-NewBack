@@ -102,6 +102,7 @@ EncryptUtil.getKeyWord(keyWord)  // 解密（用后销毁密钥）
 - **其他场景**：单文件 ≤ 20MB，总计 ≤ 50MB
 - 格式白名单：图片(jpg/png/gif/bmp/webp)、文档(pdf/doc/docx/xls/xlsx/ppt/pptx/txt)、压缩包(zip/rar/7z)、视频(mp4/avi/mkv)
 - 同名文件（原始文件名相同）拒绝上传
+- **文件访问权限**：预览/下载需同校权限校验（file owner schoolId == current user schoolId）；删除仅限文件上传者本人
 
 ---
 

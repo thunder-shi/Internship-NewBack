@@ -1,5 +1,6 @@
 package newcms.controller;
 
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -45,6 +46,19 @@ public class DiaryController {
         return BaseResponse.ok(
                 iDiaryService.submitDiary(relationId, tableName, periodId, title, content, submit, Base.getLoginUserId())
         );
+    }
+
+    @Operation(summary = "批量提交/保存实习日志",
+            description = "循环调用 submitDiary，单条失败不阻断其余。每项含 relationId, tableName, periodId, title, content, submit。")
+    @PostMapping(value = "/submitBatch", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object submitBatch(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("submitBatch", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) throw BaseResponse.parameterInvalid.error("node 不能为空");
+        JSONArray nodesArr = node.getJSONArray("nodes");
+        if (nodesArr == null || nodesArr.isEmpty()) throw BaseResponse.parameterInvalid.error("nodes 不能为空");
+        List<JSONObject> nodes = nodesArr.toJavaList(JSONObject.class);
+        return BaseResponse.ok(iDiaryService.submitDiaryBatch(nodes, Base.getLoginUserId()));
     }
 
     @Operation(summary = "获取期次列表（学生端）",
