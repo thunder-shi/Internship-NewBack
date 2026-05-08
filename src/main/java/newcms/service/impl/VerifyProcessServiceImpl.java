@@ -40,6 +40,7 @@ import java.util.stream.Collectors;
 @Transactional(rollbackFor = Exception.class)
 public class VerifyProcessServiceImpl extends Base implements IVerifyProcessService {
     private static final String TABLE_REL_TITLE_STUDENT = "RelTitleStudent";
+    private static final String TABLE_REL_TEACHER_STUDENT = "RelTeacherStudent";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
     private static final String TITLE_SOURCE_STUDENT_CANDIDATE = "STUDENT_CANDIDATE";
     private static final ConcurrentHashMap<String, Object> TITLE_CONFIRM_LOCKS = new ConcurrentHashMap<>();
@@ -464,12 +465,162 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                     MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(internshipPostId);
                     if (post != null && post.getInternshipId() != null) {
                         cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
+                        ensureSeparateTutorAssignmentsAfterStuPostApproved(
+                                post.getInternshipId(), relationId, studentId);
                     }
                 }
             } else if (TABLE_REL_TITLE_STUDENT.equals(tableName)) {
                 confirmTitleSelection(relationId);
             }
         }
+    }
+
+    /**
+     * 学生选岗审核全部通过后：从 ViewRelProcessInternship 取该实习项目下未删除的流程配置；<br>
+     * 若存在 EXTERNAL_ASSIGN_INTERNAL_TUTOR / EXTERNAL_ENTERPRISE_ASSIGN_TUTOR（各至多一条），则分别为其<br>
+     * 新建一条 RelTeacherStudent（不填 teacherId）及一条 MainVerifyProcess（verifyUserId 空、isAudit=SAVE）。
+     */
+    private void ensureSeparateTutorAssignmentsAfterStuPostApproved(Integer internshipId,
+            Integer relStuInternshipPostId, Integer studentId) {
+        if (internshipId == null || relStuInternshipPostId == null || studentId == null) {
+            return;
+        }
+        List<JSONObject> processRows = fetchAllViewRelProcessInternshipRows(internshipId);
+        Integer internalProcId = findProcessIdByTypeCode(processRows,
+                Constant.PROCESS_TYPE.EXTERNAL_ASSIGN_INTERNAL_TUTOR);
+        Integer enterpriseProcId = findProcessIdByTypeCode(processRows,
+                Constant.PROCESS_TYPE.EXTERNAL_ENTERPRISE_ASSIGN_TUTOR);
+
+        if (internalProcId != null) {
+            createRelTeacherStudentAndTutorSaveVerifyIfAbsent(studentId, internshipId, relStuInternshipPostId,
+                    internalProcId, Constant.PROCESS_TYPE.EXTERNAL_ASSIGN_INTERNAL_TUTOR);
+        }
+        if (enterpriseProcId != null) {
+            createRelTeacherStudentAndTutorSaveVerifyIfAbsent(studentId, internshipId, relStuInternshipPostId,
+                    enterpriseProcId, Constant.PROCESS_TYPE.EXTERNAL_ENTERPRISE_ASSIGN_TUTOR);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<JSONObject> fetchAllViewRelProcessInternshipRows(Integer internshipId) {
+        List<JSONObject> out = new ArrayList<>();
+        if (internshipId == null) {
+            return out;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isDeleted", 0);
+        int pageNum = 1;
+        final int pageSize = 500;
+        while (true) {
+            Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewRelProcessInternship", sk, null,
+                    Sort.by(Sort.Direction.ASC, "theOrder"), pageNum, pageSize);
+            List<Object> content = page != null ? page.getContent() : null;
+            if (content == null || content.isEmpty()) {
+                break;
+            }
+            for (Object obj : content) {
+                out.add(FastJsonUtil.toJson(obj));
+            }
+            if (content.size() < pageSize) {
+                break;
+            }
+            pageNum++;
+        }
+        return out;
+    }
+
+    private Integer findProcessIdByTypeCode(List<JSONObject> rows, String processTypeCode) {
+        if (rows == null || processTypeCode == null) {
+            return null;
+        }
+        for (JSONObject row : rows) {
+            if (processTypeCode.equals(row.getString("processTypeCode"))) {
+                return row.getInteger("id");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 同一选岗下同一流程若已有对应 MainVerifyProcess（师生关联匹配）则跳过，避免重复回调重复插入。
+     */
+    @SuppressWarnings("unchecked")
+    private boolean hasTutorAssignmentVerifyForPost(Integer stuId, Integer internshipId,
+            Integer relStuInternshipPostId, Integer processId) {
+        if (stuId == null || internshipId == null || relStuInternshipPostId == null || processId == null) {
+            return false;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("processId", processId);
+        sk.put("tableName", TABLE_REL_TEACHER_STUDENT);
+        sk.put("createUserId", stuId);
+        int pageNum = 1;
+        final int pageSize = 200;
+        while (true) {
+            Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                    TABLE_MAIN_VERIFY_PROCESS, sk, null, Sort.by(Sort.Direction.ASC, "id"), pageNum, pageSize);
+            List<Object> content = page != null ? page.getContent() : null;
+            if (content == null || content.isEmpty()) {
+                break;
+            }
+            for (Object obj : content) {
+                JSONObject vp = FastJsonUtil.toJson(obj);
+                Integer relationId = vp.getInteger("relationId");
+                if (relationId == null) {
+                    continue;
+                }
+                Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, relationId);
+                if (rtsObj == null) {
+                    continue;
+                }
+                JSONObject rts = FastJsonUtil.toJson(rtsObj);
+                if (stuId.equals(rts.getInteger("stuId"))
+                        && internshipId.equals(rts.getInteger("internshipId"))
+                        && relStuInternshipPostId.equals(rts.getInteger("relInternshipId"))) {
+                    return true;
+                }
+            }
+            if (content.size() < pageSize) {
+                break;
+            }
+            pageNum++;
+        }
+        return false;
+    }
+
+    private void createRelTeacherStudentAndTutorSaveVerifyIfAbsent(Integer stuId, Integer internshipId,
+            Integer relStuInternshipPostId, Integer processId, String kindLog) {
+        if (processId == null) {
+            return;
+        }
+        if (hasTutorAssignmentVerifyForPost(stuId, internshipId, relStuInternshipPostId, processId)) {
+            return;
+        }
+        JSONObject rtsJson = new JSONObject();
+        rtsJson.put("stuId", stuId);
+        rtsJson.put("currentVerifyTypeId", 1);
+        rtsJson.put("relInternshipId", relStuInternshipPostId);
+        rtsJson.put("internshipId", internshipId);
+        Object savedRts = iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, rtsJson);
+        Integer rtsId = FastJsonUtil.toJson(savedRts).getInteger("id");
+        if (rtsId == null) {
+            logger.warn("选岗通过后补建 RelTeacherStudent 失败 internshipId={} relStuPostId={} processId={}",
+                    internshipId, relStuInternshipPostId, processId);
+            return;
+        }
+        JSONObject vpJson = new JSONObject();
+        vpJson.put("relationId", rtsId);
+        vpJson.put("processId", processId);
+        vpJson.put("createUserId", stuId);
+        vpJson.put("verifyUserId", "");
+        vpJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        vpJson.put("reason", "");
+        vpJson.put("tableName", TABLE_REL_TEACHER_STUDENT);
+        iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, vpJson);
+        logger.info("选岗通过已补建导师分配：RelTeacherStudent={} processId={} kind={} internshipId={}",
+                rtsId, processId, kindLog, internshipId);
     }
 
     /**

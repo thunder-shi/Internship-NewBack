@@ -111,26 +111,20 @@ public interface IInternshipService {
     Object listAssignableStudents(Integer internshipId, Integer departmentId);
 
     /**
-     * 根据 internshipId 批量初始化 RelTeacherStudent 及其审核记录。
+     * 根据实习项目为「未分配校内导师」的师生记录均衡分配 teacherId；不新建 MainVerifyProcess。
+     * 对已存在的 {@code MainVerifyProcess}（同 relationId、processId、RelTeacherStudent）写入本次传入的
+     * {@code createUserId}、{@code verifyUserId}。
      *
-     * @param tutorAssignKind 导师类型，见 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND}；
-     *                        传 {@code null} 时与 {@link newcms.base.Constant.TUTOR_ASSIGN_KIND#INTERNAL} 相同语义（校内导师）
-     * @param currentVerifyTypeId 新建 RelTeacherStudent 的 currentVerifyTypeId；不传默认 1
+     * @param currentVerifyTypeId 写入 RelTeacherStudent 的 currentVerifyTypeId；不传默认 1
      */
     Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                            Integer tutorAssignKind, Integer currentVerifyTypeId);
+                                            Integer currentVerifyTypeId);
 
     /**
-     * 校内导师初始化：支持待审核重分配 + 新增学生增量补建（teacherId 自动分配）。
+     * 与 {@link #initTeacherStudentByInternshipId} 相同。
      */
     Object initInternalTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                            Integer currentVerifyTypeId);
-
-    /**
-     * 企业导师初始化：每次调用自动识别新增学生并增量补建（teacherId=0 占位，后续手动分配）。
-     */
-    Object initEnterpriseTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                             Integer currentVerifyTypeId);
 
     /**
      * 手动指定单个老师和多个学生，批量创建 RelTeacherStudent 及其审核记录。

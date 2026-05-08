@@ -107,7 +107,6 @@ print_summary
 - `POST /internshipProcess/getAvailableUsersForInternship` — 可选用户
 - `POST /internshipProcess/initTeacherStudentByInternshipId` — 初始化师生关系
 - `POST /internshipProcess/initInternalTutorByInternshipId` — 校内导师初始化
-- `POST /internshipProcess/initEnterpriseTutorByInternshipId` — 企业导师初始化
 - `POST /internshipProcess/listExternalInternshipCollegeStats` — 学院实习汇总
 - `POST /internshipProcess/listApprovedExternalInternshipPosts` — 已审核岗位列表
 - `POST /internshipProcess/getExternalInternshipStudentPostBreakdown` — 学生选岗情况

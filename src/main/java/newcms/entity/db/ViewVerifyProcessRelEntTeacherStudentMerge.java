@@ -1,14 +1,19 @@
 package newcms.entity.db;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
+/**
+ * 校外/企业导师侧：师生审核综合视图（原 ViewVerifyProcessRelTeacherStudentMerge 按类型拆分）。
+ */
 @Getter
 @Setter
 @Entity
-public class ViewVerifyProcessRelTeacherStudentMerge extends BaseInfo {
+@Table(name = "view_verify_process_rel_ent_teacher_student_merge")
+public class ViewVerifyProcessRelEntTeacherStudentMerge extends BaseInfo {
     // 来自 main_verify_process
     private Integer relationId;
     private Integer processId;

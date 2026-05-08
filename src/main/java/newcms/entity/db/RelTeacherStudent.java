@@ -14,6 +14,9 @@ import newcms.entity.base.NameRemarkInfo;
 @Entity
 public class RelTeacherStudent extends NameRemarkInfo {
 
+  @Column(name = "stu_id", nullable = false, columnDefinition = "int unsigned not null comment '外键，关联表1（学生，base_user.id）'")
+  private Integer stuId;
+
   @Column(columnDefinition = "int unsigned comment '外键，关联表1（教师）；企业导师初始化时可空，后续再补'")
   private Integer teacherId;
 

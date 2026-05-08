@@ -52,9 +52,8 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 ### 师生关系
 | 接口 | 说明 | 参数 |
 |------|------|------|
-| /internshipProcess/initTeacherStudentByInternshipId | 初始化师生关系（通用） | internshipId, processId, createUserId, verifyUserId, tutorAssignKind? |
+| /internshipProcess/initTeacherStudentByInternshipId | 校内导师分配（Int 合并视图未分配行 + 补审核） | internshipId, processId, createUserId, verifyUserId, currentVerifyTypeId? |
 | /internshipProcess/initInternalTutorByInternshipId | 校内导师初始化（均衡分配+增量补建） | internshipId, processId, createUserId, verifyUserId |
-| /internshipProcess/initEnterpriseTutorByInternshipId | 企业导师初始化（teacherId=0占位） | internshipId, processId, createUserId, verifyUserId |
 | /internshipProcess/getAvailableUsersForInternship | 获取可选用户列表 | internshipId, jobCode, departmentId? |
 | /internshipProcess/listAssignableTeachers | 可分配老师列表（已审核通过的校内导师） | internshipId, departmentId |
 | /internshipProcess/listAssignableStudents | 可分配学生列表（岗位和选岗均通过） | internshipId, departmentId |

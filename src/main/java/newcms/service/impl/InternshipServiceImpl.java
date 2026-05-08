@@ -35,7 +35,15 @@ import java.util.stream.Collectors;
 @Transactional(rollbackFor = Exception.class)
 public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final String TEACHER_JOB_CODE = Constant.USER_JOB_CODE.SCHOOL_TEACHER;
-    private static final String ENTERPRISE_TUTOR_JOB_CODE = Constant.USER_JOB_CODE.COMPANY_TUTOR;
+    /** 师生审核综合视图：企业/校外导师（原 ViewVerifyProcessRelTeacherStudentMerge 拆分） */
+    private static final String VIEW_VERIFY_REL_ASS_TEA_STU_MERGE = "ViewVerifyProcessRelEntTeacherStudentMerge";
+    /** 师生审核综合视图：校内导师 */
+    private static final String VIEW_VERIFY_REL_INT_TEA_STU_MERGE = "ViewVerifyProcessRelIntTeacherStudentMerge";
+
+    /** Int 合并视图查询统一限定：仅「校外实习-分配校内导师」流程（与 RelProcessInternship.processTypeCode 一致） */
+    private static void applyExternalAssignInternalTutorMergeFilter(JSONObject searchKeys) {
+        searchKeys.put("processTypeCode", Constant.PROCESS_TYPE.EXTERNAL_ASSIGN_INTERNAL_TUTOR);
+    }
     private static final int LARGE_PAGE_SIZE = 100000;
     private static final int POST_PAGE_SIZE = 10000;
     /** 与库中 base_int_type / view_main_internship.int_type_name 一致，用于识别校外实习 */
@@ -542,6 +550,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             }
 
             JSONObject relTeacherStudentJson = new JSONObject();
+            relTeacherStudentJson.put("stuId", studentId);
             relTeacherStudentJson.put("teacherId", teacherId);
             relTeacherStudentJson.put("currentVerifyTypeId", verifyType);
             relTeacherStudentJson.put("relInternshipId", relInternshipId);
@@ -567,27 +576,42 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             createdVerifyProcessCount++;
         }
 
-        JSONObject result = buildInitTeacherStudentResult(0, createdRelTeacherStudentCount, createdVerifyProcessCount);
+        JSONObject result = buildInitTeacherStudentResult(createdRelTeacherStudentCount, createdVerifyProcessCount);
         result.put("skippedExistingCount", skippedExistingCount);
         return result;
     }
 
     @SuppressWarnings("unchecked")
     private Set<Integer> loadTeacherStudentMergeRelInternshipIds(Integer internshipId) {
+        Set<Integer> out = new HashSet<>();
+        collectRelInternshipIdsFromTeacherStudentMergeView(internshipId, VIEW_VERIFY_REL_ASS_TEA_STU_MERGE, out);
+        collectRelInternshipIdsFromTeacherStudentMergeView(internshipId, VIEW_VERIFY_REL_INT_TEA_STU_MERGE, out);
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectRelInternshipIdsFromTeacherStudentMergeView(Integer internshipId, String mergeTblName,
+            Set<Integer> target) {
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("internshipId", internshipId);
+        if (VIEW_VERIFY_REL_INT_TEA_STU_MERGE.equals(mergeTblName)) {
+            applyExternalAssignInternalTutorMergeFilter(searchKeys);
+        }
         Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelTeacherStudentMerge", searchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                mergeTblName, searchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Object> rows = mergePage.getContent();
         if (rows == null || rows.isEmpty()) {
-            return new HashSet<>();
+            return;
         }
-        return rows.stream()
-                .filter(Objects::nonNull)
-                .map(FastJsonUtil::toJson)
-                .map(json -> json.getInteger("relInternshipId"))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
+        for (Object row : rows) {
+            if (row == null) {
+                continue;
+            }
+            Integer rid = FastJsonUtil.toJson(row).getInteger("relInternshipId");
+            if (rid != null) {
+                target.add(rid);
+            }
+        }
     }
 
     /**
@@ -1798,51 +1822,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .count();
     }
 
-    private int countPendingAuditInternshipPosts(Integer internshipId) {
-        JSONObject sk = new JSONObject();
-        sk.put("internshipId", internshipId);
-        @SuppressWarnings("unchecked")
-        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessInternshipPostMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> list = page.getContent();
-        if (list == null || list.isEmpty()) {
-            return 0;
-        }
-        Set<Integer> pendingIds = new HashSet<>();
-        for (Object o : list) {
-            JSONObject j = FastJsonUtil.toJson(o);
-            Integer a = j.getInteger("isAudit");
-            if (a != null && (a == Constant.AUDIT_STATUS.SAVE || a == Constant.AUDIT_STATUS.SUBMIT)) {
-                Integer pid = parseInternshipPostIdFromInternshipPostMergeRow(j);
-                if (pid != null) {
-                    pendingIds.add(pid);
-                }
-            }
-        }
-        return pendingIds.size();
-    }
-
-    private int countDeptStudentsWithPostSelection(Integer internshipId, Integer departmentId) {
-        JSONObject sk = new JSONObject();
-        sk.put("internshipId", internshipId);
-        sk.put("departmentId", departmentId);
-        @SuppressWarnings("unchecked")
-        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelStuInternshipPostMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> list = page.getContent();
-        if (list == null || list.isEmpty()) {
-            return 0;
-        }
-        Set<Integer> uids = new HashSet<>();
-        for (Object o : list) {
-            Integer uid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(o));
-            if (uid != null) {
-                uids.add(uid);
-            }
-        }
-        return uids.size();
-    }
-
     private Set<Integer> loadInternshipProjectStudentUserIds(Integer internshipId) {
         return loadInternshipProjectUserIds(internshipId, Constant.USER_JOB_CODE.STUDENT);
     }
@@ -1929,71 +1908,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                                    Integer tutorAssignKind, Integer currentVerifyTypeId) {
-        validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
-        int kind = tutorAssignKind == null ? Constant.TUTOR_ASSIGN_KIND.INTERNAL : tutorAssignKind;
-        if (kind != Constant.TUTOR_ASSIGN_KIND.INTERNAL && kind != Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
-            throw BaseResponse.parameterInvalid.error("tutorAssignKind 无效，可选：1=校内导师 2=企业导师");
-        }
-        int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
-        if (verifyType <= 0) {
-            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
-        }
-
-        if (kind == Constant.TUTOR_ASSIGN_KIND.ENTERPRISE) {
-            ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, ENTERPRISE_TUTOR_JOB_CODE);
-            List<Object> relStuList = getStudentInternshipSelections(internshipId);
-            int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                    internshipId, processId, createUserId, verifyUserId, relStuList, null, false, verifyType);
-            return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
-        }
-
-        List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
-
-        if (hasVerifyTeacherStudentMergeData(internshipId)) {
-            int updatedPendingTeacherCount = reassignTeachersForPendingRecords(internshipId, teacherIds);
-            // 已有校内导师数据时，除了重分配待审核记录，还需要为新加入的学生补建记录（增量初始化）
-            List<Object> relStuList = getStudentInternshipSelections(internshipId);
-            Set<Integer> existingRelInternshipIds = getExistingInternalRelInternshipIdSet(internshipId, new HashSet<>(teacherIds));
-            List<Object> newRelStuList = relStuList.stream()
-                    .filter(Objects::nonNull)
-                    .filter(obj -> {
-                        JSONObject json = FastJsonUtil.toJson(obj);
-                        Integer relInternshipId = json.getInteger("relationId");
-                        if (relInternshipId == null) {
-                            relInternshipId = json.getInteger("id");
-                        }
-                        return relInternshipId != null && !existingRelInternshipIds.contains(relInternshipId);
-                    })
-                    .collect(Collectors.toList());
-
-            if (newRelStuList.isEmpty()) {
-                return buildInitTeacherStudentResult(updatedPendingTeacherCount, 0, 0);
-            }
-
-            Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
-            int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                    internshipId, processId, createUserId, verifyUserId, newRelStuList, teacherLoadMap, true, verifyType);
-            return buildInitTeacherStudentResult(updatedPendingTeacherCount, createdCounts[0], createdCounts[1]);
-        }
-
-        List<Object> relStuList = getStudentInternshipSelections(internshipId);
-        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
-        int[] createdCounts = createTeacherStudentAndVerifyRecords(
-                internshipId, processId, createUserId, verifyUserId, relStuList, teacherLoadMap, true, verifyType);
-        return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
-    }
-
-    @Override
-    public Object initInternalTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
-                                                  Integer currentVerifyTypeId) {
-        // 复用原逻辑：校内导师=1
-        return initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
-                Constant.TUTOR_ASSIGN_KIND.INTERNAL, currentVerifyTypeId);
-    }
-
-    @Override
-    public Object initEnterpriseTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                                     Integer currentVerifyTypeId) {
         validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
         int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
@@ -2001,36 +1915,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
         }
 
-        ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, ENTERPRISE_TUTOR_JOB_CODE);
+        List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
 
-        // 1) 当前应覆盖的学生集合（岗位审核通过 + 学生选岗审核通过）
-        List<Object> relStuList = getStudentInternshipSelections(internshipId);
-
-        // 2) 已存在的企业导师记录：teacherId=0（未分配）或 teacherId 属于企业导师用户集合(jobCode=COMPANY_TUTOR)
-        Set<Integer> enterpriseTutorIds = getEnterpriseTutorIdsForAssignment();
-        Set<Integer> existingRelInternshipIds = getExistingEnterpriseRelInternshipIdSet(internshipId, enterpriseTutorIds);
-
-        // 3) 差集：只为新增学生补建
-        List<Object> newRelStuList = relStuList.stream()
-                .filter(Objects::nonNull)
-                .filter(obj -> {
-                    JSONObject json = FastJsonUtil.toJson(obj);
-                    Integer relInternshipId = json.getInteger("relationId");
-                    if (relInternshipId == null) {
-                        relInternshipId = json.getInteger("id");
-                    }
-                    return relInternshipId != null && !existingRelInternshipIds.contains(relInternshipId);
-                })
-                .collect(Collectors.toList());
-
-        if (newRelStuList.isEmpty()) {
-            return buildInitTeacherStudentResult(0, 0, 0);
+        List<Object> unassignedMergeRows = listUnassignedInternalTutorMergeRows(internshipId);
+        if (unassignedMergeRows.isEmpty()) {
+            return buildInitTeacherStudentResult(0, 0);
         }
 
-    int[] createdCounts = createTeacherStudentAndVerifyRecords(
-        internshipId, processId, createUserId, verifyUserId, newRelStuList, null, false, verifyType);
-    return buildInitTeacherStudentResult(0, createdCounts[0], createdCounts[1]);
-  }
+        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
+        int[] counts = assignInternalTeacherForExistingMergeRows(
+                processId, createUserId, verifyUserId, unassignedMergeRows, teacherLoadMap, verifyType);
+        return buildInitTeacherStudentResult(counts[0], counts[1]);
+    }
+
+    @Override
+    public Object initInternalTutorByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
+                                                  Integer currentVerifyTypeId) {
+        return initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId, currentVerifyTypeId);
+    }
 
     private void validateInitTeacherStudentParams(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId) {
         if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
@@ -2038,12 +1940,128 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
     }
 
+    /**
+     * 从校内师生审核综合视图取当前实习项目下、校外分配校内导师流程、
+     * 审核状态为待提交（SAVE）且尚未分配 teacherId（null 或 0）的行，按 RelTeacherStudent.id 去重。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Object> listUnassignedInternalTutorMergeRows(Integer internshipId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        applyExternalAssignInternalTutorMergeFilter(sk);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                VIEW_VERIFY_REL_INT_TEA_STU_MERGE, sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return new ArrayList<>();
+        }
+        Set<Integer> seenRtsIds = new HashSet<>();
+        List<Object> out = new ArrayList<>();
+        for (Object row : content) {
+            if (row == null) {
+                continue;
+            }
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer tid = j.getInteger("teacherId");
+            if (tid != null && tid != 0) {
+                continue;
+            }
+            Integer rtsId = j.getInteger("relationId");
+            if (rtsId == null) {
+                rtsId = j.getInteger("relTeaStuId");
+            }
+            if (rtsId == null || !seenRtsIds.add(rtsId)) {
+                continue;
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    /**
+     * 对已存在的 RelTeacherStudent 写入均衡分配的校内导师；不新建 MainVerifyProcess。
+     * 若已存在对应 processId 下的审核记录，则将其 createUserId、verifyUserId 更新为本次传入值。
+     *
+     * @return int[0]=已更新 teacherId 的 RelTeacherStudent 条数，int[1]=已更新的 MainVerifyProcess 行数（可能大于条数，因一对多）
+     */
+    private int[] assignInternalTeacherForExistingMergeRows(Integer processId, Integer createUserId, String verifyUserId,
+            List<Object> mergeRows, Map<Integer, Integer> teacherLoadMap, int currentVerifyTypeId) {
+        int assignedCount = 0;
+        int verifyUpdatedCount = 0;
+        for (Object row : mergeRows) {
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer rtsId = j.getInteger("relationId");
+            if (rtsId == null) {
+                rtsId = j.getInteger("relTeaStuId");
+            }
+            if (rtsId == null) {
+                continue;
+            }
+            Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
+            if (rtsObj == null) {
+                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 不存在", rtsId);
+                continue;
+            }
+            JSONObject rtsJson = FastJsonUtil.toJson(rtsObj);
+            Integer existingTid = rtsJson.getInteger("teacherId");
+            if (existingTid != null && existingTid != 0) {
+                continue;
+            }
+            Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+            teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
+            JSONObject upd = new JSONObject();
+            upd.put("id", rtsId);
+            upd.put("teacherId", selectedTeacherId);
+            upd.put("currentVerifyTypeId", currentVerifyTypeId);
+            iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
+            assignedCount++;
+            verifyUpdatedCount += updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
+        }
+        return new int[]{assignedCount, verifyUpdatedCount};
+    }
+
+    /**
+     * 按师生业务主键与流程更新 MainVerifyProcess 的创建人、审核人字段（不新建记录）。
+     */
+    @SuppressWarnings("unchecked")
+    private int updateMainVerifyProcessCreatorAndVerifier(Integer relationId, Integer processId,
+            Integer createUserId, String verifyUserId) {
+        if (relationId == null || processId == null || createUserId == null || verifyUserId == null) {
+            return 0;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("processId", processId);
+        sk.put("tableName", TABLE_REL_TEACHER_STUDENT);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                TABLE_MAIN_VERIFY_PROCESS, sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        for (Object obj : content) {
+            if (obj == null) {
+                continue;
+            }
+            JSONObject v = FastJsonUtil.toJson(obj);
+            Integer id = v.getInteger("id");
+            if (id == null) {
+                continue;
+            }
+            JSONObject upd = new JSONObject();
+            upd.put("id", id);
+            upd.put("createUserId", createUserId);
+            upd.put("verifyUserId", verifyUserId);
+            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, upd);
+            n++;
+        }
+        return n;
+    }
+
     @SuppressWarnings("unchecked")
     private List<Integer> getTeacherIdsForAssignment(Integer internshipId) {
-        // 师生合并视图中 isAudit=NOTPASS 时，按 relationId+processId+tableName 在 MainVerifyProcess 补建 SAVE（待提交）。
-        // 退回由其他接口处理，此处不处理 BACK。
-        ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(internshipId, TEACHER_JOB_CODE);
-
         JSONObject teacherSearchKeys = new JSONObject();
         teacherSearchKeys.put("internshipId", internshipId);
         teacherSearchKeys.put("jobCode", TEACHER_JOB_CODE);
@@ -2060,181 +2078,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.moreInfoError.error("未找到审核通过的可分配校内导师（ViewVerifyProcessRelIntershipUserMerge.jobCode=SCHOOL_TEACHER, isAudit=PASS）");
         }
         return teacherIds;
-    }
-
-    /**
-     * 从 ViewVerifyProcessRelTeacherStudentMerge 筛选本实习、指定导师类型（视图 jobCode，如校内=SCHOOL_TEACHER、企业=COMPANY_TUTOR）、审核未通过(NOTPASS) 的行，
-     * 按 relationId、processId、tableName 去重后，若 MainVerifyProcess 仍需补单则插入 isAudit=SAVE。
-     */
-    @SuppressWarnings("unchecked")
-    private void ensurePendingSubmitVerifyForRejectedTeacherStudentMerge(Integer internshipId, String mergeJobCode) {
-        JSONObject sk = new JSONObject();
-        sk.put("internshipId", internshipId);
-        sk.put("isAudit", Constant.AUDIT_STATUS.NOTPASS);
-        sk.put("jobCode", mergeJobCode);
-        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelTeacherStudentMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> rows = page.getContent();
-        if (rows == null || rows.isEmpty()) {
-            return;
-        }
-        Set<String> seen = new HashSet<>();
-        for (Object row : rows) {
-            JSONObject j = FastJsonUtil.toJson(row);
-            Integer relationId = j.getInteger("relationId");
-            Integer processId = j.getInteger("processId");
-            Integer createUserId = j.getInteger("createUserId");
-            String tableName = j.getString("tableName");
-            if (relationId == null || processId == null || createUserId == null) {
-                continue;
-            }
-            if (tableName == null || tableName.isEmpty()) {
-                tableName = TABLE_REL_TEACHER_STUDENT;
-            }
-            String dedupe = relationId + "_" + processId + "_" + tableName;
-            if (!seen.add(dedupe)) {
-                continue;
-            }
-            if (!needsNewPendingSubmitVerifyRecord(relationId, processId, tableName)) {
-                continue;
-            }
-            createPendingSubmitVerifyRecord(internshipId, relationId, processId, createUserId, tableName);
-        }
-    }
-
-    /**
-     * 判断是否需要为「审核不通过」补建待提交记录：<br>
-     * 若 MainVerifyProcess 最新一条已是 SAVE/SUBMIT/PASS/BACK，则不建（退回走其他接口）；<br>
-     * 若最新一条为 NOTPASS（或无任何记录），则建。
-     */
-    @SuppressWarnings("unchecked")
-    private boolean needsNewPendingSubmitVerifyRecord(Integer relationId, Integer processId, String tableName) {
-        JSONObject sk = new JSONObject();
-        sk.put("relationId", relationId);
-        sk.put("processId", processId);
-        sk.put("tableName", tableName);
-        Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
-                "MainVerifyProcess", sk, null,
-                Sort.by(Sort.Direction.DESC, "id"), 1, 1);
-        List<Object> list = vpPage.getContent();
-        if (list == null || list.isEmpty()) {
-            return true;
-        }
-        Integer isAudit = FastJsonUtil.toJson(list.get(0)).getInteger("isAudit");
-        if (isAudit == null) {
-            return true;
-        }
-        if (isAudit.equals(Constant.AUDIT_STATUS.SAVE) || isAudit.equals(Constant.AUDIT_STATUS.SUBMIT)) {
-            return false;
-        }
-        if (isAudit.equals(Constant.AUDIT_STATUS.PASS)) {
-            return false;
-        }
-        if (isAudit.equals(Constant.AUDIT_STATUS.BACK)) {
-            return false;
-        }
-        return isAudit.equals(Constant.AUDIT_STATUS.NOTPASS);
-    }
-
-    private void createPendingSubmitVerifyRecord(Integer internshipId, Integer relationId, Integer processId,
-                                                Integer createUserId, String tableName) {
-        Object relObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
-        if (relObj == null) {
-            logger.warn("补建待提交审核失败：未找到流程配置 processId={}", processId);
-            return;
-        }
-        JSONObject relJson = FastJsonUtil.toJson(relObj);
-        Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(relJson, 2);
-        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
-        if (verifyUserId == null) {
-            verifyUserId = "";
-        }
-        JSONObject verifyJson = new JSONObject();
-        verifyJson.put("relationId", relationId);
-        verifyJson.put("processId", processId);
-        verifyJson.put("createUserId", createUserId);
-        verifyJson.put("verifyUserId", verifyUserId);
-        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
-        verifyJson.put("reason", "");
-        verifyJson.put("tableName", tableName);
-        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
-        logger.info("已补建待提交审核记录 tableName={}, relationId={}, processId={}, createUserId={}",
-                tableName, relationId, processId, createUserId);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Set<Integer> getEnterpriseTutorIdsForAssignment() {
-        JSONObject tutorSearchKeys = new JSONObject();
-        tutorSearchKeys.put("jobCode", ENTERPRISE_TUTOR_JOB_CODE);
-        Page<Object> tutorPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewBaseUser", tutorSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Integer> tutorIds = tutorPage.getContent().stream()
-                .map(FastJsonUtil::toJson)
-                .map(tutorJson -> tutorJson.getInteger("id"))
-                .filter(Objects::nonNull)
-                .distinct()
-                .collect(Collectors.toList());
-        return new HashSet<>(tutorIds);
-    }
-
-    @SuppressWarnings("unchecked")
-    private boolean hasVerifyTeacherStudentMergeData(Integer internshipId) {
-        JSONObject viewSearchKeys = new JSONObject();
-        viewSearchKeys.put("internshipId", internshipId);
-        // 只判断“校内导师”记录是否存在，避免企业导师初始化后导致校内流程误走重分配分支
-        viewSearchKeys.put("jobCode", TEACHER_JOB_CODE);
-        Page<Object> verifyMergePage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelTeacherStudentMerge", viewSearchKeys, null, Sort.unsorted(), 1, 1);
-        return verifyMergePage.getContent() != null && !verifyMergePage.getContent().isEmpty();
-    }
-
-    @SuppressWarnings("unchecked")
-    private int reassignTeachersForPendingRecords(Integer internshipId, List<Integer> teacherIds) {
-        JSONObject pendingVerifySearchKeys = new JSONObject();
-        pendingVerifySearchKeys.put("internshipId", internshipId);
-        pendingVerifySearchKeys.put("isAudit", Constant.AUDIT_STATUS.SAVE);
-        // 只重分配“校内导师(jobCode=SCHOOL_TEACHER)”的待审核记录，避免把企业导师(teacherId=0/或jobCode=COMPANY_TUTOR)串改为校内导师
-        pendingVerifySearchKeys.put("jobCode", TEACHER_JOB_CODE);
-        Page<Object> pendingVerifyPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelTeacherStudentMerge", pendingVerifySearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> pendingVerifyList = pendingVerifyPage.getContent();
-        if (pendingVerifyList == null || pendingVerifyList.isEmpty()) {
-            return 0;
-        }
-
-        List<Object> relTeacherList = getRelTeacherStudentRecords(internshipId);
-        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapFromRelList(relTeacherList, teacherIds);
-        Set<Integer> pendingRelationIds = pendingVerifyList.stream()
-                .map(FastJsonUtil::toJson)
-                .map(json -> json.getInteger("relationId"))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
-        if (relTeacherList != null) {
-            for (Object relObj : relTeacherList) {
-                JSONObject relJson = FastJsonUtil.toJson(relObj);
-                Integer relationId = relJson.getInteger("id");
-                Integer oldTeacherId = relJson.getInteger("teacherId");
-                if (relationId != null && pendingRelationIds.contains(relationId)
-                        && oldTeacherId != null && teacherLoadMap.containsKey(oldTeacherId)) {
-                    teacherLoadMap.put(oldTeacherId, Math.max(0, teacherLoadMap.get(oldTeacherId) - 1));
-                }
-            }
-        }
-
-        int updatedPendingTeacherCount = 0;
-        List<Integer> pendingRelationIdList = new ArrayList<>(pendingRelationIds);
-        Collections.shuffle(pendingRelationIdList);
-        for (Integer relationId : pendingRelationIdList) {
-            Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
-            JSONObject updateRelTeacherStudentJson = new JSONObject();
-            updateRelTeacherStudentJson.put("id", relationId);
-            updateRelTeacherStudentJson.put("teacherId", selectedTeacherId);
-            iCommonService.saveOneRecord("RelTeacherStudent", updateRelTeacherStudentJson);
-            teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
-            updatedPendingTeacherCount++;
-        }
-        return updatedPendingTeacherCount;
     }
 
     @SuppressWarnings("unchecked")
@@ -2301,45 +2144,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return relTeacherPage.getContent();
     }
 
-    /**
-     * 获取某个实习项目下“校内导师记录”已存在的 relInternshipId 集合，用于增量补建新学生记录。
-     * 由于 RelTeacherStudent 未显式区分校内/企业，这里用 teacherId 是否属于校内导师池（jobCode=SCHOOL_TEACHER 查询出的 teacherIds）作为区分依据。
-     */
-    private Set<Integer> getExistingInternalRelInternshipIdSet(Integer internshipId, Set<Integer> internalTeacherIds) {
-        List<Object> relTeacherList = getRelTeacherStudentRecords(internshipId);
-        if (relTeacherList == null || relTeacherList.isEmpty() || internalTeacherIds == null || internalTeacherIds.isEmpty()) {
-            return new HashSet<>();
-        }
-        return relTeacherList.stream()
-                .filter(Objects::nonNull)
-                .map(FastJsonUtil::toJson)
-                .filter(json -> {
-                    Integer tid = json.getInteger("teacherId");
-                    return tid != null && internalTeacherIds.contains(tid);
-                })
-                .map(json -> json.getInteger("relInternshipId"))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-    }
-
-    private Set<Integer> getExistingEnterpriseRelInternshipIdSet(Integer internshipId, Set<Integer> enterpriseTutorIds) {
-        List<Object> relTeacherList = getRelTeacherStudentRecords(internshipId);
-        if (relTeacherList == null || relTeacherList.isEmpty()) {
-            return new HashSet<>();
-        }
-        return relTeacherList.stream()
-                .filter(Objects::nonNull)
-                .map(FastJsonUtil::toJson)
-                .filter(json -> {
-                    Integer tid = json.getInteger("teacherId");
-                    // teacherId=0：企业导师未分配占位；或 teacherId 在企业导师用户集合内：已分配过
-                    return tid != null && (tid == 0 || (enterpriseTutorIds != null && enterpriseTutorIds.contains(tid)));
-                })
-                .map(json -> json.getInteger("relInternshipId"))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-    }
-
     private Map<Integer, Integer> buildTeacherLoadMap(Integer internshipId, List<Integer> teacherIds) {
         List<Object> relTeacherList = getRelTeacherStudentRecords(internshipId);
         return buildTeacherLoadMapFromRelList(relTeacherList, teacherIds);
@@ -2371,61 +2175,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return candidateTeacherIds.get(ThreadLocalRandom.current().nextInt(candidateTeacherIds.size()));
     }
 
-    private int[] createTeacherStudentAndVerifyRecords(Integer internshipId, Integer processId, Integer createUserId,
-                                                       String verifyUserId, List<Object> relStuList,
-                                                       Map<Integer, Integer> teacherLoadMap,
-                                                       boolean assignInternalTeacher,
-                                                       int currentVerifyTypeId) {
-        int createdRelTeacherStudentCount = 0;
-        int createdVerifyProcessCount = 0;
-        for (Object relStuObj : relStuList) {
-            JSONObject relStuJson = FastJsonUtil.toJson(relStuObj);
-            Integer relInternshipId = relStuJson.getInteger("relationId");
-            if (relInternshipId == null) {
-                relInternshipId = relStuJson.getInteger("id");
-            }
-            if (relInternshipId == null) {
-                continue;
-            }
-
-            JSONObject relTeacherStudentJson = new JSONObject();
-            if (assignInternalTeacher) {
-                Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
-                teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
-                relTeacherStudentJson.put("teacherId", selectedTeacherId);
-            } else {
-                // 企业导师初始化：teacherId 用 0 占位（DB 为 unsigned 时也安全），后续手动分配再更新
-                relTeacherStudentJson.put("teacherId", 0);
-            }
-            relTeacherStudentJson.put("currentVerifyTypeId", currentVerifyTypeId);
-            relTeacherStudentJson.put("relInternshipId", relInternshipId);
-            relTeacherStudentJson.put("internshipId", internshipId);
-            Object savedRelTeacherStudent = iCommonService.saveOneRecord("RelTeacherStudent", relTeacherStudentJson);
-            JSONObject savedRelTeacherStudentJson = FastJsonUtil.toJson(savedRelTeacherStudent);
-            Integer relationId = savedRelTeacherStudentJson.getInteger("id");
-            if (relationId == null) {
-                continue;
-            }
-            createdRelTeacherStudentCount++;
-
-            JSONObject verifyJson = new JSONObject();
-            verifyJson.put("relationId", relationId);
-            verifyJson.put("processId", processId);
-            verifyJson.put("createUserId", createUserId);
-            verifyJson.put("verifyUserId", verifyUserId);
-            verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
-            verifyJson.put("reason", "");
-            verifyJson.put("tableName", "RelTeacherStudent");
-            iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
-            createdVerifyProcessCount++;
-        }
-        return new int[]{createdRelTeacherStudentCount, createdVerifyProcessCount};
-    }
-
-    private JSONObject buildInitTeacherStudentResult(int updatedPendingTeacherCount, int createdRelTeacherStudentCount,
-                                                     int createdVerifyProcessCount) {
+    private JSONObject buildInitTeacherStudentResult(int createdRelTeacherStudentCount, int createdVerifyProcessCount) {
         JSONObject result = new JSONObject();
-        result.put("updatedPendingTeacherCount", updatedPendingTeacherCount);
         result.put("createdRelTeacherStudentCount", createdRelTeacherStudentCount);
         result.put("createdVerifyProcessCount", createdVerifyProcessCount);
         return result;

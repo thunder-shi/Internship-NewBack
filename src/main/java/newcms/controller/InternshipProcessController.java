@@ -363,10 +363,13 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "根据实习项目初始化师生关系和审核记录",
-            description = "按 internshipId 关联岗位和学生选择记录，创建 RelTeacherStudent，并同步创建 MainVerifyProcess。"
-                    + "tutorAssignKind：1=校内导师（自动均衡分配 teacherId，支持待审核重分配）；"
-                    + "2=企业导师（teacherId 留空，后续手动分配）。缺省为 1。"
+            summary = "根据实习项目初始化校内导师分配",
+            description = "查询 ViewVerifyProcessRelIntTeacherStudentMerge（processTypeCode=EXTERNAL_ASSIGN_INTERNAL_TUTOR）中该实习项目下"
+                    + "待提交（isAudit=SAVE）且尚未分配校内导师（teacherId 为空或 0）的记录；"
+                    + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、jobCode=SCHOOL_TEACHER、审核通过（PASS）的教师 userId；"
+                    + "查 ViewVerifyProcessRelIntTeacherStudentMerge 时不使用 jobCode 条件。"
+                    + "按负载均衡写入 teacherId；若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
+                    + "则更新其 createUserId、verifyUserId 为请求传入值。createdVerifyProcessCount 为实际更新的审核行数。"
     )
     @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object initTeacherStudentByInternshipId(@RequestBody JSONObject requestJson) {
@@ -379,20 +382,19 @@ public class InternshipProcessController {
         Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
         Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
         String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
-        Integer tutorAssignKind = node != null ? node.getInteger("tutorAssignKind") : requestJson.getInteger("tutorAssignKind");
         Integer currentVerifyTypeId = node != null ? node.getInteger("currentVerifyTypeId") : requestJson.getInteger("currentVerifyTypeId");
         if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
         }
         return BaseResponse.ok(
                 iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
-                        tutorAssignKind, currentVerifyTypeId)
+                        currentVerifyTypeId)
         );
     }
 
     @Operation(
-            summary = "【校内导师】根据实习项目初始化师生关系和审核记录",
-            description = "校内导师初始化：支持待审核重分配 + 新增学生增量补建（teacherId 自动均衡分配）。"
+            summary = "【校内导师】根据实习项目初始化师生关系",
+            description = "与 initTeacherStudentByInternshipId 相同。"
     )
     @PostMapping(value = "/initInternalTutorByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object initInternalTutorByInternshipId(@RequestBody JSONObject requestJson) {
@@ -411,30 +413,6 @@ public class InternshipProcessController {
         }
         return BaseResponse.ok(
                 iInternshipService.initInternalTutorByInternshipId(internshipId, processId, createUserId, verifyUserId, currentVerifyTypeId)
-        );
-    }
-
-    @Operation(
-            summary = "【企业导师】根据实习项目初始化师生关系和审核记录",
-            description = "企业导师初始化：可反复调用，每次自动识别新增学生并增量补建（teacherId=0 占位，后续手动分配）。"
-    )
-    @PostMapping(value = "/initEnterpriseTutorByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Object initEnterpriseTutorByInternshipId(@RequestBody JSONObject requestJson) {
-        LogUtil.loggerRecord("initEnterpriseTutorByInternshipId", requestJson);
-        if (requestJson == null) {
-            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
-        }
-        JSONObject node = requestJson.getJSONObject("node");
-        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
-        Integer processId = node != null ? node.getInteger("processId") : requestJson.getInteger("processId");
-        Integer createUserId = node != null ? node.getInteger("createUserId") : requestJson.getInteger("createUserId");
-        String verifyUserId = node != null ? node.getString("verifyUserId") : requestJson.getString("verifyUserId");
-        Integer currentVerifyTypeId = node != null ? node.getInteger("currentVerifyTypeId") : requestJson.getInteger("currentVerifyTypeId");
-        if (internshipId == null || processId == null || createUserId == null || verifyUserId == null) {
-            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId、verifyUserId 不能为空");
-        }
-        return BaseResponse.ok(
-                iInternshipService.initEnterpriseTutorByInternshipId(internshipId, processId, createUserId, verifyUserId, currentVerifyTypeId)
         );
     }
 
