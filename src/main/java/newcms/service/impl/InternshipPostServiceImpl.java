@@ -17,6 +17,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -37,6 +38,38 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
     private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternshipPost";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
+
+    @Override
+    public JSONObject stuSelPostBatch(Integer studentId, List<Integer> internshipPostIds) {
+        if (internshipPostIds == null || internshipPostIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("internshipPostIds 不能为空");
+        }
+
+        int successCount = 0;
+        List<JSONObject> results = new ArrayList<>();
+
+        for (Integer postId : internshipPostIds) {
+            JSONObject item = new JSONObject();
+            item.put("internshipPostId", postId);
+            try {
+                Object result = stuSelPost(studentId, 0, postId);
+                if (result instanceof JSONObject json) {
+                    item.put("isAudit", json.get("isAudit"));
+                    item.put("verifyTypeId", json.get("verifyTypeId"));
+                }
+                item.put("message", "报名成功");
+                successCount++;
+            } catch (Exception e) {
+                item.put("message", e.getMessage());
+            }
+            results.add(item);
+        }
+
+        JSONObject response = new JSONObject();
+        response.put("successCount", successCount);
+        response.put("results", results);
+        return response;
+    }
 
     @Override
     public Object stuSelPost(Integer studentId, Integer oldPostId, Integer newPostId) {

@@ -820,4 +820,48 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         .distinct()
         .forEach(relId -> createDiaryStubs(relId, "RelTitleStudent", internshipId));
   }
+
+  // ==================== 批量提交日志 ====================
+
+  @Override
+  public JSONObject submitDiaryBatch(List<JSONObject> nodes, Integer currentUserId) {
+    if (nodes == null || nodes.isEmpty()) {
+      throw BaseResponse.parameterInvalid.error("nodes 不能为空");
+    }
+
+    int successCount = 0;
+    List<JSONObject> results = new ArrayList<>();
+
+    for (JSONObject node : nodes) {
+      Integer relationId = node.getInteger("relationId");
+      String tableName = node.getString("tableName");
+      Integer periodId = node.getInteger("periodId");
+      String title = node.getString("title");
+      String content = node.getString("content");
+      Boolean submit = node.getBoolean("submit");
+
+      JSONObject item = new JSONObject();
+      item.put("periodId", periodId);
+
+      try {
+        if (relationId == null) throw BaseResponse.parameterInvalid.error("relationId 不能为空");
+        if (tableName == null || tableName.isBlank()) throw BaseResponse.parameterInvalid.error("tableName 不能为空");
+        if (periodId == null) throw BaseResponse.parameterInvalid.error("periodId 不能为空");
+
+        Integer diaryId = submitDiary(relationId, tableName, periodId, title, content, submit, currentUserId);
+        item.put("diaryId", diaryId);
+        item.put("message", "操作成功");
+        successCount++;
+      } catch (Exception e) {
+        item.put("message", e.getMessage());
+      }
+
+      results.add(item);
+    }
+
+    JSONObject response = new JSONObject();
+    response.put("successCount", successCount);
+    response.put("results", results);
+    return response;
+  }
 }

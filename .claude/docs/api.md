@@ -74,6 +74,7 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 | 接口 | 说明 | 参数 |
 |------|------|------|
 | /diary/submit | 提交/保存日志 | relationId, tableName, periodId, title?, content, submit |
+| /diary/submitBatch | 批量提交/保存日志 | nodes: [{ relationId, tableName, periodId, title?, content, submit }] |
 | /diary/periods | 期次列表（学生端，含 diary 状态） | relationId, tableName |
 | /diary/internship-periods | 实习项目所有期次（老师端） | internshipId |
 | /diary/generatePeriods | 生成/重新生成期次 | internshipId, reportStartTime, reportEndTime, cron 或 periodNum |
@@ -87,6 +88,7 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | /internshipPost/StuSelPost | POST | 学生选择/更换实习岗位（StudentId/oldPostId/newPostId 均为密文） |
+| /internshipPost/StuSelPostBatch | POST | 学生批量报名岗位（StudentId + internshipPostIds 均为密文数组，单条失败不阻断） |
 | /main-sign/submit-audit | POST | 提交打卡审核（幂等） node: {signId} |
 | /importAndExport/importExcel | POST | 导入 Excel |
 | /importAndExport/exportExcel | POST | 导出 Excel |
@@ -100,6 +102,7 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 |------|------|------|------|
 | /common/getKey | POST | 匿名 | 获取 AES 加密密钥（5分钟过期） |
 | /common/minio/upload | POST | 认证 | 上传文件（multipart/form-data），最多5个，单文件≤20MB |
-| /common/minio/file/{id} | GET | 认证 | 预览文件（字节流） |
-| /common/minio/download/{id} | GET | 认证 | 下载文件（返回 presigned URL，有效期10分钟） |
-| /common/minio/deleteFile | DELETE | 认证 | 删除文件（ossFileIds 数组） |
+| /common/minio/file/{id} | GET | 认证 | 预览文件（字节流，同校权限校验） |
+| /common/minio/preview/{id} | GET | 认证 | 获取文件预览链接（presigned URL，10分钟，同校权限校验） |
+| /common/minio/download/{id} | GET | 认证 | 下载文件（返回 presigned URL，有效期10分钟，同校权限校验） |
+| /common/minio/deleteFile | DELETE | 认证 | 删除文件（ossFileIds 数组，仅限自己上传的文件） |
