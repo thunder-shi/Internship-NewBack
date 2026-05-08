@@ -42,6 +42,12 @@ public class BaseUser extends NameRemarkInfo {
     private Integer jobId;
     @Column(columnDefinition = "integer unsigned comment '专业ID'")
     private Integer majorId;
+    @Column(name = "start_year", columnDefinition = "smallint unsigned comment '入学年份'")
+    private Integer startYear;
+    @Column(name = "end_year", columnDefinition = "smallint unsigned comment '毕业年份'")
+    private Integer endYear;
+    @Column(columnDefinition = "tinyint unsigned comment '学制（年）'")
+    private Integer schoolLength;
     @Column(columnDefinition = "varchar(50) comment '工号'")
     private String workId;
     @Column(columnDefinition = "varchar(50) CHARACTER SET utf8 COLLATE utf8_bin COMMENT '主题色'")

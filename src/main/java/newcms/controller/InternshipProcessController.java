@@ -217,8 +217,8 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "按可选用户口径批量初始化实习用户与审核记录",
-            description = "先按 internshipId、jobCode、departmentId 获取 getAvailableUsersForInternship 的全部用户，"
-                    + "再批量创建 RelIntershipUser（currentVerifyTypeId 使用传参）与 MainVerifyProcess（isAudit=SAVE，tableName=RelIntershipUser）。"
+            description = "departmentId 传末级部门 id 数组（与树勾选叶子一致）；服务端只按这些 id 做部门 IN，不展开子树、不推断父子。"
+                    + "分页拉齐可选用户后批量创建 RelIntershipUser（currentVerifyTypeId 使用传参）与 MainVerifyProcess（isAudit=SAVE，tableName=RelIntershipUser）。"
                     + "verifyUserId 由 verifyRoleId、createUserId、internshipId 自动计算。"
     )
     @PostMapping(value = "/batchInitRelIntershipUserFromAvailable", consumes = MediaType.APPLICATION_JSON_VALUE)

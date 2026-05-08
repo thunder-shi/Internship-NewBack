@@ -33,4 +33,7 @@ public class ViewBaseUser extends NameRemarkInfo {
     private String jobCode;
     private String jobName;
     private String majorId;
+    private Integer startYear;
+    private Integer endYear;
+    private Integer schoolLength;
 }

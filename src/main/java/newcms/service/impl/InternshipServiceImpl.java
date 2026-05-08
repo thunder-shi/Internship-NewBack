@@ -248,6 +248,15 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object getAvailableUsersForInternship(Integer internshipId, String jobCode, List<Integer> departmentIds, Integer page, Integer size, Sort sort) {
+        return getAvailableUsersForInternshipCore(internshipId, jobCode, departmentIds, page, size, sort, true);
+    }
+
+    /**
+     * @param expandDepartmentSubtree true：每个 departmentId 展开为其子树后再 IN；false：仅按传入 id 列表 IN（用于 batchInit，前端传末级部门数组）
+     */
+    @SuppressWarnings("unchecked")
+    private Object getAvailableUsersForInternshipCore(Integer internshipId, String jobCode, List<Integer> departmentIds,
+            Integer page, Integer size, Sort sort, boolean expandDepartmentSubtree) {
         if (internshipId == null || jobCode == null || jobCode.trim().isEmpty()) {
             throw BaseResponse.parameterInvalid.error("internshipId 和 jobCode 不能为空");
         }
@@ -263,7 +272,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         relSearchKeys.put("internshipId", internshipId);
         relSearchKeys.put("isDeleted", 0);
 
-        @SuppressWarnings("unchecked")
         Page<Object> relPage = (Page<Object>) iCommonService.getSomeRecords(
                 "RelIntershipUser", relSearchKeys, null, Sort.unsorted()
         );
@@ -277,7 +285,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         // 2. 组装 ViewBaseUser 的查询条件：
         //    - jobCode = 前端传入 jobCode
-        //    - departmentId IN (传入部门及其全部子部门)
+        //    - departmentId IN（expand=true：各节点及其子树并集；expand=false：仅传入列表，不判断父子）
         //    - id NOT IN (已关联且未删除的 userId 列表)
         JSONObject userSearchKeys = new JSONObject();
         userSearchKeys.put("jobCode", jobCode);
@@ -288,7 +296,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if (departmentId == null) {
                 continue;
             }
-            allowedDepartmentIds.addAll(collectDepartmentIdsInSubtree(departmentId));
+            if (expandDepartmentSubtree) {
+                allowedDepartmentIds.addAll(collectDepartmentIdsInSubtree(departmentId));
+            } else {
+                allowedDepartmentIds.add(departmentId);
+            }
         }
         if (allowedDepartmentIds.isEmpty()) {
             return new PageImpl<>(Collections.emptyList(), PageRequest.of(pageNum - 1, pageSize), 0);
@@ -349,8 +361,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         List<Integer> candidateUserIds = new ArrayList<>();
         int pageNum = 1;
         while (true) {
-            Object pageObj = getAvailableUsersForInternship(
-                    internshipId, jobCode, departmentIds, pageNum, LARGE_PAGE_SIZE, Sort.by(Sort.Direction.ASC, "id"));
+            Object pageObj = getAvailableUsersForInternshipCore(
+                    internshipId, jobCode, departmentIds, pageNum, LARGE_PAGE_SIZE, Sort.by(Sort.Direction.ASC, "id"), false);
             if (!(pageObj instanceof Page)) {
                 throw BaseResponse.moreInfoError.error("查询可选用户结果异常");
             }

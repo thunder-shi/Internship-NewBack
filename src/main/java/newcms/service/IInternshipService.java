@@ -83,9 +83,9 @@ public interface IInternshipService {
      * 根据实习项目和岗位编码获取可选用户列表（带分页）
      * 从 ViewBaseUser 中筛选出 jobCode 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
      *
-     * @param internshipId 实习项目ID
-     * @param jobCode      岗位编码
-     * @param departmentId 部门ID（可选）
+     * @param internshipId  实习项目ID
+     * @param jobCode       岗位编码
+     * @param departmentIds 部门 id 列表；服务端对每个 id 展开子树后取并集再过滤（与批量初始化接口的「仅末级 id」语义不同）
      * @param page         页码（从1开始）
      * @param size         每页数量
      * @param sort         排序规则
@@ -94,7 +94,8 @@ public interface IInternshipService {
     Object getAvailableUsersForInternship(Integer internshipId, String jobCode, List<Integer> departmentIds, Integer page, Integer size, Sort sort);
 
     /**
-     * 按 getAvailableUsersForInternship 的同口径批量创建 RelIntershipUser，并同步创建 MainVerifyProcess(SAVE)。
+     * 按可选用户口径批量创建 RelIntershipUser，并同步创建 MainVerifyProcess(SAVE)。
+     * {@code departmentIds} 为末级部门 id 数组，服务端仅按列表 IN 过滤，不展开部门子树（与 {@link #getAvailableUsersForInternship} 分页接口的子树行为不同）。
      */
     Object batchInitRelIntershipUserFromAvailable(Integer internshipId, String jobCode, List<Integer> departmentIds,
                                                   Integer processId, Integer createUserId, Integer verifyRoleId,

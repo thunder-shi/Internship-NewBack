@@ -500,10 +500,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份");
-                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份", "学制（年）");
+                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
-                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 break;
         }
         //给除表头外 50行单元格非必填项设置默认值（空字符串）
@@ -657,7 +657,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
                 
-                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业名称, 入学年份, 毕业年份
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业名称, 入学年份, 毕业年份, 学制（年）
                 String name = getCellStringValue(row.getCell(0));
                 String sex = getCellStringValue(row.getCell(1));
                 String phone = getCellStringValue(row.getCell(2));
@@ -673,11 +673,9 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 String jobName = getCellStringValue(row.getCell(12));
                 String workId = getCellStringValue(row.getCell(13));
                 String majorName = getCellStringValue(row.getCell(14));
-                // 入学年份和毕业年份（BaseUser实体中暂无这些字段，保留读取以保持与模板一致）
-                @SuppressWarnings("unused")
                 String startYearStr = getCellStringValue(row.getCell(15));
-                @SuppressWarnings("unused")
                 String endYearStr = getCellStringValue(row.getCell(16));
+                String schoolLengthStr = getCellStringValue(row.getCell(17));
                 
                 // 跳过空行（姓名为空则跳过）
                 if (name.isEmpty()) continue;
@@ -776,24 +774,28 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     continue;
                 }
                 data.put("majorId", majorId);
-                
-                // 处理入学年份和毕业年份（BaseUser实体中没有这些字段，可能需要根据实际需求处理）
-                // 如果BaseUser实体中有这些字段，可以添加：
-                // if (!startYearStr.isEmpty()) {
-                //     try {
-                //         data.put("startYear", Integer.parseInt(startYearStr));
-                //     } catch (NumberFormatException e) {
-                //         // 解析失败，跳过
-                //     }
-                // }
-                // if (!endYearStr.isEmpty()) {
-                //     try {
-                //         data.put("endYear", Integer.parseInt(endYearStr));
-                //     } catch (NumberFormatException e) {
-                //         // 解析失败，跳过
-                //     }
-                // }
-                
+                if (!startYearStr.isEmpty()) {
+                    try {
+                        data.put("startYear", Integer.parseInt(startYearStr.trim()));
+                    } catch (NumberFormatException e) {
+                        logger.warn("第 {} 行：入学年份无法解析为整数，已忽略: {}", i + 1, startYearStr);
+                    }
+                }
+                if (!endYearStr.isEmpty()) {
+                    try {
+                        data.put("endYear", Integer.parseInt(endYearStr.trim()));
+                    } catch (NumberFormatException e) {
+                        logger.warn("第 {} 行：毕业年份无法解析为整数，已忽略: {}", i + 1, endYearStr);
+                    }
+                }
+                if (!schoolLengthStr.isEmpty()) {
+                    try {
+                        data.put("schoolLength", Integer.parseInt(schoolLengthStr.trim()));
+                    } catch (NumberFormatException e) {
+                        logger.warn("第 {} 行：学制无法解析为整数，已忽略: {}", i + 1, schoolLengthStr);
+                    }
+                }
+
                 // BaseUser不是树形结构，使用iDataListService
                 Object editResult = iDataListService.editOneNode("BaseUser", data);
                 
