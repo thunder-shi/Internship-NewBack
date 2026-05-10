@@ -7,10 +7,12 @@ import newcms.base.Constant;
 import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
 import newcms.entity.db.RelStuInternshipPost;
+import newcms.entity.db.RelTeacherStudent;
 import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.RelTitleTeacher;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.RelStuInternshipPostDao;
+import newcms.repository.db.RelTeacherStudentDao;
 import newcms.repository.db.RelTitleStudentDao;
 import newcms.repository.db.RelTitleTeacherDao;
 import newcms.service.ICommonService;
@@ -53,6 +55,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
     @Resource
     private RelStuInternshipPostDao relStuInternshipPostDao;
+
+    @Resource
+    private RelTeacherStudentDao relTeacherStudentDao;
 
     @Resource
     private RelTitleStudentDao relTitleStudentDao;
@@ -461,15 +466,25 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                     boolean isSelfInternship = post != null && "SELF_INTERNSHIP".equals(post.getCode());
 
                     if (!isSelfInternship) {
-                        // 企业岗位：标准流程 —— 递增人数、满员级联、跨岗位级联
+                        // 企业岗位 PASS：标准流程 —— 递增人数、满员级联、跨企业岗位级联 + 删自主
                         mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
                         cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
                         if (post != null && post.getInternshipId() != null) {
                             cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
+                            // 企业岗位 PASS 即永久删除该学生该项目下的自主实习记录
+                            // （applySelfInternship 会再预检拒绝，实现"企业岗位通过即自动退出自主"）
+                            cancelSelfInternshipOnEnterpriseApproval(studentId, post.getInternshipId());
+                        }
+                    } else {
+                        // 自主 PASS：allPersonNum=-1 不需计人头；但"同项目一岗位"对称互斥 ——
+                        // 必须级联删除该学生在该项目下的所有企业岗位报名（含 SUBMIT/SAVE/BACK/NOTPASS）。
+                        // cancelOtherStuPostsOnApproval 内部已跳过自主记录，传本 relationId 进去
+                        // 则恰好只删企业岗位报名；stuSelPost 侧再预检拦截新的企业岗位申请。
+                        if (post != null && post.getInternshipId() != null) {
+                            cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
                         }
                     }
-                    // 自主实习豁免：allPersonNum=-1 不需要计人头；与企业岗位并行不互斥级联。
-                    // 导师分配 ensure 对两种岗位都需要执行（自主实习通过后也要生成导师分配占位）
+                    // 导师分配 ensure 对两种岗位都执行（自主 PASS 后也要生成导师分配占位）
                     if (post != null && post.getInternshipId() != null) {
                         ensureSeparateTutorAssignmentsAfterStuPostApproved(
                                 post.getInternshipId(), relationId, studentId);
@@ -876,13 +891,19 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     /**
-     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余**企业岗位**报名记录。
-     * <p>对每条"其他报名"：原子性扣减岗位人数 → 软删除 MainVerifyProcess → 软删除 RelStuInternshipPost。</p>
-     * <p>自主实习（code='SELF_INTERNSHIP'）不参与此级联：既不会被删除（当企业岗位 PASS 时保留自主记录），
-     * 也不会触发此方法（applySelfInternship 的 PASS 路径不调用本方法，与企业岗位并行存在）。</p>
+     * 学生某一岗位报名审核全部通过后，将同实习项目下其余**企业岗位**报名记录标记为系统自动作废
+     * （isAudit=NOTPASS + 系统说明），<b>保留</b>关系记录与附件可见。
+     * <p>对每条"其他报名"：清掉旧 MainVerifyProcess → 追加 NOTPASS 标记；若曾 PASS（NO_VERIFY 自动通过）
+     * 则原子性扣减岗位 nowPersonNum。RelStuInternshipPost 与 SysOssFile 不软删，学生可见审核历史。</p>
+     * <p>自主实习岗位（code='SELF_INTERNSHIP'）下的记录不在此处理 —— 由
+     * {@link #cancelSelfInternshipOnEnterpriseApproval} 负责。</p>
+     * <p>调用场景：</p>
+     * <ul>
+     *   <li>企业岗位 PASS：传 approvedRelStuPostId=企业记录 id，跳过自己 + 跳过自主 → 作废其他企业报名。</li>
+     *   <li>自主 PASS：传 approvedRelStuPostId=自主记录 id，跳过自己（同时命中"跳过自主"）→ 作废所有企业报名。</li>
+     * </ul>
      */
     @Override
-    @SuppressWarnings("unchecked")
     public void cancelOtherStuPostsOnApproval(Integer approvedRelStuPostId,
                                                Integer studentId,
                                                Integer internshipId) {
@@ -903,6 +924,20 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 .map(MainInternshipPost::getId)
                 .collect(Collectors.toList());
 
+        // 推断 reason：approved 是自主则提示自主，否则提示企业
+        boolean approvedIsSelf = false;
+        for (RelStuInternshipPost p : relStuInternshipPostDao
+                .findByStudentIdAndInternshipPostIdInAndIsDeletedFalse(studentId, postIds)) {
+            if (approvedRelStuPostId.equals(p.getId())
+                    && selfInternshipPostIds.contains(p.getInternshipPostId())) {
+                approvedIsSelf = true;
+                break;
+            }
+        }
+        String reason = approvedIsSelf
+                ? "您已通过自主实习申请，本企业岗位报名自动作废"
+                : "您已选定其他企业岗位，本报名自动作废";
+
         // 取学生在这些岗位中的全部有效报名记录
         List<RelStuInternshipPost> others = relStuInternshipPostDao
                 .findByStudentIdAndInternshipPostIdInAndIsDeletedFalse(studentId, postIds);
@@ -911,37 +946,129 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             if (approvedRelStuPostId.equals(other.getId())) {
                 continue; // 跳过已通过的那条
             }
-            // 跳过自主实习：与企业岗位并行，不参与互斥级联
+            // 跳过自主实习：自主由 cancelSelfInternshipOnEnterpriseApproval 处理
             if (selfInternshipPostIds.contains(other.getInternshipPostId())) {
                 continue;
             }
             Integer otherId = other.getId();
 
-            // 1. 软删除关联的 MainVerifyProcess 记录（nowPersonNum 仅在审核通过时递增，无需递减）
-            JSONObject sk = new JSONObject();
-            sk.put("relationId", otherId);
-            sk.put("tableName", "RelStuInternshipPost");
-            Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
-            for (Object vp : vpPage.getContent()) {
-                Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
-                if (vpId != null) {
-                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
-                }
+            boolean wasApproved = markRelationCancelled(otherId, "RelStuInternshipPost", studentId, reason);
+            if (wasApproved && other.getInternshipPostId() != null) {
+                int updated = mainInternshipPostDao.decrementNowPersonNum(other.getInternshipPostId());
+                logger.info("作废已通过报名 id={}，岗位 {} nowPersonNum-1（影响 {} 行）",
+                        otherId, other.getInternshipPostId(), updated);
             }
-
-            // 2. 软删除 RelStuInternshipPost 记录
-            iCommonService.deleteRecordByDelflag("RelStuInternshipPost", otherId);
-
-            logger.info("学生 {} 岗位 {} 报名通过，级联删除其他企业岗位报名记录 id={}", studentId, approvedRelStuPostId, otherId);
+            logger.info("学生 {} 岗位 {} 通过，标记其他企业岗位报名为作废 id={}", studentId, approvedRelStuPostId, otherId);
         }
     }
 
     /**
-     * 若某岗位审核通过后已招满，级联软删除该岗位剩余待审核报名记录。
+     * 企业岗位 PASS 后，永久删除该学生在本实习项目下的自主实习记录（所有状态）。
+     * <p>级联软删：{@link RelStuInternshipPost} → 其 {@code MainVerifyProcess} → 其 {@code SysOssFile}
+     * → 由自主触发生成的 {@code RelTeacherStudent}（relInternshipId 指向该自主 id）及其 {@code MainVerifyProcess}。</p>
+     * <p>语义：学生选定一份企业岗位后，不再允许自主实习与之并存；
+     * {@code applySelfInternship} 会再通过 {@code countApprovedCompanyPostForStudentInInternship} 预检拒绝重新申请。</p>
+     */
+    private void cancelSelfInternshipOnEnterpriseApproval(Integer studentId, Integer internshipId) {
+        if (studentId == null || internshipId == null) {
+            return;
+        }
+        List<Integer> selfRelIds = relStuInternshipPostDao
+                .findAllActiveSelfInternshipRelIds(studentId, internshipId);
+        if (selfRelIds == null || selfRelIds.isEmpty()) {
+            return;
+        }
+        String reason = "该项目已有企业岗位审核通过，自主实习申请自动作废";
+        for (Integer selfRelId : selfRelIds) {
+            // 1. 标记 RelStuInternshipPost 自动作废（清旧 MVP + 追加 NOTPASS 标记）；自主无 nowPersonNum 概念，wasApproved 不用。
+            markRelationCancelled(selfRelId, "RelStuInternshipPost", studentId, reason);
+
+            // 2. 附件保留（SysOssFile 不动），让学生可看曾提交的材料。
+
+            // 3. 软删由自主 PASS 触发生成的师生分配记录（relInternshipId=selfRelId）及其审核 ——
+            //    源记录已作废，导师占位无意义。
+            List<RelTeacherStudent> tutorAssigns = relTeacherStudentDao
+                    .findByRelInternshipIdAndIsDeletedFalse(selfRelId);
+            if (tutorAssigns != null) {
+                for (RelTeacherStudent rts : tutorAssigns) {
+                    Integer rtsId = rts.getId();
+                    if (rtsId == null) continue;
+                    softDeleteVerifyProcessByRelation(rtsId, TABLE_REL_TEACHER_STUDENT);
+                    iCommonService.deleteRecordByDelflag("RelTeacherStudent", rtsId);
+                }
+            }
+
+            logger.info("学生 {} 项目 {} 企业岗位通过，自主实习记录 id={} 标记为作废（保留可见）",
+                    studentId, internshipId, selfRelId);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void softDeleteVerifyProcessByRelation(Integer relationId, String tableName) {
+        if (relationId == null || tableName == null) return;
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("tableName", tableName);
+        Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+        if (vpPage == null || vpPage.getContent() == null) return;
+        for (Object vp : vpPage.getContent()) {
+            Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
+            if (vpId != null) {
+                iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
+            }
+        }
+    }
+
+    /**
+     * 标记某条业务记录被系统自动作废：清掉旧 MainVerifyProcess（避免残留 PASS 影响 pre-check），
+     * 追加一条 isAudit=NOTPASS 的标记记录，保留业务记录本身可见。
+     * <p>返回旧 MVP 中是否曾出现过 PASS 状态，调用方据此决定是否扣回 nowPersonNum。</p>
+     */
+    @SuppressWarnings("unchecked")
+    private boolean markRelationCancelled(Integer relationId, String tableName,
+                                          Integer createUserId, String reason) {
+        if (relationId == null || tableName == null) return false;
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("tableName", tableName);
+        Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+        boolean wasApproved = false;
+        Integer processId = null;
+        if (vpPage != null && vpPage.getContent() != null) {
+            for (Object vp : vpPage.getContent()) {
+                JSONObject vpJson = FastJsonUtil.toJson(vp);
+                Integer vpIsAudit = vpJson.getInteger("isAudit");
+                if (vpIsAudit != null && vpIsAudit == Constant.AUDIT_STATUS.PASS) {
+                    wasApproved = true;
+                }
+                if (processId == null) {
+                    processId = vpJson.getInteger("processId");
+                }
+                Integer vpId = vpJson.getInteger("id");
+                if (vpId != null) {
+                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
+                }
+            }
+        }
+        // 追加 NOTPASS 标记
+        JSONObject vp = new JSONObject();
+        vp.put("relationId", relationId);
+        if (processId != null) vp.put("processId", processId);
+        vp.put("createUserId", createUserId);
+        vp.put("verifyUserId", "系统自动");
+        vp.put("isAudit", Constant.AUDIT_STATUS.NOTPASS);
+        vp.put("reason", reason);
+        vp.put("tableName", tableName);
+        iCommonService.saveOneRecord("MainVerifyProcess", vp);
+        return wasApproved;
+    }
+
+    /**
+     * 若某岗位审核通过后已招满，将该岗位剩余报名标记为系统自动作废（保留可见，附 NOTPASS 标记）。
      */
     @Override
-    @SuppressWarnings("unchecked")
     public void cancelPendingApplicationsIfPostFull(Integer postId, Integer approvedRelStuPostId) {
         if (postId == null) return;
         MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(postId);
@@ -949,28 +1076,15 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 || post.getNowPersonNum() < post.getAllPersonNum()) {
             return; // 未满，无需处理
         }
-        // 岗位已满，删除该岗位所有剩余报名（已通过的除外）
+        String reason = "该岗位已招满，本报名自动作废";
         List<RelStuInternshipPost> records = relStuInternshipPostDao.findByInternshipPostIdAndIsDeletedFalse(postId);
         for (RelStuInternshipPost record : records) {
             if (approvedRelStuPostId != null && approvedRelStuPostId.equals(record.getId())) {
                 continue; // 跳过刚通过的记录
             }
             Integer recordId = record.getId();
-            // 软删除关联的 MainVerifyProcess 记录
-            JSONObject sk = new JSONObject();
-            sk.put("relationId", recordId);
-            sk.put("tableName", "RelStuInternshipPost");
-            Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
-            for (Object vp : vpPage.getContent()) {
-                Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
-                if (vpId != null) {
-                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
-                }
-            }
-            // 软删除 RelStuInternshipPost 记录
-            iCommonService.deleteRecordByDelflag("RelStuInternshipPost", recordId);
-            logger.info("岗位 {} 已满（{}/{}），级联删除待审核报名记录 id={}",
+            markRelationCancelled(recordId, "RelStuInternshipPost", record.getStudentId(), reason);
+            logger.info("岗位 {} 已满（{}/{}），标记报名记录 id={} 为作废（保留可见）",
                     postId, post.getNowPersonNum(), post.getAllPersonNum(), recordId);
         }
     }

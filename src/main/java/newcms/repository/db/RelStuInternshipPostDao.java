@@ -50,6 +50,20 @@ public interface RelStuInternshipPostDao extends BaseDao<RelStuInternshipPost, I
                                                          @Param("internshipId") Integer internshipId);
 
     /**
+     * 统计学生在某实习项目下自主实习（code='SELF_INTERNSHIP'）已审核通过的记录数。
+     * 用于 stuSelPost 预检：若 > 0 拒绝企业岗位申请（"同项目一岗位"对称互斥）。
+     */
+    @Query(nativeQuery = true, value =
+        "SELECT COUNT(*) FROM rel_stu_internship_post r " +
+        "JOIN main_internship_post p ON p.id = r.internship_post_id " +
+        "JOIN main_verify_process v ON v.relation_id = r.id AND v.table_name = 'RelStuInternshipPost' " +
+        "WHERE r.student_id = :studentId AND p.internship_id = :internshipId " +
+        "AND p.code = 'SELF_INTERNSHIP' " +
+        "AND r.is_deleted = 0 AND v.is_audit = 1 AND v.is_deleted = 0")
+    long countApprovedSelfInternshipForStudentInInternship(@Param("studentId") Integer studentId,
+                                                            @Param("internshipId") Integer internshipId);
+
+    /**
      * 查找学生在某实习项目下的自主实习记录（code='SELF_INTERNSHIP'），取最新一条。
      * 返回 RelStuInternshipPost.id（业务表，含 self_* 字段）。
      * 供 applySelfInternship 判断是新建 / update-in-place / 拒绝。
@@ -61,5 +75,17 @@ public interface RelStuInternshipPostDao extends BaseDao<RelStuInternshipPost, I
         "AND p.code = 'SELF_INTERNSHIP' AND p.is_deleted = 0 AND r.is_deleted = 0 " +
         "ORDER BY r.id DESC LIMIT 1")
     Optional<Integer> findActiveSelfInternshipRelId(@Param("studentId") Integer studentId,
+                                                     @Param("internshipId") Integer internshipId);
+
+    /**
+     * 查找学生在某实习项目下所有未删除的自主实习记录 id（防御性批量：理论上至多 1 条）。
+     * 供企业岗位 PASS 时级联清理使用。
+     */
+    @Query(nativeQuery = true, value =
+        "SELECT r.id FROM rel_stu_internship_post r " +
+        "JOIN main_internship_post p ON p.id = r.internship_post_id " +
+        "WHERE r.student_id = :studentId AND p.internship_id = :internshipId " +
+        "AND p.code = 'SELF_INTERNSHIP' AND p.is_deleted = 0 AND r.is_deleted = 0")
+    List<Integer> findAllActiveSelfInternshipRelIds(@Param("studentId") Integer studentId,
                                                      @Param("internshipId") Integer internshipId);
 }

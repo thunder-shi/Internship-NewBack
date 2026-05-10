@@ -20,12 +20,15 @@ import newcms.service.IDataTreeService;
 import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -89,6 +92,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Resource
     private RelStuInternshipPostDao relStuInternshipPostDao;
 
+    /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
+    @Resource
+    @Lazy
+    private IInternshipService selfProxy;
+
     /** 自主实习虚拟岗位 code（与前端 CONSTANT.SELF_INTERNSHIP.POST_CODE 一致）。 */
     private static final String SELF_INTERNSHIP_POST_CODE = "SELF_INTERNSHIP";
     /** 自主实习虚拟岗位 name（与前端 CONSTANT.SELF_INTERNSHIP.POST_NAME 一致）。 */
@@ -119,13 +127,29 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         initInternshipVerifyLevel(internshipId);
         // (5) 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
         createFirstVerifyProcessRecord(internshipId);
-        // (6) 若是校外实习，幂等创建一条 SELF_INTERNSHIP 虚拟岗位；失败仅记日志，不回滚主流程。
-        try {
-            if (isExternalInternship(internshipId)) {
-                createSelfInternshipPost(internshipId);
+        // (6) 若是校外实习，在主事务 commit 之后以独立事务幂等创建 SELF_INTERNSHIP 虚拟岗位。
+        //     用 afterCommit + 自注入代理，而不是 try-catch —— 共享事务里内层异常会把整体标为
+        //     rollback-only，try-catch 拦不住。独立事务失败只记日志，不影响主流程。
+        if (isExternalInternship(internshipId)) {
+            final Integer finalInternshipId = internshipId;
+            Runnable hook = () -> {
+                try {
+                    selfProxy.createSelfInternshipPost(finalInternshipId);
+                } catch (Exception e) {
+                    logger.warn("为校外实习项目 {} 创建自主实习虚拟岗位失败（不回滚主流程）：{}",
+                            finalInternshipId, e.getMessage(), e);
+                }
+            };
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        hook.run();
+                    }
+                });
+            } else {
+                hook.run();
             }
-        } catch (Exception e) {
-            logger.warn("为校外实习项目 {} 创建自主实习虚拟岗位失败（不回滚主流程）：{}", internshipId, e.getMessage(), e);
         }
         return savedInternship;
     }
@@ -232,6 +256,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         if (selfAddress == null || selfAddress.trim().isEmpty()) {
             throw BaseResponse.parameterInvalid.error("自主实习地址不能为空");
+        }
+        // 预检：若该学生在本项目下已有企业岗位 PASS，则禁止再申请自主实习
+        // （企业岗位 PASS 触发时已级联软删历史自主记录；此处兜底拦截新申请）
+        if (relStuInternshipPostDao.countApprovedCompanyPostForStudentInInternship(studentId, internshipId) > 0) {
+            throw BaseResponse.parameterInvalid.error("当前项目已通过企业岗位审核，不能再申请自主实习");
         }
         // 1. 确保虚拟岗位存在
         JSONObject postInfo = createSelfInternshipPost(internshipId);
@@ -455,9 +484,15 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         vp.put("isAudit", Constant.AUDIT_STATUS.PASS);
         vp.put("reason", "系统自动通过");
         vp.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
-        iCommonService.saveOneRecord("MainVerifyProcess", vp);
-        // 自主实习 PASS 不调用 incrementNowPersonNum / cancelPendingApplicationsIfPostFull / cancelOtherStuPostsOnApproval
-        // —— 自主实习与企业岗位并行，不互斥也不占用岗位名额
+        Object savedVp = iCommonService.saveOneRecord("MainVerifyProcess", vp);
+        Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");
+        // 统一走审核通过入口触发下游级联：
+        //   - cancelOtherStuPostsOnApproval 删该学生该项目下所有企业岗位报名（"同项目一岗位"互斥）
+        //   - ensureSeparateTutorAssignmentsAfterStuPostApproved 生成导师分配占位
+        // 自主岗位 code=SELF_INTERNSHIP 在 onVerifyProcessApproved 里会自动豁免 incrementNowPersonNum 等人数操作。
+        if (vpId != null) {
+            iVerifyProcessService.onVerifyProcessApproved(vpId);
+        }
         return Constant.AUDIT_STATUS.PASS;
     }
 

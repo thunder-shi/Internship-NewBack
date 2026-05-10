@@ -214,14 +214,19 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     // ─────────────────────────── 辅助方法 ───────────────────────────
 
     /**
-     * 校验学生在同一实习项目下是否已有审核通过的**企业岗位**报名；
-     * 自主实习（code='SELF_INTERNSHIP'）不计入、不互斥。
+     * 校验学生在同一实习项目下是否已有审核通过的岗位（企业或自主）。
+     * 同项目一岗位：已有企业 PASS 拒绝企业岗位；已有自主 PASS 也拒绝企业岗位。
      */
     private void checkNoApprovedPostInSameInternship(Integer studentId, Integer internshipId) {
-        long count = relStuInternshipPostDao
+        long companyCount = relStuInternshipPostDao
                 .countApprovedCompanyPostForStudentInInternship(studentId, internshipId);
-        if (count > 0) {
+        if (companyCount > 0) {
             throw BaseResponse.parameterInvalid.error("您已有审核通过的企业岗位报名，无法再报名其他企业岗位");
+        }
+        long selfCount = relStuInternshipPostDao
+                .countApprovedSelfInternshipForStudentInInternship(studentId, internshipId);
+        if (selfCount > 0) {
+            throw BaseResponse.parameterInvalid.error("您已通过自主实习审核，无法再报名企业岗位");
         }
     }
 
@@ -286,15 +291,17 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.PASS);
             verifyJson.put("reason", "系统自动通过");
             verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
-            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+            Object savedVp = iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+            Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");
             isAudit = Constant.AUDIT_STATUS.PASS;
 
-            // 审核通过后递增岗位已录用人数
-            mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
-            // 若岗位已满，级联删除该岗位其余待审核报名
-            iVerifyProcessService.cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
-            // 级联软删除同实习项目下该学生的其余报名记录
-            iVerifyProcessService.cancelOtherStuPostsOnApproval(relationId, createUserId, internshipId);
+            // 统一走审核通过入口触发完整级联：incrementNowPersonNum +
+            // cancelPendingApplicationsIfPostFull + cancelOtherStuPostsOnApproval +
+            // cancelSelfInternshipOnEnterpriseApproval（删审核中的自主记录）+
+            // ensureSeparateTutorAssignmentsAfterStuPostApproved（导师分配占位）
+            if (vpId != null) {
+                iVerifyProcessService.onVerifyProcessApproved(vpId);
+            }
         }
 
         return new int[]{isAudit, verifyTypeId};
