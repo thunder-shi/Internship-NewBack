@@ -8,10 +8,14 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface MainInternshipPostDao extends BaseDao<MainInternshipPost, Integer> {
     List<MainInternshipPost> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
+
+    /** 按 internshipId + code 找第一条未删除岗位（自主实习虚拟岗位查重用）。 */
+    Optional<MainInternshipPost> findFirstByInternshipIdAndCodeAndIsDeletedFalse(Integer internshipId, String code);
 
     /**
      * 原子性扣减 nowPersonNum（当前人数 > 0 时才更新），返回影响行数。

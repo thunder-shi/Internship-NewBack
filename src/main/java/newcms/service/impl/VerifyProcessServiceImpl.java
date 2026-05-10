@@ -457,14 +457,20 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 Integer studentId = entityJson.getInteger("studentId");
                 Integer internshipPostId = entityJson.getInteger("internshipPostId");
                 if (studentId != null && internshipPostId != null) {
-                    // 审核通过后递增岗位已录用人数
-                    mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
-                    // 若岗位已满，级联删除该岗位其余待审核报名
-                    cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
-                    // 级联软删除同实习项目下该学生的其余报名记录
                     MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(internshipPostId);
+                    boolean isSelfInternship = post != null && "SELF_INTERNSHIP".equals(post.getCode());
+
+                    if (!isSelfInternship) {
+                        // 企业岗位：标准流程 —— 递增人数、满员级联、跨岗位级联
+                        mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
+                        cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
+                        if (post != null && post.getInternshipId() != null) {
+                            cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
+                        }
+                    }
+                    // 自主实习豁免：allPersonNum=-1 不需要计人头；与企业岗位并行不互斥级联。
+                    // 导师分配 ensure 对两种岗位都需要执行（自主实习通过后也要生成导师分配占位）
                     if (post != null && post.getInternshipId() != null) {
-                        cancelOtherStuPostsOnApproval(relationId, studentId, post.getInternshipId());
                         ensureSeparateTutorAssignmentsAfterStuPostApproved(
                                 post.getInternshipId(), relationId, studentId);
                     }
@@ -870,8 +876,10 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     /**
-     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余报名记录。
+     * 学生某一岗位报名审核全部通过后，级联软删除同实习项目下其余**企业岗位**报名记录。
      * <p>对每条"其他报名"：原子性扣减岗位人数 → 软删除 MainVerifyProcess → 软删除 RelStuInternshipPost。</p>
+     * <p>自主实习（code='SELF_INTERNSHIP'）不参与此级联：既不会被删除（当企业岗位 PASS 时保留自主记录），
+     * 也不会触发此方法（applySelfInternship 的 PASS 路径不调用本方法，与企业岗位并行存在）。</p>
      */
     @Override
     @SuppressWarnings("unchecked")
@@ -882,22 +890,30 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return;
         }
 
-        // 取该实习项目下所有岗位 ID
+        // 取该实习项目下所有岗位（保留 code 以便过滤自主岗位）
         List<MainInternshipPost> posts = mainInternshipPostDao.findByInternshipIdAndIsDeletedFalse(internshipId);
         if (posts == null || posts.isEmpty()) {
             return;
         }
+        Set<Integer> selfInternshipPostIds = posts.stream()
+                .filter(p -> "SELF_INTERNSHIP".equals(p.getCode()))
+                .map(MainInternshipPost::getId)
+                .collect(Collectors.toSet());
         List<Integer> postIds = posts.stream()
-                .map(p -> p.getId())
+                .map(MainInternshipPost::getId)
                 .collect(Collectors.toList());
 
-        // 取学生在这些岗位中的全部有效报名记录（Spring Data JPA 自动生成查询）
+        // 取学生在这些岗位中的全部有效报名记录
         List<RelStuInternshipPost> others = relStuInternshipPostDao
                 .findByStudentIdAndInternshipPostIdInAndIsDeletedFalse(studentId, postIds);
 
         for (RelStuInternshipPost other : others) {
             if (approvedRelStuPostId.equals(other.getId())) {
                 continue; // 跳过已通过的那条
+            }
+            // 跳过自主实习：与企业岗位并行，不参与互斥级联
+            if (selfInternshipPostIds.contains(other.getInternshipPostId())) {
+                continue;
             }
             Integer otherId = other.getId();
 
@@ -917,7 +933,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             // 2. 软删除 RelStuInternshipPost 记录
             iCommonService.deleteRecordByDelflag("RelStuInternshipPost", otherId);
 
-            logger.info("学生 {} 岗位 {} 报名通过，级联删除其他报名记录 id={}", studentId, approvedRelStuPostId, otherId);
+            logger.info("学生 {} 岗位 {} 报名通过，级联删除其他企业岗位报名记录 id={}", studentId, approvedRelStuPostId, otherId);
         }
     }
 

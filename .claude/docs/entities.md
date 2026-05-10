@@ -43,13 +43,14 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | MainDiary                | main_diary                  | relationId, tableName, periodId, content, submit, currentVerifyTypeId                                     |
 | MainDiaryPeriod          | main_diary_period           | internshipId, periodIndex, beginTime, endTime, name                                                       |
 | MainSign                 | main_sign                   | stuInternshipId, address, signType, imgId, verifyFirstRoleId~verifyFifthRoleId                            |
+| MainLeave                | main_leave                  | stuInternshipId, startTime, endTime, remarks, currentVerifyTypeId, verifyFirstRoleId~verifyFifthRoleId（表22，BaseInfo+VerifyConfigInfo）    |
 | RelProcessInternship     | rel_process_internship      | internshipId, processTypeId, verifyFirstRoleId~verifyFifthRoleId, startTime, endTime, currentVerifyTypeId |
 | RelProcessInternshipType | rel_process_internship_type | internshipTypeId, processTypeId, 多级审核角色                                                             |
 | RelTeacherStudent        | rel_teacher_student         | teacherId, studentId, relInternshipId                                                                     |
 | RelTitleTeacher          | rel_title_teacher           | internshipId, teacherId, isLimit                                                                          |
 | RelTitleStudent          | rel_title_student           | titleId, stuId, currentVerifyTypeId                                                                       |
 | RelIntershipUser         | rel_intership_user          | internshipId, userId, currentVerifyTypeId                                                                 |
-| RelStuInternshipPost     | rel_stu_internship_post     | studentId, internshipPostId, currentVerifyTypeId                                                          |
+| RelStuInternshipPost     | rel_stu_internship_post     | studentId, internshipPostId, currentVerifyTypeId, selfCompanyName/selfPostName/selfAddress/selfRemarks（自主实习 4 字段）                                      |
 | RelInterMajor            | rel_inter_major             | internshipId, majorId                                                                                     |
 | RelInterTypeMajor        | rel_inter_type_major        | internshipTypeId, majorId                                                                                 |
 | RelPostMajor             | rel_post_major              | postTypeId, majorId                                                                                       |
@@ -81,7 +82,7 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | RelRoleMenu | rel_role_menu | roleId, menuId                                                                 |
 | RelUserRole | rel_user_role | userId, roleId                                                                 |
 
-## 视图实体（共 36 个）
+## 视图实体（共 40 个）
 
 **视图列名规则**：数据库视图使用下划线格式，JPA 自动映射到驼峰字段；部分视图用 AS 别名输出驼峰格式，注意区分。
 
@@ -124,3 +125,6 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | ViewVerifyMainSignMerge                    | view_verify_main_sign_merge                       | 打卡审核综合（最新记录，含 isAllVerified，含 studentAccount）                       |
 | ViewExternalInternshipCollegeStats         | view_external_internship_college_stats            | 校外实习学院汇总统计                                                                |
 | ViewExternalInternshipCollegeStatsId       | view_external_internship_college_stats_id         | 校外实习学院统计辅助（ID列）                                                        |
+| ViewLeaveUniversalDetails                  | view_leave_universal_details                      | 请假业务全量视图（抹平校内/校外差异，含 studentAccount、internshipMode、relationTable） |
+| ViewLeaveAuditFlow                         | view_leave_audit_flow                             | 请假审核流向视图（MainVerifyProcess + BaseVerifyType 聚合，含 verifyTypeOrder、nextVerifyLevel） |
+| ViewAuditorTodoList                        | view_auditor_todo_list                            | 导师/审核员待办视图（MainLeave 当前待审记录，含 studentAccount、teacherName）       |

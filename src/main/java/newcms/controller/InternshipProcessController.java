@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
 import newcms.annotation.PathRestController;
+import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.service.IInternshipService;
@@ -75,6 +76,43 @@ public class InternshipProcessController {
             throw BaseResponse.parameterInvalid.error("ids 参数不能为空");
         }
         return BaseResponse.ok(iInternshipService.deleteNewInternship(ids));
+    }
+
+    @Operation(summary = "幂等创建自主实习虚拟岗位",
+            description = "入参 {internshipId}。若已存在则返回 {postId, created:false}；否则创建 "
+                    + "MainInternshipPost(code='SELF_INTERNSHIP', allPersonNum=-1, companyId=null) 并在项目存在 "
+                    + "EXTERNAL_ENTERPRISE_POST_DECLARATION 流程时追加一条自动通过审核。")
+    @PostMapping(value = "/createSelfInternshipPost", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object createSelfInternshipPost(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("createSelfInternshipPost", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        return BaseResponse.ok(iInternshipService.createSelfInternshipPost(internshipId));
+    }
+
+    @Operation(summary = "学生申请自主实习",
+            description = "入参 {internshipId, selfCompanyName, selfPostName, selfAddress, selfRemarks}。"
+                    + "同一学生同项目下只能 1 条自主实习记录：SAVE/SUBMIT/PASS/BACK 状态下拒绝；"
+                    + "NOTPASS 时复用原记录 id 重投（清空旧审核、清空附件、重置 isAudit=SUBMIT）。"
+                    + "不与企业岗位报名互斥，通过后不删除其他企业岗位报名。")
+    @PostMapping(value = "/applySelfInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object applySelfInternship(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("applySelfInternship", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) {
+            node = requestJson;
+        }
+        Integer internshipId = node.getInteger("internshipId");
+        String selfCompanyName = node.getString("selfCompanyName");
+        String selfPostName = node.getString("selfPostName");
+        String selfAddress = node.getString("selfAddress");
+        String selfRemarks = node.getString("selfRemarks");
+        Integer studentId = Base.getLoginUserId();
+        return BaseResponse.ok(iInternshipService.applySelfInternship(internshipId, studentId,
+                selfCompanyName, selfPostName, selfAddress, selfRemarks));
     }
 
 

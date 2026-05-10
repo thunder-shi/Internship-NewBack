@@ -47,10 +47,10 @@ src/main/java/newcms/
 ├── annotation/      # @PathRestController, @Permissions
 ├── base/            # Base, BaseException, BaseResponse, Constant
 ├── config/          # CorsConfig, ShiroConfig, GlobalExceptionHandler, MinIOConfig
-├── controller/      # commonCtrl/, systemManage/, userCtrl/, Diary/InternshipPost/InternshipProcess/MainSign Controller
-├── entity/          # base/（6个基础实体）, db/（33个表实体 + 36个视图实体）
-├── repository/      # base/（BaseDao, BaseTreeDao）, db/（68个DAO）
-├── service/         # 11个 I*Service 接口 + impl/（11个实现）
+├── controller/      # commonCtrl/, systemManage/, userCtrl/, Diary/InternshipPost/InternshipProcess/MainLeave/MainSign/ImportAndExport Controller
+├── entity/          # base/（6个基础实体）, db/（34个表实体 + 40个视图实体）
+├── repository/      # base/（BaseDao, BaseTreeDao）, db/（73个DAO）
+├── service/         # 12个 I*Service 接口 + impl/（12个实现）
 └── utils/           # CollectionUtil, DateUtil, DaoClassUtil, EncodeUtil, EncryptUtil,
                      # FastJsonUtil, GeneralUtil, LogUtil, MinIOUtils, RedisUtil, TreeUtil
 ```
@@ -122,6 +122,15 @@ EncryptUtil.getKeyWord(keyWord)  // 解密（用后销毁密钥）
 
 该视图中 `isAudit` 来自 `RelTitleTeacher`（校内导师审核），**不是**学生选题审核。  
 判断学生选题是否完全通过应用 `ViewVerifyProcessRelTitleStudentMerge.isAllVerified`。
+
+### 自主实习机制
+
+- 校外实习项目新建时自动创建 **虚拟岗位**：`MainInternshipPost(code='SELF_INTERNSHIP', name='自主实习', allPersonNum=-1, companyId=null)`（幂等，失败不回滚主流程）。
+- 学生端入口：`/internshipProcess/applySelfInternship`（独立接口，不走 `stuSelPost`）；同学生同项目下最多 1 条自主记录；SAVE/SUBMIT/PASS/BACK 拒绝；NOTPASS 重投 update-in-place（复用 id、覆盖 self_* 字段、清空旧 `MainVerifyProcess`、清空 `SysOssFile`）。
+- **互斥豁免**：自主实习 **不与** 企业岗位互斥 —— 学生可同时持有 1 条自主 PASS + 多条企业 SUBMIT/PASS（企业岗位之间仍互斥，同项目最多 1 个企业岗位 PASS）。
+- **级联豁免**：自主岗位 PASS **不**触发 `incrementNowPersonNum` / `cancelPendingApplicationsIfPostFull` / `cancelOtherStuPostsOnApproval`；企业岗位 PASS 的级联中也 **跳过** 自主记录。
+- 流程常量：`PROCESS_TYPE.EXTERNAL_STUDENT_SELF_DECLARATION`（code=17）；项目必须在 `RelProcessInternship` 里配了该流程才能申请，否则 `applySelfInternship` 抛 `当前项目未开通自主实习申请`。
+- 附件：`SysOssFile.tableName='RelStuInternshipPost'`（PascalCase），`relationIds` = `RelStuInternshipPost.id`。
 
 ---
 
