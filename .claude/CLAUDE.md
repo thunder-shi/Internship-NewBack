@@ -47,10 +47,10 @@ src/main/java/newcms/
 ├── annotation/      # @PathRestController, @Permissions
 ├── base/            # Base, BaseException, BaseResponse, Constant
 ├── config/          # CorsConfig, ShiroConfig, GlobalExceptionHandler, MinIOConfig
-├── controller/      # commonCtrl/, systemManage/, userCtrl/, Diary/InternshipPost/InternshipProcess/MainSign Controller
-├── entity/          # base/（6个基础实体）, db/（33个表实体 + 36个视图实体）
-├── repository/      # base/（BaseDao, BaseTreeDao）, db/（68个DAO）
-├── service/         # 11个 I*Service 接口 + impl/（11个实现）
+├── controller/      # commonCtrl/, systemManage/, userCtrl/, Diary/InternshipPost/InternshipProcess/MainLeave/MainSign/ImportAndExport Controller
+├── entity/          # base/（6个基础实体）, db/（34个表实体 + 40个视图实体）
+├── repository/      # base/（BaseDao, BaseTreeDao）, db/（73个DAO）
+├── service/         # 12个 I*Service 接口 + impl/（12个实现）
 └── utils/           # CollectionUtil, DateUtil, DaoClassUtil, EncodeUtil, EncryptUtil,
                      # FastJsonUtil, GeneralUtil, LogUtil, MinIOUtils, RedisUtil, TreeUtil
 ```
@@ -110,9 +110,19 @@ EncryptUtil.getKeyWord(keyWord)  // 解密（用后销毁密钥）
 
 ### nowPersonNum 生命周期
 
-`MainInternshipPost.nowPersonNum` **仅在审核全部通过时 +1**，选岗/取消/拒绝均不改变：
-- 审核通过 → `MainInternshipPostDao.incrementNowPersonNum(id)`（无条件+1）
-- 通过后级联：软删除该学生其余报名；若岗位已满则软删除该岗位其余待审核报名
+`MainInternshipPost.nowPersonNum` 仅在企业岗位审核全部通过时 +1：
+- 审核通过 → `MainInternshipPostDao.incrementNowPersonNum(id)`
+- **被作废的曾 PASS 记录（NO_VERIFY 自动通过场景）**：`cancelOtherStuPostsOnApproval` 内会按 `markRelationCancelled` 返回的 `wasApproved=true` 调 `decrementNowPersonNum` 扣回。
+- 自主实习岗位（virtual post，allPersonNum=-1）不参与此计数。
+
+### 系统自动作废的报名/申请保留可见
+
+学生因"同项目一岗位"互斥被自动作废的记录**不软删**，由 `markRelationCancelled` 统一处理：
+- `RelStuInternshipPost`、`SysOssFile`（附件）保留可见，学生看得到曾提交的内容；
+- 旧 `MainVerifyProcess` 全部软删（清掉残留 PASS 状态，避免 pre-check 误判）；
+- 追加一条 `isAudit=NOTPASS, verifyUserId='系统自动'` 的标记 MVP，`reason` 说明作废原因；
+- 自主侧另删由该自主 PASS 触发生成的 `RelTeacherStudent` 占位（源已作废，导师占位无意义）。
+- 触发场景与 reason：① 企业 PASS → 自主："该项目已有企业岗位审核通过，自主实习申请自动作废"；② 自主 PASS → 企业："您已通过自主实习申请，本企业岗位报名自动作废"；③ 企业之间互斥："您已选定其他企业岗位，本报名自动作废"；④ 岗位满员：`cancelPendingApplicationsIfPostFull` 用"该岗位已招满，本报名自动作废"。
 
 ### 审核完成判断
 
@@ -122,6 +132,18 @@ EncryptUtil.getKeyWord(keyWord)  // 解密（用后销毁密钥）
 
 该视图中 `isAudit` 来自 `RelTitleTeacher`（校内导师审核），**不是**学生选题审核。  
 判断学生选题是否完全通过应用 `ViewVerifyProcessRelTitleStudentMerge.isAllVerified`。
+
+### 自主实习机制
+
+- 校外实习项目新建时自动创建 **虚拟岗位**：`MainInternshipPost(code='SELF_INTERNSHIP', name='自主实习', allPersonNum=-1, companyId=null)`（幂等，`afterCommit` 独立事务触发，失败只记日志不影响主流程）。
+- 学生端入口：`/internshipProcess/applySelfInternship`（独立接口，不走 `stuSelPost`）；同学生同项目下最多 1 条自主记录；SAVE/SUBMIT/PASS/BACK 拒绝；NOTPASS 重投 update-in-place（复用 id、覆盖 self_* 字段、清空旧 `MainVerifyProcess`、清空 `SysOssFile`）。
+- **同项目一岗位（对称互斥）**：**申请期**（SUBMIT/SAVE/BACK/NOTPASS）自主与企业岗位可并存；**任一方 PASS** 即独占该项目，另一方所有记录（含 SUBMIT/SAVE 等）级联软删：
+  - 企业 PASS → `cancelSelfInternshipOnEnterpriseApproval` 删自主 `RelStuInternshipPost` + `MainVerifyProcess` + `SysOssFile` + 自主触发生成的 `RelTeacherStudent` 及其审核。
+  - 自主 PASS → `cancelOtherStuPostsOnApproval`（传自主 id）删所有企业岗位报名 + 其 `MainVerifyProcess`（内部自动跳过自主自身）。
+  - 入口预检兜底：`applySelfInternship` 拒"已有企业 PASS"；`stuSelPost` 拒"已有企业 PASS"+"已有自主 PASS"。企业岗位之间仍互斥（同项目最多 1 个企业 PASS）。
+- **级联豁免**：自主 PASS **不**触发 `incrementNowPersonNum` / `cancelPendingApplicationsIfPostFull`（虚拟岗位 allPersonNum=-1 无人数概念）；但仍触发 `ensureSeparateTutorAssignmentsAfterStuPostApproved`（生成导师分配占位）。
+- 流程常量：`PROCESS_TYPE.EXTERNAL_STUDENT_SELF_DECLARATION`（code=17）；项目必须在 `RelProcessInternship` 里配了该流程才能申请，否则 `applySelfInternship` 抛 `当前项目未开通自主实习申请`。
+- 附件：`SysOssFile.tableName='RelStuInternshipPost'`（PascalCase），`relationIds` = `RelStuInternshipPost.id`。
 
 ---
 

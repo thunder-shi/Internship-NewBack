@@ -13,7 +13,7 @@ public class MainInternshipPost extends NameRemarkInfo {
     @Column(columnDefinition = "integer unsigned comment '岗位类型id,外键，关联表BasePostType'")
     private Integer postTypeId;
 
-    @Column(columnDefinition = "integer unsigned default '0' comment '岗位人数'")
+    @Column(columnDefinition = "integer default '0' comment '岗位人数'")
     private Integer allPersonNum;
 
     @Column(columnDefinition = "int unsigned default '0' comment '已选人数'")

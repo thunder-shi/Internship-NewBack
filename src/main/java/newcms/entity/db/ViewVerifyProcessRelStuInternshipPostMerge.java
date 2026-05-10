@@ -55,6 +55,12 @@ public class ViewVerifyProcessRelStuInternshipPostMerge extends BaseInfo {
     private Integer departmentId;
     private String departmentName;
 
+    // 自主实习 4 字段
+    private String selfCompanyName;
+    private String selfPostName;
+    private String selfAddress;
+    private String selfRemarks;
+
     // 计算字段
     private String currentRoleName;
     private Boolean isAllVerified;

@@ -6,10 +6,12 @@ import jakarta.annotation.Resource;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.RelTitleTeacher;
 import newcms.entity.db.ViewBaseUser;
 import newcms.repository.db.MainInternshipPostDao;
+import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTitleStudentDao;
 import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
@@ -19,12 +21,15 @@ import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -88,6 +93,23 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Resource
     private RelTitleTeacherDao relTitleTeacherDao;
 
+    @Resource
+    private RelStuInternshipPostDao relStuInternshipPostDao;
+
+    /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
+    @Resource
+    @Lazy
+    private IInternshipService selfProxy;
+
+    /** 自主实习虚拟岗位 code（与前端 CONSTANT.SELF_INTERNSHIP.POST_CODE 一致）。 */
+    private static final String SELF_INTERNSHIP_POST_CODE = "SELF_INTERNSHIP";
+    /** 自主实习虚拟岗位 name（与前端 CONSTANT.SELF_INTERNSHIP.POST_NAME 一致）。 */
+    private static final String SELF_INTERNSHIP_POST_NAME = "自主实习";
+    /** 自主实习虚拟岗位无限招（allPersonNum=-1，跳过满员校验）。 */
+    private static final int SELF_INTERNSHIP_UNLIMITED = -1;
+    /** SysOssFile 关联表名（PascalCase，与 MainVerifyProcess.tableName 统一）。 */
+    private static final String TABLE_REL_STU_INTERNSHIP_POST = "RelStuInternshipPost";
+
     // ==================== 实习项目管理====================
 
     @Override
@@ -109,7 +131,373 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         initInternshipVerifyLevel(internshipId);
         // (5) 创建"实习计划制定"流程的第一条 MainVerifyProcess 记录
         createFirstVerifyProcessRecord(internshipId);
+        // (6) 若是校外实习，在主事务 commit 之后以独立事务幂等创建 SELF_INTERNSHIP 虚拟岗位。
+        //     用 afterCommit + 自注入代理，而不是 try-catch —— 共享事务里内层异常会把整体标为
+        //     rollback-only，try-catch 拦不住。独立事务失败只记日志，不影响主流程。
+        if (isExternalInternship(internshipId)) {
+            final Integer finalInternshipId = internshipId;
+            Runnable hook = () -> {
+                try {
+                    selfProxy.createSelfInternshipPost(finalInternshipId);
+                } catch (Exception e) {
+                    logger.warn("为校外实习项目 {} 创建自主实习虚拟岗位失败（不回滚主流程）：{}",
+                            finalInternshipId, e.getMessage(), e);
+                }
+            };
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        hook.run();
+                    }
+                });
+            } else {
+                hook.run();
+            }
+        }
         return savedInternship;
+    }
+
+    /**
+     * 判定实习项目是否为「校外实习」。以 {@code ViewMainInternship.intTypeName} 字符串匹配为准。
+     */
+    @SuppressWarnings("unchecked")
+    private boolean isExternalInternship(Integer internshipId) {
+        Object viewObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+        if (viewObj == null) {
+            return false;
+        }
+        String intTypeName = FastJsonUtil.toJson(viewObj).getString("intTypeName");
+        return EXTERNAL_INT_TYPE_NAME.equals(intTypeName);
+    }
+
+    @Override
+    public JSONObject createSelfInternshipPost(Integer internshipId) {
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        // 幂等：已存在则直接返回
+        java.util.Optional<MainInternshipPost> existing = mainInternshipPostDao
+                .findFirstByInternshipIdAndCodeAndIsDeletedFalse(internshipId, SELF_INTERNSHIP_POST_CODE);
+        if (existing.isPresent()) {
+            JSONObject result = new JSONObject();
+            result.put("postId", existing.get().getId());
+            result.put("created", false);
+            return result;
+        }
+        // 新建虚拟岗位
+        JSONObject postJson = new JSONObject();
+        postJson.put("code", SELF_INTERNSHIP_POST_CODE);
+        postJson.put("name", SELF_INTERNSHIP_POST_NAME);
+        postJson.put("allPersonNum", SELF_INTERNSHIP_UNLIMITED);
+        postJson.put("nowPersonNum", 0);
+        postJson.put("internshipId", internshipId);
+        postJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
+        Object saved = iCommonService.saveOneRecord("MainInternshipPost", postJson);
+        Integer postId = FastJsonUtil.toJson(saved).getInteger("id");
+        if (postId == null) {
+            throw BaseResponse.moreInfoError.error("创建自主实习虚拟岗位失败");
+        }
+        // 若项目下存在「企业岗位申报」流程，为该岗位挂一条自动通过审核；不存在则跳过
+        tryWriteAutoPassPostDeclaration(internshipId, postId);
+
+        JSONObject result = new JSONObject();
+        result.put("postId", postId);
+        result.put("created", true);
+        return result;
+    }
+
+    /**
+     * 若实习项目下存在 {@code EXTERNAL_ENTERPRISE_POST_DECLARATION} 流程，为自主实习虚拟岗位追加一条
+     * 自动通过的 {@code MainVerifyProcess}；流程不存在时静默跳过。
+     */
+    @SuppressWarnings("unchecked")
+    private void tryWriteAutoPassPostDeclaration(Integer internshipId, Integer postId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("processTypeCode", Constant.PROCESS_TYPE.EXTERNAL_ENTERPRISE_POST_DECLARATION);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewRelProcessInternship", sk, null, Sort.unsorted(), 1, 1);
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            return;
+        }
+        JSONObject process = FastJsonUtil.toJson(page.getContent().get(0));
+        Integer processId = process.getInteger("id");
+        Integer verifyTypeId = process.getInteger("verifyTypeId");
+        if (processId == null) {
+            return;
+        }
+        JSONObject vp = new JSONObject();
+        vp.put("relationId", postId);
+        vp.put("processId", processId);
+        vp.put("createUserId", Base.getLoginUserId());
+        vp.put("verifyUserId", "系统自动通过");
+        vp.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        vp.put("reason", "系统创建：自主实习岗位");
+        vp.put("tableName", "MainInternshipPost");
+        if (verifyTypeId != null) {
+            vp.put("verifyTypeId", verifyTypeId);
+        }
+        iCommonService.saveOneRecord("MainVerifyProcess", vp);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public JSONObject applySelfInternship(Integer internshipId, Integer studentId,
+                                          String selfCompanyName, String selfPostName,
+                                          String selfAddress, String selfRemarks) {
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        if (studentId == null) {
+            throw BaseResponse.parameterInvalid.error("学生 id 不能为空");
+        }
+        if (selfCompanyName == null || selfCompanyName.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("自主实习单位名称不能为空");
+        }
+        if (selfPostName == null || selfPostName.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("自主实习岗位名称不能为空");
+        }
+        if (selfAddress == null || selfAddress.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("自主实习地址不能为空");
+        }
+        // 预检：若该学生在本项目下已有企业岗位 PASS，则禁止再申请自主实习
+        // （企业岗位 PASS 触发时已级联软删历史自主记录；此处兜底拦截新申请）
+        if (relStuInternshipPostDao.countApprovedCompanyPostForStudentInInternship(studentId, internshipId) > 0) {
+            throw BaseResponse.parameterInvalid.error("当前项目已通过企业岗位审核，不能再申请自主实习");
+        }
+        // 1. 确保虚拟岗位存在
+        JSONObject postInfo = createSelfInternshipPost(internshipId);
+        Integer selfPostId = postInfo.getInteger("postId");
+
+        // 2. 预检：项目下必须配 SELF_DECLARATION 流程
+        JSONObject processJson = findSelfDeclarationProcessOrThrow(internshipId);
+        Integer processId = processJson.getInteger("id");
+        Integer verifyTypeId = processJson.getInteger("verifyTypeId");
+        if (verifyTypeId == null) {
+            verifyTypeId = Constant.VERIFY_LEVEL.NO_VERIFY;
+        }
+
+        // 3. 查已有自主实习记录
+        java.util.Optional<Integer> existingRelIdOpt = relStuInternshipPostDao
+                .findActiveSelfInternshipRelId(studentId, internshipId);
+
+        boolean reapplyInPlace = false;
+        Integer relStuPostId;
+        if (existingRelIdOpt.isPresent()) {
+            Integer existingRelId = existingRelIdOpt.get();
+            Integer latestIsAudit = getLatestIsAuditOfRelStuInternshipPost(existingRelId);
+            if (latestIsAudit == null) {
+                // 无审核记录：视为新建路径，但 relStuInternshipPost 已存在，复用
+                relStuPostId = existingRelId;
+                reapplyInPlace = true;
+            } else if (latestIsAudit == Constant.AUDIT_STATUS.NOTPASS) {
+                relStuPostId = existingRelId;
+                reapplyInPlace = true;
+            } else {
+                // SAVE / SUBMIT / PASS / BACK → 拒绝
+                throw BaseResponse.parameterInvalid.error(audittStatusToMessage(latestIsAudit));
+            }
+        } else {
+            relStuPostId = null;
+        }
+
+        if (reapplyInPlace) {
+            return reapplySelfInternshipInPlace(relStuPostId, studentId, internshipId, selfPostId, processId,
+                    verifyTypeId, selfCompanyName, selfPostName, selfAddress, selfRemarks);
+        }
+        return createSelfInternshipFirstTime(studentId, internshipId, selfPostId, processId, verifyTypeId,
+                selfCompanyName, selfPostName, selfAddress, selfRemarks);
+    }
+
+    private String audittStatusToMessage(int isAudit) {
+        if (isAudit == Constant.AUDIT_STATUS.PASS) {
+            return "已有审核通过的自主实习申请，无法重复申请";
+        }
+        if (isAudit == Constant.AUDIT_STATUS.SUBMIT) {
+            return "自主实习申请正在审核中，请勿重复提交";
+        }
+        if (isAudit == Constant.AUDIT_STATUS.SAVE) {
+            return "已有未提交的自主实习草稿，请先完成提交或撤回";
+        }
+        if (isAudit == Constant.AUDIT_STATUS.BACK) {
+            return "已有审核退回的自主实习记录，请在原记录上修改后重新提交";
+        }
+        return "已有进行中的自主实习申请";
+    }
+
+    @SuppressWarnings("unchecked")
+    private Integer getLatestIsAuditOfRelStuInternshipPost(Integer relationId) {
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.by(Sort.Direction.DESC, "id"), 1, 1);
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            return null;
+        }
+        return FastJsonUtil.toJson(page.getContent().get(0)).getInteger("isAudit");
+    }
+
+    @SuppressWarnings("unchecked")
+    private JSONObject findSelfDeclarationProcessOrThrow(Integer internshipId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("processTypeCode", Constant.PROCESS_TYPE.EXTERNAL_STUDENT_SELF_DECLARATION);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewRelProcessInternship", sk, null, Sort.unsorted(), 1, 1);
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("当前项目未开通自主实习申请");
+        }
+        return FastJsonUtil.toJson(page.getContent().get(0));
+    }
+
+    /**
+     * 首次申请自主实习：新建 RelStuInternshipPost + 写首条 MainVerifyProcess。
+     */
+    private JSONObject createSelfInternshipFirstTime(Integer studentId, Integer internshipId,
+                                                     Integer selfPostId, Integer processId, Integer verifyTypeId,
+                                                     String selfCompanyName, String selfPostName,
+                                                     String selfAddress, String selfRemarks) {
+        JSONObject relJson = new JSONObject();
+        relJson.put("studentId", studentId);
+        relJson.put("internshipPostId", selfPostId);
+        relJson.put("selfCompanyName", selfCompanyName);
+        relJson.put("selfPostName", selfPostName);
+        relJson.put("selfAddress", selfAddress);
+        relJson.put("selfRemarks", selfRemarks);
+        Object saved = iCommonService.saveOneRecord("RelStuInternshipPost", relJson);
+        Integer relStuPostId = FastJsonUtil.toJson(saved).getInteger("id");
+        if (relStuPostId == null) {
+            throw BaseResponse.moreInfoError.error("保存自主实习申请失败");
+        }
+        int isAudit = writeSelfInternshipVerifyProcess(relStuPostId, processId, verifyTypeId, studentId);
+
+        JSONObject out = new JSONObject();
+        out.put("relStuInternshipPostId", relStuPostId);
+        out.put("isAudit", isAudit);
+        out.put("verifyTypeId", verifyTypeId);
+        out.put("created", true);
+        return out;
+    }
+
+    /**
+     * 重投自主实习：复用 RelStuInternshipPost.id，覆盖 self_* + 软删旧审核记录 + 写新 MainVerifyProcess
+     * + 清空该 relationId 下的所有 SysOssFile（按前端澄清：NOTPASS 重投不保留附件）。
+     */
+    @SuppressWarnings("unchecked")
+    private JSONObject reapplySelfInternshipInPlace(Integer relStuPostId, Integer studentId, Integer internshipId,
+                                                    Integer selfPostId, Integer processId, Integer verifyTypeId,
+                                                    String selfCompanyName, String selfPostName,
+                                                    String selfAddress, String selfRemarks) {
+        // update in place：内部字段覆盖；currentVerifyTypeId 视是否需审核决定
+        JSONObject updateJson = new JSONObject();
+        updateJson.put("id", relStuPostId);
+        updateJson.put("selfCompanyName", selfCompanyName);
+        updateJson.put("selfPostName", selfPostName);
+        updateJson.put("selfAddress", selfAddress);
+        updateJson.put("selfRemarks", selfRemarks);
+        updateJson.put("internshipPostId", selfPostId); // 兜底：防旧记录指向已删岗位
+        iCommonService.saveOneRecord("RelStuInternshipPost", updateJson);
+
+        // 软删旧审核记录
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relStuPostId);
+        sk.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
+        Page<Object> oldVps = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+        if (oldVps != null && oldVps.getContent() != null) {
+            for (Object vp : oldVps.getContent()) {
+                Integer vpId = FastJsonUtil.toJson(vp).getInteger("id");
+                if (vpId != null) {
+                    iCommonService.deleteRecordByDelflag("MainVerifyProcess", vpId);
+                }
+            }
+        }
+
+        // 清空附件（按前端澄清 #2：NOTPASS 重投 = 清空附件，学生重新上传）
+        JSONObject fileSk = new JSONObject();
+        fileSk.put("relationIds", relStuPostId);
+        fileSk.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
+        Page<Object> files = (Page<Object>) iCommonService.getSomeRecords(
+                "SysOssFile", fileSk, null, Sort.unsorted(), 1, 1000);
+        if (files != null && files.getContent() != null) {
+            for (Object f : files.getContent()) {
+                Integer fid = FastJsonUtil.toJson(f).getInteger("id");
+                if (fid != null) {
+                    iCommonService.deleteRecordByDelflag("SysOssFile", fid);
+                }
+            }
+        }
+
+        int isAudit = writeSelfInternshipVerifyProcess(relStuPostId, processId, verifyTypeId, studentId);
+
+        JSONObject out = new JSONObject();
+        out.put("relStuInternshipPostId", relStuPostId);
+        out.put("isAudit", isAudit);
+        out.put("verifyTypeId", verifyTypeId);
+        out.put("created", false);
+        return out;
+    }
+
+    /**
+     * 为自主实习报名写一条 MainVerifyProcess。需审核时 isAudit=SUBMIT 并按首级审核角色解析 verifyUserId；
+     * 无需审核（verifyTypeId=NO_VERIFY）时直接 PASS，但**不触发级联**删除其他企业岗位报名。
+     *
+     * @return 写入的 isAudit
+     */
+    private int writeSelfInternshipVerifyProcess(Integer relStuPostId, Integer processId, Integer verifyTypeId,
+                                                 Integer studentId) {
+        Object processObj = iCommonService.getOneRecordById("ViewRelProcessInternship", processId);
+        JSONObject processJson = FastJsonUtil.toJson(processObj);
+        boolean needsVerify = verifyTypeId != null && verifyTypeId >= Constant.VERIFY_LEVEL.ONE_VERIFY;
+
+        if (needsVerify) {
+            Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(processJson, 2);
+            Integer internshipId = processJson.getInteger("internshipId");
+            String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, studentId, internshipId);
+
+            JSONObject upd = new JSONObject();
+            upd.put("id", relStuPostId);
+            upd.put("currentVerifyTypeId", 2);
+            iCommonService.saveOneRecord("RelStuInternshipPost", upd);
+
+            JSONObject vp = new JSONObject();
+            vp.put("relationId", relStuPostId);
+            vp.put("processId", processId);
+            vp.put("createUserId", studentId);
+            vp.put("verifyUserId", verifyUserId);
+            vp.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+            vp.put("reason", "");
+            vp.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
+            iCommonService.saveOneRecord("MainVerifyProcess", vp);
+            return Constant.AUDIT_STATUS.SUBMIT;
+        }
+
+        // NO_VERIFY：直接通过（currentVerifyTypeId=2 > verifyTypeId=1）
+        JSONObject upd = new JSONObject();
+        upd.put("id", relStuPostId);
+        upd.put("currentVerifyTypeId", 2);
+        iCommonService.saveOneRecord("RelStuInternshipPost", upd);
+
+        JSONObject vp = new JSONObject();
+        vp.put("relationId", relStuPostId);
+        vp.put("processId", processId);
+        vp.put("createUserId", studentId);
+        vp.put("verifyUserId", "系统自动通过");
+        vp.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        vp.put("reason", "系统自动通过");
+        vp.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
+        Object savedVp = iCommonService.saveOneRecord("MainVerifyProcess", vp);
+        Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");
+        // 统一走审核通过入口触发下游级联：
+        //   - cancelOtherStuPostsOnApproval 删该学生该项目下所有企业岗位报名（"同项目一岗位"互斥）
+        //   - ensureSeparateTutorAssignmentsAfterStuPostApproved 生成导师分配占位
+        // 自主岗位 code=SELF_INTERNSHIP 在 onVerifyProcessApproved 里会自动豁免 incrementNowPersonNum 等人数操作。
+        if (vpId != null) {
+            iVerifyProcessService.onVerifyProcessApproved(vpId);
+        }
+        return Constant.AUDIT_STATUS.PASS;
     }
 
 

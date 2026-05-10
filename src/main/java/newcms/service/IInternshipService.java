@@ -21,6 +21,37 @@ public interface IInternshipService {
     Object addNewInternship(JSONObject node);
 
     /**
+     * 幂等创建「校外实习-自主实习虚拟岗位」。
+     * <p>行为：</p>
+     * <ol>
+     *   <li>查 {@code main_internship_post} 是否已存在 {@code internshipId + code='SELF_INTERNSHIP'}：
+     *       存在则返回 {@code {postId, created:false}}。</li>
+     *   <li>否则插入一条虚拟岗位：{@code code='SELF_INTERNSHIP', name='自主实习',
+     *       allPersonNum=-1, companyId=null, currentVerifyTypeId=NO_VERIFY(1)}。</li>
+     *   <li>若该项目下存在 {@code EXTERNAL_ENTERPRISE_POST_DECLARATION} 流程节点，则为该岗位追加
+     *       一条自动通过的 {@code MainVerifyProcess}；不存在则跳过（不报错）。</li>
+     * </ol>
+     *
+     * @param internshipId 实习项目 id
+     * @return {@code {postId, created:boolean}}
+     */
+    JSONObject createSelfInternshipPost(Integer internshipId);
+
+    /**
+     * 学生申请自主实习（幂等 + update-in-place）。
+     * <p>规则：同一学生在同一实习项目下，自主实习记录至多 1 条；当前状态
+     * {@code SAVE/SUBMIT/PASS/BACK} 时拒绝；{@code NOTPASS} 时
+     * 复用原 {@code RelStuInternshipPost.id}，覆盖 self_* 字段、重置审核流程、
+     * 并软删除该 relationId 下的所有附件（SysOssFile）。</p>
+     * <p>自主实习不与企业岗位报名互斥；审核通过后也不触发级联删除其他企业岗位。</p>
+     *
+     * @return {@code {relStuInternshipPostId, isAudit, verifyTypeId, created}}
+     */
+    JSONObject applySelfInternship(Integer internshipId, Integer studentId,
+                                   String selfCompanyName, String selfPostName,
+                                   String selfAddress, String selfRemarks);
+
+    /**
      * 删除实习项目
      * 同时删除关联的 RelProcessInternship 记录
      * 注意：已进入审核流程的项目无法删除

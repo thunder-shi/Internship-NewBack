@@ -32,6 +32,18 @@ public class RelStuInternshipPost extends BaseInfo {
     @Column(columnDefinition = "datetime comment 'termination approved time'")
     private java.util.Date terminatedTime;
 
+    @Column(columnDefinition = "varchar(200) comment '自主实习单位名称'")
+    private String selfCompanyName;
+
+    @Column(columnDefinition = "varchar(200) comment '自主实习岗位名称'")
+    private String selfPostName;
+
+    @Column(columnDefinition = "varchar(500) comment '自主实习地址'")
+    private String selfAddress;
+
+    @Column(columnDefinition = "varchar(1000) comment '自主实习备注/说明'")
+    private String selfRemarks;
+
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
     private Integer version;

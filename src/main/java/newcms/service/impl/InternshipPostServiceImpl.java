@@ -38,6 +38,8 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
 
     private static final String TABLE_REL_STU_INTERNSHIP = "RelStuInternshipPost";
     private static final String TABLE_MAIN_VERIFY_PROCESS = "MainVerifyProcess";
+    /** 自主实习虚拟岗位 code，stuSelPost 拒绝经此入口操作自主岗位。 */
+    private static final String SELF_INTERNSHIP_POST_CODE = "SELF_INTERNSHIP";
 
     @Override
     public JSONObject stuSelPostBatch(Integer studentId, List<Integer> internshipPostIds) {
@@ -118,12 +120,17 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
         if (internshipId == null) {
             throw BaseResponse.moreInfoError.error("岗位记录缺少 internshipId");
         }
+        // 2.0 自主实习虚拟岗位不经 stuSelPost 入口，必须走 /internshipProcess/applySelfInternship
+        if (SELF_INTERNSHIP_POST_CODE.equals(post.getCode())) {
+            throw BaseResponse.parameterInvalid.error("自主实习请通过自主实习申请入口提交");
+        }
 
-        // 2. 服务端兜底：已有通过审核的报名则拦截
+        // 2. 服务端兜底：已有通过审核的**企业岗位**报名则拦截（自主实习不互斥）
         checkNoApprovedPostInSameInternship(studentId, internshipId);
 
-        // 3. 容量校验：已录用人数 >= 岗位上限则拒绝（nowPersonNum 仅统计审核通过的报名）
-        if (post.getAllPersonNum() != null && post.getNowPersonNum() != null
+        // 3. 容量校验：allPersonNum>0 时才做上限检查（-1 表示无限/自主岗位，已在 2.0 前置拦截）
+        if (post.getAllPersonNum() != null && post.getAllPersonNum() > 0
+                && post.getNowPersonNum() != null
                 && post.getNowPersonNum() >= post.getAllPersonNum()) {
             throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
         }
@@ -161,12 +168,16 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             throw BaseResponse.moreInfoError.error("未找到目标岗位记录，ID: " + newPostId);
         }
         Integer internshipId = newPost.getInternshipId();
+        if (SELF_INTERNSHIP_POST_CODE.equals(newPost.getCode())) {
+            throw BaseResponse.parameterInvalid.error("自主实习请通过自主实习申请入口提交");
+        }
 
-        // 服务端兜底：已有通过审核的报名则拦截（含当前 oldPost 若已通过）
+        // 服务端兜底：已有通过审核的企业岗位则拦截（自主实习不互斥）
         checkNoApprovedPostInSameInternship(studentId, internshipId);
 
-        // 容量校验：已录用人数 >= 岗位上限则拒绝
-        if (newPost.getAllPersonNum() != null && newPost.getNowPersonNum() != null
+        // 容量校验：仅 allPersonNum>0 时做上限检查
+        if (newPost.getAllPersonNum() != null && newPost.getAllPersonNum() > 0
+                && newPost.getNowPersonNum() != null
                 && newPost.getNowPersonNum() >= newPost.getAllPersonNum()) {
             throw BaseResponse.parameterInvalid.error("该岗位已达到最大可选人数");
         }
@@ -203,13 +214,19 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
     // ─────────────────────────── 辅助方法 ───────────────────────────
 
     /**
-     * 校验学生在同一实习项目下是否已有审核通过的报名，有则抛错拦截。
+     * 校验学生在同一实习项目下是否已有审核通过的岗位（企业或自主）。
+     * 同项目一岗位：已有企业 PASS 拒绝企业岗位；已有自主 PASS 也拒绝企业岗位。
      */
     private void checkNoApprovedPostInSameInternship(Integer studentId, Integer internshipId) {
-        long count = relStuInternshipPostDao
-                .countApprovedPostForStudentInInternship(studentId, internshipId);
-        if (count > 0) {
-            throw BaseResponse.parameterInvalid.error("您已有审核通过的报名，无法继续选择岗位");
+        long companyCount = relStuInternshipPostDao
+                .countApprovedCompanyPostForStudentInInternship(studentId, internshipId);
+        if (companyCount > 0) {
+            throw BaseResponse.parameterInvalid.error("您已有审核通过的企业岗位报名，无法再报名其他企业岗位");
+        }
+        long selfCount = relStuInternshipPostDao
+                .countApprovedSelfInternshipForStudentInInternship(studentId, internshipId);
+        if (selfCount > 0) {
+            throw BaseResponse.parameterInvalid.error("您已通过自主实习审核，无法再报名企业岗位");
         }
     }
 
@@ -274,15 +291,17 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.PASS);
             verifyJson.put("reason", "系统自动通过");
             verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
-            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+            Object savedVp = iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+            Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");
             isAudit = Constant.AUDIT_STATUS.PASS;
 
-            // 审核通过后递增岗位已录用人数
-            mainInternshipPostDao.incrementNowPersonNum(internshipPostId);
-            // 若岗位已满，级联删除该岗位其余待审核报名
-            iVerifyProcessService.cancelPendingApplicationsIfPostFull(internshipPostId, relationId);
-            // 级联软删除同实习项目下该学生的其余报名记录
-            iVerifyProcessService.cancelOtherStuPostsOnApproval(relationId, createUserId, internshipId);
+            // 统一走审核通过入口触发完整级联：incrementNowPersonNum +
+            // cancelPendingApplicationsIfPostFull + cancelOtherStuPostsOnApproval +
+            // cancelSelfInternshipOnEnterpriseApproval（删审核中的自主记录）+
+            // ensureSeparateTutorAssignmentsAfterStuPostApproved（导师分配占位）
+            if (vpId != null) {
+                iVerifyProcessService.onVerifyProcessApproved(vpId);
+            }
         }
 
         return new int[]{isAudit, verifyTypeId};

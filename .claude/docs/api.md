@@ -37,8 +37,14 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 ### 项目管理
 | 接口 | 说明 | 参数 |
 |------|------|------|
-| /internshipProcess/addNewInternship | 新增实习项目 | internshipTypeId, name 等 |
+| /internshipProcess/addNewInternship | 新增实习项目（校外项目自动创建 SELF_INTERNSHIP 虚拟岗位） | internshipTypeId, name 等 |
 | /internshipProcess/deleteNewInternship | 删除实习项目及关联流程 | internshipId |
+
+### 自主实习
+| 接口 | 说明 | 参数 |
+|------|------|------|
+| /internshipProcess/createSelfInternshipPost | 幂等创建自主实习虚拟岗位（code=SELF_INTERNSHIP, allPersonNum=-1, companyId=null）；若存在 EXTERNAL_ENTERPRISE_POST_DECLARATION 流程则追加自动通过审核 | internshipId |
+| /internshipProcess/applySelfInternship | 学生申请自主实习（同学生同项目只能 1 条；SAVE/SUBMIT/PASS/BACK 拒绝；NOTPASS 重投 update-in-place 清附件）。不与企业岗位互斥 | internshipId, selfCompanyName, selfPostName, selfAddress, selfRemarks |
 
 ### 审核流程
 | 接口 | 说明 | 参数 |
@@ -90,6 +96,7 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 | /internshipPost/StuSelPost | POST | 学生选择/更换实习岗位（StudentId/oldPostId/newPostId 均为密文） |
 | /internshipPost/StuSelPostBatch | POST | 学生批量报名岗位（StudentId + internshipPostIds 均为密文数组，单条失败不阻断） |
 | /main-sign/submit-audit | POST | 提交打卡审核（幂等） node: {signId} |
+| /main-leave/submit-audit | POST | 提交请假审核（幂等，仅按 verifyFirstRoleId 解析审核人，解析不到则系统自动通过） node: {leaveId, processId?, processTypeCode?} |
 | /importAndExport/importExcel | POST | 导入 Excel |
 | /importAndExport/exportExcel | POST | 导出 Excel |
 | /importAndExport/downloadTemplate | GET | 下载导入模板 |
