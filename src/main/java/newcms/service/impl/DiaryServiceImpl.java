@@ -9,6 +9,7 @@ import newcms.entity.db.*;
 import newcms.repository.db.*;
 import newcms.service.ICommonService;
 import newcms.service.IDiaryService;
+import newcms.service.IInternshipTerminationService;
 import newcms.utils.FastJsonUtil;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
@@ -70,12 +71,16 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   @Resource
   private newcms.service.IVerifyProcessService iVerifyProcessService;
 
+  @Resource
+  private IInternshipTerminationService internshipTerminationService;
+
   // ==================== 提交/保存日志 ====================
 
   @Override
   public Integer submitDiary(Integer relationId, String tableName, Integer periodId,
       String title, String content, Boolean submit, Integer currentUserId) {
     boolean isSubmit = Boolean.TRUE.equals(submit);
+    internshipTerminationService.assertNotTerminated(tableName, relationId);
 
     // 查找已有日志（同一 relationId+tableName+periodId 只存一条）
     Optional<MainDiary> existingOpt = mainDiaryDao.findByRelationIdAndTableNameAndPeriodIdAndIsDeletedFalse(relationId,

@@ -40,6 +40,15 @@ public class RelTitleStudent extends NameRemarkInfo {
     @Column(columnDefinition = "datetime comment 'final confirmation time'")
     private Date confirmedTime;
 
+    @Column(columnDefinition = "tinyint not null default 0 comment 'internship status: 0 active, 1 terminating, 2 terminated'")
+    private Integer internshipStatus = 0;
+
+    @Column(columnDefinition = "int unsigned default 0 comment 'related MainInternshipTermination id'")
+    private Integer terminationId = 0;
+
+    @Column(columnDefinition = "datetime comment 'termination approved time'")
+    private Date terminatedTime;
+
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
     private Integer version;

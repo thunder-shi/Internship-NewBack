@@ -119,6 +119,21 @@ public class Constant {
         public static final String DEPARTMENT_ADMIN = "DEPARTMENT_ADMIN";
         public static final String ACADEMIC_AFFAIRS_ADMIN = "ACADEMIC_AFFAIRS_ADMIN";
     }
+
+    public static final class INTERNSHIP_RELATION_STATUS {
+        public static final int ACTIVE = 0;
+        public static final int TERMINATING = 1;
+        public static final int TERMINATED = 2;
+    }
+
+    public static final class INTERNSHIP_TERMINATION_STATUS {
+        public static final int PENDING = 0;
+        public static final int APPROVED = 1;
+        public static final int REJECTED = 2;
+        public static final int RETURNED = 3;
+        public static final int CANCELLED = 4;
+    }
+
     public static final class AUDIT_STATUS {
         public static final int SAVE = -1; public static final String SAVENAME = "保存未提交";
         public static final int SUBMIT = 0; public static final String SUBMITNAME = "提交待审核";
@@ -153,6 +168,7 @@ public class Constant {
         public static final String EXTERNAL_ENTERPRISE_ASSIGN_TUTOR = "EXTERNAL_ENTERPRISE_ASSIGN_TUTOR"; // 校外实习-分配企业导师
         /** 学生实习打卡审核（ViewRelProcessInternship.processTypeCode） */
         public static final String STUDENT_SIGN = "STUDENT_SIGN";
+        public static final String STUDENT_INTERNSHIP_TERMINATION = "STUDENT_INTERNSHIP_TERMINATION";
     }
 
     public static final String BUCKET_NAME = "internship";

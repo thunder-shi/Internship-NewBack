@@ -76,6 +76,10 @@ public class DataListController extends CommonController {
             searchKeys.put(treeRelColName, ids);
             regMap.put(treeRelColName,IN);
         }
+        if (searchKeys == null) {
+            searchKeys = new JSONObject();
+        }
+        normalizeStudentInternshipTerminationCandidateSearch(tblName, searchKeys, regMap);
         return BaseResponse.ok(iCommonService.getSomeRecords(tblName, searchKeys, regMap, sortJson, pageInfo.get("page"), pageInfo.get("size"),false, andor));
     }
 

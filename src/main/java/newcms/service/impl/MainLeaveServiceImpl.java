@@ -18,6 +18,7 @@ import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTitleStudentDao;
 import newcms.repository.db.RelTitleTeacherDao;
 import newcms.service.ICommonService;
+import newcms.service.IInternshipTerminationService;
 import newcms.service.IMainLeaveService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -53,6 +54,8 @@ public class MainLeaveServiceImpl extends Base implements IMainLeaveService {
     private RelTitleStudentDao relTitleStudentDao;
     @Resource
     private RelTitleTeacherDao relTitleTeacherDao;
+    @Resource
+    private IInternshipTerminationService internshipTerminationService;
 
     @Override
     public void ensureSubmitVerifyProcess(Integer leaveId, Integer currentUserId) {
@@ -66,6 +69,7 @@ public class MainLeaveServiceImpl extends Base implements IMainLeaveService {
             throw BaseResponse.parameterInvalid.error("请假记录不存在");
         }
 
+        assertLeaveRelationNotTerminated(leave);
         Object lock = LEAVE_LOCKS.computeIfAbsent(leaveId, k -> new Object());
         synchronized (lock) {
             List<MainVerifyProcess> existing = mainVerifyProcessDao
@@ -251,6 +255,27 @@ public class MainLeaveServiceImpl extends Base implements IMainLeaveService {
 
         Integer externalInternshipId = resolveExternalInternshipId(relationId);
         return externalInternshipId != null ? externalInternshipId : resolveInternalInternshipId(relationId);
+    }
+
+    private void assertLeaveRelationNotTerminated(MainLeave leave) {
+        if (leave == null || leave.getStuInternshipId() == null) {
+            return;
+        }
+        Integer relationId = leave.getStuInternshipId();
+        String relationTable = resolveLeaveRelationTable(leave.getId());
+        if (isRelationTable(relationTable, "reltitlestudent")) {
+            internshipTerminationService.assertNotTerminated("RelTitleStudent", relationId);
+            return;
+        }
+        if (isRelationTable(relationTable, "relstuinternshippost")) {
+            internshipTerminationService.assertNotTerminated("RelStuInternshipPost", relationId);
+            return;
+        }
+        if (resolveExternalInternshipId(relationId) != null) {
+            internshipTerminationService.assertNotTerminated("RelStuInternshipPost", relationId);
+        } else if (resolveInternalInternshipId(relationId) != null) {
+            internshipTerminationService.assertNotTerminated("RelTitleStudent", relationId);
+        }
     }
 
     @SuppressWarnings("unchecked")

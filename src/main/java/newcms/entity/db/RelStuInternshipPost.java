@@ -23,6 +23,15 @@ public class RelStuInternshipPost extends BaseInfo {
     @Column(columnDefinition = "integer default '1' comment '当前处在的审核级别'")
     private Integer currentVerifyTypeId = 1;
 
+    @Column(columnDefinition = "tinyint not null default 0 comment 'internship status: 0 active, 1 terminating, 2 terminated'")
+    private Integer internshipStatus = 0;
+
+    @Column(columnDefinition = "int unsigned default 0 comment 'related MainInternshipTermination id'")
+    private Integer terminationId = 0;
+
+    @Column(columnDefinition = "datetime comment 'termination approved time'")
+    private java.util.Date terminatedTime;
+
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
     private Integer version;

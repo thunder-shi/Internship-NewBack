@@ -12,6 +12,7 @@ import newcms.repository.db.MainSignDao;
 import newcms.repository.db.MainVerifyProcessDao;
 import newcms.repository.db.ViewRelProcessInternshipDao;
 import newcms.service.ICommonService;
+import newcms.service.IInternshipTerminationService;
 import newcms.service.IMainSignService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -38,6 +39,8 @@ public class MainSignServiceImpl extends Base implements IMainSignService {
     private ViewRelProcessInternshipDao viewRelProcessInternshipDao;
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+    @Resource
+    private IInternshipTerminationService internshipTerminationService;
 
     @Override
     public void ensureSubmitVerifyProcess(Integer signId, Integer internshipId, Integer currentUserId) {
@@ -47,6 +50,7 @@ public class MainSignServiceImpl extends Base implements IMainSignService {
         }
 
         // 按 signId 加锁，防止并发提交同一打卡记录时重复创建审核行（CONC-06）
+        internshipTerminationService.assertNotTerminated("RelStuInternshipPost", sign.getStuInternshipId());
         Object lock = SIGN_LOCKS.computeIfAbsent(signId, k -> new Object());
         synchronized (lock) {
 

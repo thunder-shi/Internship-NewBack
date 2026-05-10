@@ -16,6 +16,7 @@ import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.service.IInternshipService;
+import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
 import org.springframework.data.domain.Page;
@@ -68,6 +69,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IVerifyProcessService iVerifyProcessService;
+
+    @Resource
+    private IInternshipTerminationService internshipTerminationService;
 
     @Resource
     private ViewExternalInternshipCollegeStatsDao viewExternalInternshipCollegeStatsDao;
@@ -2250,6 +2254,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private Object auditProcessMultiLevelRelationBiz(JSONObject node, Object verifyObj, String bizTableName,
             Integer isAudit, boolean clearSubmitOnBack) {
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
+
         JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
         Integer bizId = verifyJson.getInteger("relationId");
         Integer processId = verifyJson.getInteger("processId");
@@ -2358,6 +2363,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 保存当前审核记录（无论通过/退回，本条记录状态固化为历史）
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
+        if ("MainInternshipTermination".equals(tableName) && isAudit != null
+                && isAudit == Constant.AUDIT_STATUS.PASS && verifyObj != null) {
+            Integer terminationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
+            internshipTerminationService.afterAuditPassed(terminationId, getLoginUserId());
+        }
+
         if (isAudit != null && (isAudit == 2 || isAudit == 3) && Id != null) {
             boolean isStuPost = "RelStuInternshipPost".equals(tableName);
 
@@ -2372,6 +2383,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 // 其他类型：退回时新建 isAudit=-1 的记录，允许用户修改后重新提交
                 createPendingRecordAfterBack(Id);
             }
+        }
+
+        if ("MainInternshipTermination".equals(tableName) && isAudit != null
+                && (isAudit == Constant.AUDIT_STATUS.NOTPASS || isAudit == Constant.AUDIT_STATUS.BACK)
+                && verifyObj != null) {
+            Integer terminationId = FastJsonUtil.toJson(verifyObj).getInteger("relationId");
+            internshipTerminationService.afterAuditRejectedOrReturned(terminationId, isAudit);
         }
 
         return saved;

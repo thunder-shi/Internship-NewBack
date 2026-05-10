@@ -116,7 +116,132 @@ public class CommonController extends Base {
             }
             sorts = Sort.by(orders);
         }
+        normalizeStudentInternshipTerminationCandidateSearch(tblName, json, null);
         return BaseResponse.ok(iCommonService.getSomeRecords(tblName, json, null, sorts, json.getInteger("page"), json.getInteger("size")));
+    }
+
+    protected void normalizeStudentInternshipTerminationCandidateSearch(String tblName, JSONObject searchKeys, Map<String, String> regMap) {
+        if (!"ViewStudentInternshipTerminationCandidate".equals(tblName) || searchKeys == null) {
+            return;
+        }
+        normalizeTerminationCandidateInternshipMode(searchKeys, regMap);
+        normalizeTerminationCandidateStatus(searchKeys, regMap);
+        searchKeys.put("studentId", Base.getLoginUserId());
+        if (regMap != null) {
+            regMap.remove("studentId");
+        }
+    }
+
+    private void normalizeTerminationCandidateInternshipMode(JSONObject searchKeys, Map<String, String> regMap) {
+        Object raw = firstPresent(searchKeys, "internshipMode", "internshipType", "type", "intTypeId", "relationTable");
+        removeSearchAliases(searchKeys, regMap, "internshipType", "type", "intTypeId");
+        if (raw == null) {
+            return;
+        }
+        String mode = normalizeTerminationInternshipMode(raw);
+        if (mode == null) {
+            searchKeys.remove("internshipMode");
+            searchKeys.remove("relationTable");
+            removeSearchAliases(searchKeys, regMap, "internshipMode", "relationTable");
+            return;
+        }
+        searchKeys.put("internshipMode", mode);
+        searchKeys.remove("relationTable");
+        if (regMap != null) {
+            regMap.remove("internshipMode");
+            regMap.remove("relationTable");
+        }
+    }
+
+    private void normalizeTerminationCandidateStatus(JSONObject searchKeys, Map<String, String> regMap) {
+        Object raw = firstPresent(searchKeys, "internshipStatus", "relationStatus", "status", "terminationStatus");
+        removeSearchAliases(searchKeys, regMap, "relationStatus", "status", "terminationStatus");
+        if (raw == null) {
+            return;
+        }
+        Integer status = normalizeTerminationInternshipStatus(raw);
+        if (status == null) {
+            searchKeys.remove("internshipStatus");
+            if (regMap != null) {
+                regMap.remove("internshipStatus");
+            }
+            return;
+        }
+        searchKeys.put("internshipStatus", status);
+        if (regMap != null) {
+            regMap.remove("internshipStatus");
+        }
+    }
+
+    private Object firstPresent(JSONObject json, String... keys) {
+        for (String key : keys) {
+            Object value = json.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private void removeSearchAliases(JSONObject searchKeys, Map<String, String> regMap, String... keys) {
+        for (String key : keys) {
+            searchKeys.remove(key);
+            if (regMap != null) {
+                regMap.remove(key);
+            }
+        }
+    }
+
+    private String normalizeTerminationInternshipMode(Object raw) {
+        String value = String.valueOf(raw).trim();
+        if (value.isBlank() || "全部".equals(value) || "全部类型".equals(value) || "ALL".equalsIgnoreCase(value)) {
+            return null;
+        }
+        String normalized = value.replace("_", "").replace("-", "").toUpperCase();
+        if ("2".equals(value)
+                || "EXTERNAL".equals(normalized)
+                || "OUT".equals(normalized)
+                || "OUTSCHOOL".equals(normalized)
+                || "RELSTUINTERNSHIPPOST".equals(normalized)
+                || value.contains("校外")) {
+            return "EXTERNAL";
+        }
+        if ("1".equals(value)
+                || "INTERNAL".equals(normalized)
+                || "IN".equals(normalized)
+                || "INSCHOOL".equals(normalized)
+                || "RELTITLESTUDENT".equals(normalized)
+                || value.contains("校内")) {
+            return "INTERNAL";
+        }
+        return value;
+    }
+
+    private Integer normalizeTerminationInternshipStatus(Object raw) {
+        String value = String.valueOf(raw).trim();
+        if (value.isBlank() || "全部".equals(value) || "全部状态".equals(value) || "ALL".equalsIgnoreCase(value)) {
+            return null;
+        }
+        String normalized = value.replace("_", "").replace("-", "").toUpperCase();
+        if ("TERMINATING".equals(normalized)
+                || "PENDING".equals(normalized)
+                || value.contains("审核中")
+                || value.contains("终止审核")) {
+            return Constant.INTERNSHIP_RELATION_STATUS.TERMINATING;
+        }
+        if ("TERMINATED".equals(normalized)
+                || value.contains("已终止")
+                || value.contains("终止完成")) {
+            return Constant.INTERNSHIP_RELATION_STATUS.TERMINATED;
+        }
+        if ("ACTIVE".equals(normalized) || "NORMAL".equals(normalized) || value.contains("正常")) {
+            return Constant.INTERNSHIP_RELATION_STATUS.ACTIVE;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     @PutMapping(path = "saveOneRecord", consumes = MediaType.APPLICATION_JSON_VALUE)
