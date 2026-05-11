@@ -257,7 +257,7 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
             return;
         }
         MainInternshipTermination termination = mainInternshipTerminationDao.getByIdAndIsDeletedFalse(terminationId);
-        if (termination == null || Objects.equals(termination.getStatus(), Constant.INTERNSHIP_TERMINATION_STATUS.APPROVED)) {
+        if (termination == null) {
             return;
         }
         Integer verifyTypeId = defaultVerifyType(termination.getVerifyTypeId());
@@ -282,10 +282,13 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
             return;
         }
         MainInternshipTermination termination = mainInternshipTerminationDao.getByIdAndIsDeletedFalse(terminationId);
-        if (termination == null || Objects.equals(termination.getStatus(), Constant.INTERNSHIP_TERMINATION_STATUS.APPROVED)) {
+        if (termination == null) {
             return;
         }
         if (isAudit == Constant.AUDIT_STATUS.NOTPASS) {
+            if (Objects.equals(termination.getStatus(), Constant.INTERNSHIP_TERMINATION_STATUS.APPROVED)) {
+                return;
+            }
             JSONObject update = new JSONObject();
             update.put("id", terminationId);
             update.put("status", Constant.INTERNSHIP_TERMINATION_STATUS.REJECTED);
