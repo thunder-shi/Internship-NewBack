@@ -2717,21 +2717,30 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             node.put("isAudit", isAudit);
         }
 
+        boolean noVerifyTitleAutoApproved = false;
+        // 学生选题流程配置为“无需审核”时，提交后只能自动确认一个最终题目。
+        if (shouldAutoApproveNoVerifyTitleSelectionSubmit(isAudit, tableName, verifyObj)) {
+            isAudit = Constant.AUDIT_STATUS.PASS;
+            node.put("isAudit", isAudit);
+            node.put("verifyUserId", "系统自动通过");
+            markLimitedTitleSelectionAsFullyApproved(verifyObj);
+            noVerifyTitleAutoApproved = true;
+        }
+
         boolean limitedTitleAutoApproved = false;
         // 限选题目（isLimit=1）在学生提交时自动通过，避免继续进入人工审核链。
-        if (shouldAutoApproveLimitedTitleSelectionSubmit(isAudit, tableName, verifyObj)) {
+        if (!noVerifyTitleAutoApproved && shouldAutoApproveLimitedTitleSelectionSubmit(isAudit, tableName, verifyObj)) {
             isAudit = Constant.AUDIT_STATUS.PASS;
             node.put("isAudit", isAudit);
             node.put("verifyUserId", "系统自动通过");
             markLimitedTitleSelectionAsFullyApproved(verifyObj);
             limitedTitleAutoApproved = true;
         }
-
         // 日志 / 打卡：业务表自带审核配置的多级流程（relationId = 业务主键）；打卡无 submit，退回只重置审核级别
         if ("MainDiary".equals(tableName)) {
             return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
         }
-        if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved) {
+        if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved && !noVerifyTitleAutoApproved) {
             // 审核通过：推进到下一级
             iVerifyProcessService.onVerifyProcessApproved(Id);
         }
@@ -2783,6 +2792,31 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return saved;
     }
 
+    private boolean shouldAutoApproveNoVerifyTitleSelectionSubmit(Integer isAudit, String tableName, Object verifyObj) {
+        if (isAudit == null || (isAudit != Constant.AUDIT_STATUS.SUBMIT && isAudit != Constant.AUDIT_STATUS.PASS)) {
+            return false;
+        }
+        if (!TABLE_REL_TITLE_STUDENT.equals(tableName) || verifyObj == null) {
+            return false;
+        }
+        Integer verifyTypeId = resolveTitleSelectionVerifyTypeId(verifyObj);
+        return verifyTypeId != null && verifyTypeId < Constant.VERIFY_LEVEL.ONE_VERIFY;
+    }
+
+    private Integer resolveTitleSelectionVerifyTypeId(Object verifyObj) {
+        if (verifyObj == null) {
+            return null;
+        }
+        Integer processId = FastJsonUtil.toJson(verifyObj).getInteger("processId");
+        if (processId == null) {
+            return null;
+        }
+        Object processObj = iCommonService.getOneRecordById("RelProcessInternship", processId);
+        if (processObj == null) {
+            return null;
+        }
+        return FastJsonUtil.toJson(processObj).getInteger("verifyTypeId");
+    }
     private boolean shouldAutoApproveLimitedTitleSelectionSubmit(Integer isAudit, String tableName, Object verifyObj) {
         // 学生端提交在不同入口可能传 0（提交待审）或 1（直接通过）；
         // 对限选题目统一按自动通过终态处理。
@@ -2909,10 +2943,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 RelTitleStudent existing = sameRows.get(0);
                 return confirmTeacherAssignedExistingCandidate(existing.getId(), internshipId);
             }
-            if (!teacherAssign && hasActiveTitleCandidate(titleId)) {
-                throw BaseResponse.moreInfoError.error("title is already held by another candidate");
-            }
-
             if (!node.containsKey("topicReasons")) {
                 node.put("topicReasons", null);
             }
@@ -3025,12 +3055,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (titleHasFinal) {
             throw BaseResponse.moreInfoError.error("title already has a final student");
         }
-    }
-
-    private boolean hasActiveTitleCandidate(Integer titleId) {
-        return relTitleStudentDao.findByTitleIdAndIsDeletedFalse(titleId)
-                .stream()
-                .anyMatch(row -> row.getIsFinal() == null || row.getIsFinal() != 1);
     }
 
     private void releaseOtherCandidatesOfStudent(Integer stuId, Integer internshipId, Integer keepRelationId) {
@@ -3361,6 +3385,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         Integer verifyTypeId = processJson.getInteger("verifyTypeId");
         boolean needsVerify = verifyTypeId != null && verifyTypeId >= Constant.VERIFY_LEVEL.ONE_VERIFY;
+        boolean titleStudentCandidate = TABLE_REL_TITLE_STUDENT.equals(targetTableName);
 
         // Keep the business row aligned with the process definition so the first approval
         // advances from the real starting level instead of from NO_VERIFY.
@@ -3375,10 +3400,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (needsVerify) {
             Integer verifyFirstRoleId = processJson.getInteger("verifyFirstRoleId");
             verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, createUserId, internshipId);
-            isAudit = Constant.AUDIT_STATUS.SAVE; // -1 保存未提交
+            isAudit = Constant.AUDIT_STATUS.SAVE;
+        } else if (titleStudentCandidate) {
+            verifyUserId = "";
+            isAudit = Constant.AUDIT_STATUS.SAVE;
         } else {
             verifyUserId = "系统自动通过";
-            isAudit = Constant.AUDIT_STATUS.PASS; // 1 直接通过
+            isAudit = Constant.AUDIT_STATUS.PASS;
         }
 
         JSONObject verifyJson = new JSONObject();
@@ -3390,6 +3418,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         verifyJson.put("reason", "");
         verifyJson.put("tableName", targetTableName);
         iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
+
     }
 
     @Override
