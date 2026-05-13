@@ -17,6 +17,7 @@ import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
+import newcms.service.IEnterpriseInfoService;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
@@ -73,6 +74,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private ICommonService iCommonService;
 
     @Resource
+    private IEnterpriseInfoService enterpriseInfoService;
+
+    @Resource
     private IVerifyProcessService iVerifyProcessService;
 
     @Resource
@@ -114,6 +118,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Override
     public Object addNewInternship(JSONObject node) {
+        if (node == null) {
+            throw BaseResponse.parameterInvalid.error("node 不能为空");
+        }
+        Integer internshipTypeIdForCheck = node.getInteger("internshipTypeId");
+        if (isExternalInternshipType(internshipTypeIdForCheck) && isCurrentUserCompanyAdmin()) {
+            enterpriseInfoService.assertCurrentUserCanDeclareExternal();
+        }
         // (1) 在 MainInternship 实体增加一条记录
         Object savedInternship = iCommonService.saveOneRecord("MainInternship", node);
         JSONObject savedInternshipJson = FastJsonUtil.toJson(savedInternship);
@@ -169,6 +180,27 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         String intTypeName = FastJsonUtil.toJson(viewObj).getString("intTypeName");
         return EXTERNAL_INT_TYPE_NAME.equals(intTypeName);
+    }
+
+    private boolean isExternalInternshipType(Integer internshipTypeId) {
+        if (internshipTypeId == null) {
+            return false;
+        }
+        Object typeObj = iCommonService.getOneRecordById("ViewBaseInternshipType", internshipTypeId);
+        if (typeObj == null) {
+            return false;
+        }
+        String typeName = FastJsonUtil.toJson(typeObj).getString("typeName");
+        return EXTERNAL_INT_TYPE_NAME.equals(typeName);
+    }
+
+    private boolean isCurrentUserCompanyAdmin() {
+        Object userObj = iCommonService.getOneRecordById("ViewBaseUser", getLoginUserId());
+        if (userObj == null) {
+            return false;
+        }
+        String jobCode = FastJsonUtil.toJson(userObj).getString("jobCode");
+        return Constant.USER_JOB_CODE.COMPANY_ADMIN.equals(jobCode);
     }
 
     @Override
@@ -2704,6 +2736,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         // 提前读取记录以判断 tableName（save 不会改变 tableName，提前读不影响逻辑）
         Object verifyObj = Id != null ? iCommonService.getOneRecordById("MainVerifyProcess", Id) : null;
         String tableName = verifyObj != null ? FastJsonUtil.toJson(verifyObj).getString("tableName") : null;
+
+        if ("MainEnterpriseInfo".equals(tableName)) {
+            return enterpriseInfoService.audit(node, Base.getLoginUserId());
+        }
 
         // 记录不存在（已被级联删除，如批量审核中岗位满额后 cancelPendingApplicationsIfPostFull 删除了后续项）
         if (Id != null && verifyObj == null) {

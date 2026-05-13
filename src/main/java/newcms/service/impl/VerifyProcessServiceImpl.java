@@ -93,12 +93,18 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
     @Override
     public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId) {
-        return GetVerifyUserId(verifyFirstRoleId, createUserId, null);
+        return GetVerifyUserId(verifyFirstRoleId, createUserId, null, null);
+    }
+
+    @Override
+    public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId, Integer internshipId) {
+        return GetVerifyUserId(verifyFirstRoleId, createUserId, internshipId, null);
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId, Integer internshipId) {
+    public String GetVerifyUserId(Integer verifyFirstRoleId, Integer createUserId, Integer internshipId,
+                                   Integer hostSchoolScopeId) {
         if (verifyFirstRoleId == null || verifyFirstRoleId == 0) {
             return "";
         }
@@ -114,9 +120,12 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         Integer userSchoolId = FastJsonUtil.toJson(currentUserObj).getInteger("schoolId");
 
         // (1.1) 收集需要搜索的 schoolId 集合
-        //       企业用户的 schoolId 与学校不同，需要同时搜索两边，让每条审核记录自动匹配正确的审核人
+        //       若调用方传入 hostSchoolScopeId（如企业申报单上的合作学校根部门 id），则优先只在该校范围内找人，
+        //       避免企业管理员 view_base_user.schoolId 落在企业组织节点上导致与学校侧审核人无法求交。
         Set<Integer> schoolIds = new java.util.LinkedHashSet<>();
-        if (userSchoolId != null) {
+        if (hostSchoolScopeId != null) {
+            schoolIds.add(hostSchoolScopeId);
+        } else if (userSchoolId != null) {
             schoolIds.add(userSchoolId);
         }
         if (internshipId != null) {
@@ -162,8 +171,8 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             }
         }
 
-        logger.info("GetVerifyUserId: verifyRoleId={}, createUserId={}, internshipId={}, 搜索schoolIds={}",
-                verifyFirstRoleId, createUserId, internshipId, schoolIds);
+        logger.info("GetVerifyUserId: verifyRoleId={}, createUserId={}, internshipId={}, hostSchoolScopeId={}, 搜索schoolIds={}",
+                verifyFirstRoleId, createUserId, internshipId, hostSchoolScopeId, schoolIds);
 
         if (schoolIds.isEmpty()) {
             logger.warn("GetVerifyUserId: createUserId={} 无法确定任何 schoolId", createUserId);

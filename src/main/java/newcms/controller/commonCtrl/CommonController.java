@@ -10,6 +10,7 @@ import newcms.repository.db.SysOssFileDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
 import newcms.service.IDataTreeService;
+import newcms.service.IEnterpriseInfoService;
 import newcms.utils.EncryptUtil;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.MinIOUtils;
@@ -47,6 +48,8 @@ public class CommonController extends Base {
 
     @Resource
     private SysOssFileDao sysOssFileDao;
+    @Resource
+    private IEnterpriseInfoService enterpriseInfoService;
 
 
     public String getRandomString(int length){
@@ -356,6 +359,14 @@ public class CommonController extends Base {
      * 允许同校跨角色访问（教师查看学生文件等），拒绝跨校访问。
      */
     private void checkFileReadAccess(SysOssFile ossFile) {
+        if (ossFile != null
+                && "MainEnterpriseInfo".equals(ossFile.getTableName())
+                && ossFile.getRelationIds() != null) {
+            if (!enterpriseInfoService.canAccessAttachment(getLoginUserId(), ossFile.getRelationIds())) {
+                throw BaseResponse.unAuthorization.error("鏃犳潈璁块棶姝ゆ枃浠?");
+            }
+            return;
+        }
         Integer fileOwnerSchoolId = getSchoolIdForUser(ossFile.getUserId());
         Integer currentUserSchoolId = getSchoolIdForUser(getLoginUserId());
         if (fileOwnerSchoolId != null && !fileOwnerSchoolId.equals(currentUserSchoolId)) {

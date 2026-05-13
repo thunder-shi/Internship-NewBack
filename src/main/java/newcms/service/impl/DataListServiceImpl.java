@@ -2,8 +2,10 @@ package newcms.service.impl;
 
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
+import newcms.service.IEnterpriseInfoService;
 import newcms.service.IInternshipService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
@@ -30,6 +32,9 @@ public class DataListServiceImpl extends Base implements IDataListService {
 
     @Resource
     protected IInternshipService iInternshipService;
+
+    @Resource
+    protected IEnterpriseInfoService enterpriseInfoService;
 
     @Resource
     protected IVerifyProcessService iVerifyProcessService;
@@ -232,10 +237,24 @@ public class DataListServiceImpl extends Base implements IDataListService {
         // MainVerifyProcess 的状态变更统一走 internshipService.auditProcess，
         // 以确保选题自动通过/多级审核推进等业务逻辑生效。
         if ("MainVerifyProcess".equals(tblName)) {
+            Integer verifyId = node == null ? null : node.getInteger("id");
+            if (verifyId != null) {
+                Object vpObj = iCommonService.getOneRecordById("MainVerifyProcess", verifyId);
+                if (vpObj != null
+                        && "MainEnterpriseInfo".equals(FastJsonUtil.toJson(vpObj).getString("tableName"))) {
+                    return enterpriseInfoService.audit(node, getLoginUserId());
+                }
+            }
             return iInternshipService.auditProcess(node);
         }
         // 判断是否为新增操作
         boolean isNew = node.getInteger("id") == null || node.getInteger("id") == 0;
+        if (isNew && "MainInternshipPost".equals(tblName)) {
+            assertEnterpriseQualifiedBeforePostDeclaration(node);
+        }
+        if (isNew && "MainInternship".equals(tblName)) {
+            assertEnterpriseQualifiedBeforeExternalInternship(node);
+        }
         //新增
         if (isNew) {
             try {
@@ -310,6 +329,54 @@ public class DataListServiceImpl extends Base implements IDataListService {
         }
 
         return saved;
+    }
+
+    private void assertEnterpriseQualifiedBeforePostDeclaration(JSONObject node) {
+        if (node == null) {
+            return;
+        }
+        Integer internshipId = node.getInteger("internshipId");
+        if (internshipId == null) {
+            return;
+        }
+        Object internshipObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+        if (internshipObj == null) {
+            return;
+        }
+        String intTypeName = FastJsonUtil.toJson(internshipObj).getString("intTypeName");
+        if (!"校外实习".equals(intTypeName)) {
+            return;
+        }
+        if (isCurrentUserCompanyAdmin()) {
+            enterpriseInfoService.assertCurrentUserCanDeclareExternal();
+        }
+    }
+
+    private void assertEnterpriseQualifiedBeforeExternalInternship(JSONObject node) {
+        if (node == null || !isCurrentUserCompanyAdmin()) {
+            return;
+        }
+        Integer internshipTypeId = node.getInteger("internshipTypeId");
+        if (internshipTypeId == null) {
+            return;
+        }
+        Object typeObj = iCommonService.getOneRecordById("ViewBaseInternshipType", internshipTypeId);
+        if (typeObj == null) {
+            return;
+        }
+        String typeName = FastJsonUtil.toJson(typeObj).getString("typeName");
+        if ("校外实习".equals(typeName)) {
+            enterpriseInfoService.assertCurrentUserCanDeclareExternal();
+        }
+    }
+
+    private boolean isCurrentUserCompanyAdmin() {
+        Object userObj = iCommonService.getOneRecordById("ViewBaseUser", Base.getLoginUserId());
+        if (userObj == null) {
+            return false;
+        }
+        String jobCode = FastJsonUtil.toJson(userObj).getString("jobCode");
+        return Constant.USER_JOB_CODE.COMPANY_ADMIN.equals(jobCode);
     }
 
     @Override

@@ -30,6 +30,7 @@ public interface IVerifyProcessService {
      * 当 createUserId 对应的用户没有 schoolId（如企业用户）时，
      * 通过 internshipId 查找实习项目创建者的 schoolId 作为回落，
      * 确保教务处管理员等校级角色能审核企业提交的记录。
+     * 企业信息申报等无 internshipId 的场景，请改用四参数重载并传入单据上的合作学校根部门 id。
      * </p>
      * @param verifyRoleId 审核角色ID
      * @param createUserId 当前创建用户ID
@@ -37,6 +38,18 @@ public interface IVerifyProcessService {
      * @return 审核用户ID字符串，用竖线分隔（格式：12|14|17）
      */
     String GetVerifyUserId(Integer verifyRoleId, Integer createUserId, Integer internshipId);
+
+    /**
+     * 与 {@link #GetVerifyUserId(Integer, Integer, Integer)} 相同，但可指定「审核范围学校」根部门 id。
+     * <p>
+     * 企业信息申请等场景：提交人为企业管理员，其在 view_base_user 上的 schoolId 往往对应企业挂靠组织，
+     * 与待匹配的学校侧审核人（如学校管理员）的 schoolId 不一致；此时应传入单据上的合作学校 id
+     * （如 main_enterprise_info.school_id），在本参数非 null 时优先仅按该校范围查找审核人。
+     * </p>
+     *
+     * @param hostSchoolScopeId 合作学校根部门 id；为 null 时行为与三参数重载一致
+     */
+    String GetVerifyUserId(Integer verifyRoleId, Integer createUserId, Integer internshipId, Integer hostSchoolScopeId);
 
     /**
      * 刷新指定用户相关的待审核记录
