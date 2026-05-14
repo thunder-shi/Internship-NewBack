@@ -403,10 +403,11 @@ public class InternshipProcessController {
     @Operation(
             summary = "根据实习项目初始化校内导师分配",
             description = "查询 ViewVerifyProcessRelIntTeacherStudentMerge（processTypeCode=EXTERNAL_ASSIGN_INTERNAL_TUTOR）中该实习项目下"
-                    + "待提交（isAudit=SAVE）且尚未分配校内导师（teacherId 为空或 0）的记录；"
+                    + "待提交（isAudit=SAVE）的师生记录（含已暂存 teacherId 的草稿）；已提交的记录不在查询范围内、不会被改写。"
                     + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、jobCode=SCHOOL_TEACHER、审核通过（PASS）的教师 userId；"
                     + "查 ViewVerifyProcessRelIntTeacherStudentMerge 时不使用 jobCode 条件。"
-                    + "按负载均衡写入 teacherId；若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
+                    + "在剥离本批 SAVE 行旧分配后的负载上按均衡策略写入 teacherId（再次点击可因新增导师而重算）；"
+                    + "若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
                     + "则更新其 createUserId、verifyUserId 为请求传入值。createdVerifyProcessCount 为实际更新的审核行数。"
     )
     @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)

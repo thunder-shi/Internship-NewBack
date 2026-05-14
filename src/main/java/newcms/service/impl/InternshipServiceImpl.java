@@ -2321,14 +2321,29 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
         List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
 
-        List<Object> unassignedMergeRows = listUnassignedInternalTutorMergeRows(internshipId);
-        if (unassignedMergeRows.isEmpty()) {
+        List<Object> saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+        if (saveMergeRows.isEmpty()) {
             return buildInitTeacherStudentResult(0, 0);
         }
 
-        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMap(internshipId, teacherIds);
+        Set<Integer> reassignRelIds = new HashSet<>();
+        for (Object row : saveMergeRows) {
+            if (row == null) {
+                continue;
+            }
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer rtsId = j.getInteger("relationId");
+            if (rtsId == null) {
+                rtsId = j.getInteger("relTeaStuId");
+            }
+            if (rtsId != null) {
+                reassignRelIds.add(rtsId);
+            }
+        }
+
+        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapExcluding(internshipId, teacherIds, reassignRelIds);
         int[] counts = assignInternalTeacherForExistingMergeRows(
-                processId, createUserId, verifyUserId, unassignedMergeRows, teacherLoadMap, verifyType);
+                internshipId, processId, createUserId, verifyUserId, saveMergeRows, teacherLoadMap, verifyType);
         return buildInitTeacherStudentResult(counts[0], counts[1]);
     }
 
@@ -2346,10 +2361,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     /**
      * 从校内师生审核综合视图取当前实习项目下、校外分配校内导师流程、
-     * 审核状态为待提交（SAVE）且尚未分配 teacherId（null 或 0）的行，按 RelTeacherStudent.id 去重。
+     * 审核状态为待提交（SAVE）的行（含已写入 teacherId 的草稿），按 RelTeacherStudent.id 去重。
+     * 已提交（非 SAVE）的记录不会出现在视图的 SAVE 查询中，不会被本接口改写。
      */
     @SuppressWarnings("unchecked")
-    private List<Object> listUnassignedInternalTutorMergeRows(Integer internshipId) {
+    private List<Object> listSaveInternalTutorMergeRowsForInitAssign(Integer internshipId) {
         JSONObject sk = new JSONObject();
         sk.put("internshipId", internshipId);
         sk.put("isAudit", Constant.AUDIT_STATUS.SAVE);
@@ -2367,10 +2383,6 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 continue;
             }
             JSONObject j = FastJsonUtil.toJson(row);
-            Integer tid = j.getInteger("teacherId");
-            if (tid != null && tid != 0) {
-                continue;
-            }
             Integer rtsId = j.getInteger("relationId");
             if (rtsId == null) {
                 rtsId = j.getInteger("relTeaStuId");
@@ -2384,12 +2396,38 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
+     * 再次确认该师生关联在校内导师分配合并视图中仍为 SAVE，避免列表拉取后用户已提交仍被改派。
+     */
+    @SuppressWarnings("unchecked")
+    private boolean isInternalTutorAssignMergeRowStillSave(Integer internshipId, Integer relTeacherStudentId) {
+        if (internshipId == null || relTeacherStudentId == null) {
+            return false;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        applyExternalAssignInternalTutorMergeFilter(sk);
+        sk.put("relationId", relTeacherStudentId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                VIEW_VERIFY_REL_INT_TEA_STU_MERGE, sk, null, Sort.unsorted(), 1, 1);
+        if (page.getContent() != null && !page.getContent().isEmpty()) {
+            return true;
+        }
+        sk.remove("relationId");
+        sk.put("relTeaStuId", relTeacherStudentId);
+        Page<Object> page2 = (Page<Object>) iCommonService.getSomeRecords(
+                VIEW_VERIFY_REL_INT_TEA_STU_MERGE, sk, null, Sort.unsorted(), 1, 1);
+        return page2.getContent() != null && !page2.getContent().isEmpty();
+    }
+
+    /**
      * 对已存在的 RelTeacherStudent 写入均衡分配的校内导师；不新建 MainVerifyProcess。
+     * 仅处理仍为 SAVE 的草稿行；已提交的审核状态不会通过合并视图进入本列表，写入前再次校验 SAVE。
      * 若已存在对应 processId 下的审核记录，则将其 createUserId、verifyUserId 更新为本次传入值。
      *
      * @return int[0]=已更新 teacherId 的 RelTeacherStudent 条数，int[1]=已更新的 MainVerifyProcess 行数（可能大于条数，因一对多）
      */
-    private int[] assignInternalTeacherForExistingMergeRows(Integer processId, Integer createUserId, String verifyUserId,
+    private int[] assignInternalTeacherForExistingMergeRows(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
             List<Object> mergeRows, Map<Integer, Integer> teacherLoadMap, int currentVerifyTypeId) {
         int assignedCount = 0;
         int verifyUpdatedCount = 0;
@@ -2402,14 +2440,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if (rtsId == null) {
                 continue;
             }
+            if (!isInternalTutorAssignMergeRowStillSave(internshipId, rtsId)) {
+                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 已非待提交（SAVE）", rtsId);
+                continue;
+            }
             Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
             if (rtsObj == null) {
                 logger.warn("校内导师分配跳过：RelTeacherStudent id={} 不存在", rtsId);
-                continue;
-            }
-            JSONObject rtsJson = FastJsonUtil.toJson(rtsObj);
-            Integer existingTid = rtsJson.getInteger("teacherId");
-            if (existingTid != null && existingTid != 0) {
                 continue;
             }
             Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
@@ -2548,12 +2585,16 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return relTeacherPage.getContent();
     }
 
-    private Map<Integer, Integer> buildTeacherLoadMap(Integer internshipId, List<Integer> teacherIds) {
+    /**
+     * 统计各导师在本实习项目下已占用的学生数；{@code excludeRelIds} 中的 RelTeacherStudent 行不计入（用于 SAVE 草稿重算前剥离旧分配）。
+     */
+    private Map<Integer, Integer> buildTeacherLoadMapExcluding(Integer internshipId, List<Integer> teacherIds, Set<Integer> excludeRelIds) {
         List<Object> relTeacherList = getRelTeacherStudentRecords(internshipId);
-        return buildTeacherLoadMapFromRelList(relTeacherList, teacherIds);
+        return buildTeacherLoadMapFromRelList(relTeacherList, teacherIds, excludeRelIds);
     }
 
-    private Map<Integer, Integer> buildTeacherLoadMapFromRelList(List<Object> relTeacherList, List<Integer> teacherIds) {
+    private Map<Integer, Integer> buildTeacherLoadMapFromRelList(List<Object> relTeacherList, List<Integer> teacherIds,
+            Set<Integer> excludeRelIds) {
         Map<Integer, Integer> teacherLoadMap = new HashMap<>();
         for (Integer teacherId : teacherIds) {
             teacherLoadMap.put(teacherId, 0);
@@ -2561,6 +2602,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (relTeacherList != null) {
             for (Object relObj : relTeacherList) {
                 JSONObject relJson = FastJsonUtil.toJson(relObj);
+                Integer relId = relJson.getInteger("id");
+                if (excludeRelIds != null && !excludeRelIds.isEmpty() && relId != null && excludeRelIds.contains(relId)) {
+                    continue;
+                }
                 Integer teacherId = relJson.getInteger("teacherId");
                 if (teacherId != null && teacherLoadMap.containsKey(teacherId)) {
                     teacherLoadMap.put(teacherId, teacherLoadMap.get(teacherId) + 1);
