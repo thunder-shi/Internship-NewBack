@@ -146,7 +146,7 @@ public class Constant {
      * 实习项目下师生关联的导师类型（保留供配置或其它模块引用）。
      */
     public static final class TUTOR_ASSIGN_KIND {
-        /** 校内导师：待提交（SAVE）且未分配时，从审核通过导师池按负载均衡写入 teacherId */
+        /** 校内导师：待提交（SAVE）阶段可按导师池负载均衡写入或重算 teacherId；已提交后不再由自动分配接口改写 */
         public static final int INTERNAL = 1;
         /** 企业导师：仅创建 RelTeacherStudent 与审核记录，teacherId 留空，由后续接口手动指定 */
         public static final int ENTERPRISE = 2;

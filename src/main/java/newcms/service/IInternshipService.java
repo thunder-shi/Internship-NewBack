@@ -143,9 +143,9 @@ public interface IInternshipService {
     Object listAssignableStudents(Integer internshipId, Integer departmentId);
 
     /**
-     * 根据实习项目为「未分配校内导师」的师生记录均衡分配 teacherId；不新建 MainVerifyProcess。
-     * 对已存在的 {@code MainVerifyProcess}（同 relationId、processId、RelTeacherStudent）写入本次传入的
-     * {@code createUserId}、{@code verifyUserId}。
+     * 根据实习项目为「校外分配校内导师」流程下仍处于待提交（SAVE）的师生记录均衡分配或重算 teacherId；不新建 MainVerifyProcess。
+     * 已提交（非 SAVE）的记录不会进入分配范围。对已存在的 {@code MainVerifyProcess}（同 relationId、processId、RelTeacherStudent）
+     * 写入本次传入的 {@code createUserId}、{@code verifyUserId}。
      *
      * @param currentVerifyTypeId 写入 RelTeacherStudent 的 currentVerifyTypeId；不传默认 1
      */
