@@ -6,11 +6,13 @@ import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
+import newcms.entity.db.BaseEnterpriseVerifyConfig;
 import newcms.entity.db.RelStuInternshipPost;
 import newcms.entity.db.RelTeacherStudent;
 import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.RelTitleTeacher;
 import newcms.repository.db.MainInternshipPostDao;
+import newcms.repository.db.BaseEnterpriseVerifyConfigDao;
 import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTeacherStudentDao;
 import newcms.repository.db.RelTitleStudentDao;
@@ -26,9 +28,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.fastjson.JSONObject;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,6 +68,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
 
     @Resource
     private RelTitleTeacherDao relTitleTeacherDao;
+
+    @Resource
+    private BaseEnterpriseVerifyConfigDao baseEnterpriseVerifyConfigDao;
 
     @Override
     @SuppressWarnings("unchecked")
@@ -179,36 +186,21 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
             return "";
         }
 
-        // (2) 查找所有相关 schoolId 下的用户 ID（合并）
-        Set<Integer> candidateUserIds = new java.util.HashSet<>();
-        for (Integer sid : schoolIds) {
-            JSONObject schoolSearchKeys = new JSONObject();
-            schoolSearchKeys.put("schoolId", sid);
-            Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
-                    "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
-            schoolUserPage.getContent().stream()
-                    .map(user -> FastJsonUtil.toJson(user).getInteger("id"))
-                    .filter(id -> id != null)
-                    .forEach(candidateUserIds::add);
+        Set<Integer> candidateUserIds = buildCandidateUserIdsForSchools(schoolIds);
+        List<Integer> verifyUserIds = intersectVerifyRole(verifyFirstRoleId, candidateUserIds);
+
+        if (verifyUserIds.isEmpty() && hostSchoolScopeId != null) {
+            BaseEnterpriseVerifyConfig cfg = baseEnterpriseVerifyConfigDao.findTopByIsDeletedFalseOrderByIdDesc();
+            Integer cfgSchool = cfg != null ? cfg.getSchoolId() : null;
+            if (cfgSchool != null && cfgSchool > 0 && !schoolIds.contains(cfgSchool)) {
+                schoolIds.add(cfgSchool);
+                logger.info(
+                        "GetVerifyUserId: hostSchool 范围下无匹配审核人，追加企业审核全局配置 schoolId={}，搜索schoolIds={}",
+                        cfgSchool, schoolIds);
+                candidateUserIds = buildCandidateUserIdsForSchools(schoolIds);
+                verifyUserIds = intersectVerifyRole(verifyFirstRoleId, candidateUserIds);
+            }
         }
-
-        if (candidateUserIds.isEmpty()) {
-            return "";
-        }
-
-        // (3) 查找拥有该审核角色的用户
-        JSONObject roleSearchKeys = new JSONObject();
-        roleSearchKeys.put("roleId", verifyFirstRoleId);
-        Page<Object> userRolePage = (Page<Object>) iCommonService.getSomeRecords(
-                "RelUserRole", roleSearchKeys, null, Sort.unsorted(), 1, 10000);
-        List<Object> userRoleList = userRolePage.getContent();
-
-        // (4) 取交集：候选用户（企业+学校） ∩ 拥有审核角色
-        List<Integer> verifyUserIds = userRoleList.stream()
-                .map(role -> FastJsonUtil.toJson(role).getInteger("userId"))
-                .filter(userId -> userId != null && candidateUserIds.contains(userId))
-                .distinct()
-                .collect(Collectors.toList());
 
         logger.info("GetVerifyUserId: roleId={}, 候选用户数={}, 匹配审核人={}",
                 verifyFirstRoleId, candidateUserIds.size(), verifyUserIds);
@@ -220,6 +212,39 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         return verifyUserIds.stream()
                 .map(String::valueOf)
                 .collect(Collectors.joining("|"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<Integer> buildCandidateUserIdsForSchools(Set<Integer> schoolIds) {
+        Set<Integer> candidateUserIds = new HashSet<>();
+        for (Integer sid : schoolIds) {
+            JSONObject schoolSearchKeys = new JSONObject();
+            schoolSearchKeys.put("schoolId", sid);
+            Page<Object> schoolUserPage = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewBaseUser", schoolSearchKeys, null, Sort.unsorted(), 1, 10000);
+            schoolUserPage.getContent().stream()
+                    .map(user -> FastJsonUtil.toJson(user).getInteger("id"))
+                    .filter(id -> id != null)
+                    .forEach(candidateUserIds::add);
+        }
+        return candidateUserIds;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Integer> intersectVerifyRole(int verifyFirstRoleId, Set<Integer> candidateUserIds) {
+        if (candidateUserIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        JSONObject roleSearchKeys = new JSONObject();
+        roleSearchKeys.put("roleId", verifyFirstRoleId);
+        Page<Object> userRolePage = (Page<Object>) iCommonService.getSomeRecords(
+                "RelUserRole", roleSearchKeys, null, Sort.unsorted(), 1, 10000);
+        List<Object> userRoleList = userRolePage.getContent();
+        return userRoleList.stream()
+                .map(role -> FastJsonUtil.toJson(role).getInteger("userId"))
+                .filter(userId -> userId != null && candidateUserIds.contains(userId))
+                .distinct()
+                .collect(Collectors.toList());
     }
 
     @Override

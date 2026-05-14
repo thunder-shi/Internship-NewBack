@@ -237,7 +237,6 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             JSONObject update = new JSONObject();
             update.put("id", record.getId());
             update.put("auditStatus", Constant.AUDIT_STATUS.NOTPASS);
-            update.put("remarks", auditText);
             if (Boolean.TRUE.equals(record.getIsCurrent())
                     && Objects.equals(record.getAuditStatus(), Constant.AUDIT_STATUS.PASS)) {
                 update.put("isCurrent", false);
@@ -247,7 +246,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, update);
             syncIsCurrentForCompany(record.getCompanyId());
         } else if (isAudit == Constant.AUDIT_STATUS.BACK) {
-            handleReturnedRecord(record, verifyProcess, auditText);
+            handleReturnedRecord(record, verifyProcess);
         } else {
             throw BaseResponse.parameterInvalid.error("isAudit must be pass, not pass or back");
         }
@@ -386,6 +385,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
 
         Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(normalizeVerifyConfigJson(config),
                 Constant.VERIFY_LEVEL.ONE_VERIFY);
+        record = ensureEnterpriseRecordCooperatingSchool(record);
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, currentUserId, null,
                 record.getSchoolId());
         if (verifyUserId == null || verifyUserId.isBlank()) {
@@ -414,6 +414,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         if (currentLevel == null || currentLevel < Constant.VERIFY_LEVEL.ONE_VERIFY) {
             currentLevel = Constant.VERIFY_LEVEL.ONE_VERIFY;
         }
+        record = ensureEnterpriseRecordCooperatingSchool(record);
         Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(FastJsonUtil.toJson(record), currentLevel);
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, currentUserId, null,
                 record.getSchoolId());
@@ -451,7 +452,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         return requireEnterpriseInfo(record.getId());
     }
 
-    private void handleReturnedRecord(MainEnterpriseInfo record, MainVerifyProcess verifyProcess, String reason) {
+    private void handleReturnedRecord(MainEnterpriseInfo record, MainVerifyProcess verifyProcess) {
         Integer currentLevel = record.getCurrentVerifyTypeId();
         if (currentLevel == null) {
             currentLevel = Constant.VERIFY_LEVEL.ONE_VERIFY;
@@ -464,7 +465,6 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         entityUpdate.put("id", record.getId());
         entityUpdate.put("auditStatus", Constant.AUDIT_STATUS.BACK);
         entityUpdate.put("currentVerifyTypeId", currentLevel);
-        entityUpdate.put("remarks", normalizeOptionalText(reason));
         if (Boolean.TRUE.equals(record.getIsCurrent())
                 && Objects.equals(record.getAuditStatus(), Constant.AUDIT_STATUS.PASS)) {
             entityUpdate.put("isCurrent", false);
@@ -473,6 +473,8 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         }
         iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, entityUpdate);
 
+        record = requireEnterpriseInfo(record.getId());
+        record = ensureEnterpriseRecordCooperatingSchool(record);
         Integer verifyRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(FastJsonUtil.toJson(record), currentLevel);
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, verifyProcess.getCreateUserId(), null,
                 record.getSchoolId());
@@ -533,6 +535,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
     private JSONObject buildRecordSummary(MainEnterpriseInfo record, boolean includeAuditTrail,
             Map<Integer, Integer> effectiveIdByCompanyIdCache) {
         JSONObject row = FastJsonUtil.toJson(record);
+        enrichEnterpriseSubmitter(row, record);
         BaseDepartment company = tblDepartmentInfoDao.getByIdAndIsDeletedFalse(record.getCompanyId());
         row.put("companyName", company == null ? record.getName() : company.getName());
         row.put("attachmentsCount", listAttachments(record.getId()).size());
@@ -625,7 +628,26 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
                 || containsIgnoreCase(row.getString("companyName"), lower)
                 || containsIgnoreCase(row.getString("code"), lower)
                 || containsIgnoreCase(row.getString("contactName"), lower)
-                || containsIgnoreCase(row.getString("contactPhone"), lower);
+                || containsIgnoreCase(row.getString("contactPhone"), lower)
+                || containsIgnoreCase(row.getString("createUserName"), lower)
+                || containsIgnoreCase(row.getString("reason"), lower)
+                || containsIgnoreCase(row.getString("latestVerifyReason"), lower);
+    }
+
+    /**
+     * 与通用审核列表字段对齐：提交人 id / 姓名（前端「提交人」列绑定 createUserName）。
+     */
+    private void enrichEnterpriseSubmitter(JSONObject row, MainEnterpriseInfo record) {
+        Integer submitterId = record.getAdminUserId();
+        if (submitterId == null) {
+            submitterId = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(
+                            record.getId(), TABLE_ENTERPRISE_INFO).stream()
+                    .min(Comparator.comparing(MainVerifyProcess::getId))
+                    .map(MainVerifyProcess::getCreateUserId)
+                    .orElse(null);
+        }
+        row.put("createUserId", submitterId);
+        row.put("createUserName", submitterId == null ? null : tblUserInfoDao.findNameById(submitterId));
     }
 
     private boolean containsIgnoreCase(String value, String lowerKeyword) {
@@ -741,19 +763,40 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             return;
         }
         row.put("latestVerifyStatus", opinionRow.getIsAudit());
-        row.put("latestVerifyReason", opinionRow.getReason());
+        String opinionReason = opinionRow.getReason();
+        row.put("latestVerifyReason", opinionReason);
+        // 与详情页一致：审核意见走 reason；remarks 仅为申报方备注，二者互不覆盖
+        row.put("reason", opinionReason);
         MainVerifyProcess whoRow = pending.orElse(opinionRow);
         row.put("verifyUserId", whoRow.getVerifyUserId());
         row.put("verifyUserName", resolveVerifyUserNames(whoRow.getVerifyUserId()));
         row.put("verifyProcessId", pending.map(MainVerifyProcess::getId).orElseGet(opinionRow::getId));
     }
 
-    /** 与通用审核表单字段对齐：部分前端传 remarks / auditRemark 而非 reason */
+    /** 与通用审核表单字段对齐：部分前端传 remarks / auditRemark 而非 reason，或包在 node 子对象里 */
     private String auditReasonFromNode(JSONObject node) {
         if (node == null) {
             return null;
         }
-        for (String key : new String[] {"reason", "remarks", "auditRemark", "auditReason", "auditOpinion"}) {
+        String fromRoot = auditReasonFromNodeFlat(node);
+        if (fromRoot != null) {
+            return fromRoot;
+        }
+        JSONObject inner = node.getJSONObject("node");
+        if (inner != null && inner != node) {
+            return auditReasonFromNodeFlat(inner);
+        }
+        return null;
+    }
+
+    private String auditReasonFromNodeFlat(JSONObject node) {
+        if (node == null) {
+            return null;
+        }
+        for (String key : new String[] {
+                "reason", "remarks", "auditRemark", "auditReason", "auditOpinion",
+                "auditReasonText", "auditDescription", "handleOpinion", "comment"
+        }) {
             String s = normalizeOptionalText(node.getString(key));
             if (s != null) {
                 return s;
@@ -905,8 +948,42 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         if (company == null) {
             throw BaseResponse.moreInfoError.error("company department does not exist");
         }
-        Integer schoolId = findSchoolRootId(company.getId());
+        Integer schoolId = resolveCooperatingSchoolIdForEnterprise(null);
+        if (schoolId == null || schoolId <= 0) {
+            schoolId = findSchoolRootId(company.getId());
+        }
         return new CompanyContext(company.getId(), schoolId, user, company);
+    }
+
+    /**
+     * 企业信息业务上的「合作高校」根部门 id：优先 {@link BaseEnterpriseVerifyConfig} 中学校（与「企业信息审核配置」一致），
+     * 否则使用 fallback（如主档已存 schoolId），避免将外埠企业部门树树根误当作高校。
+     */
+    private Integer resolveCooperatingSchoolIdForEnterprise(Integer fallbackSchoolId) {
+        BaseEnterpriseVerifyConfig cfg = baseEnterpriseVerifyConfigDao.findTopByIsDeletedFalseOrderByIdDesc();
+        if (cfg != null && cfg.getSchoolId() != null && cfg.getSchoolId() > 0) {
+            return cfg.getSchoolId();
+        }
+        if (fallbackSchoolId != null && fallbackSchoolId > 0) {
+            return fallbackSchoolId;
+        }
+        return null;
+    }
+
+    /** 若主档 schoolId 与当前应使用的合作高校不一致则写回库表，并返回最新实体。 */
+    private MainEnterpriseInfo ensureEnterpriseRecordCooperatingSchool(MainEnterpriseInfo record) {
+        if (record == null) {
+            return null;
+        }
+        Integer coop = resolveCooperatingSchoolIdForEnterprise(record.getSchoolId());
+        if (coop != null && !Objects.equals(coop, record.getSchoolId())) {
+            JSONObject patch = new JSONObject();
+            patch.put("id", record.getId());
+            patch.put("schoolId", coop);
+            iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, patch);
+            return requireEnterpriseInfo(record.getId());
+        }
+        return record;
     }
 
     private MainEnterpriseInfo requireEnterpriseInfo(Integer enterpriseInfoId) {

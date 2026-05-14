@@ -17,7 +17,7 @@ public class MainEnterpriseInfo extends VerifyConfigInfo {
     @Column(nullable = false, columnDefinition = "int unsigned comment 'company department id'")
     private Integer companyId;
 
-    @Column(nullable = false, columnDefinition = "int unsigned comment 'school root department id'")
+    @Column(nullable = false, columnDefinition = "int unsigned comment 'cooperating school root dept id; prefer BaseEnterpriseVerifyConfig.schoolId when persisting'")
     private Integer schoolId;
 
     @Column(nullable = false, columnDefinition = "int unsigned comment 'company admin user id'")
