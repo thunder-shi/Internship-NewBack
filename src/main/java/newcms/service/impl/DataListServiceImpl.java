@@ -234,17 +234,10 @@ public class DataListServiceImpl extends Base implements IDataListService {
 
     @Override
     public Object editOneNode(String tblName, JSONObject node) {
-        // MainVerifyProcess 的状态变更统一走 internshipService.auditProcess，
-        // 以确保选题自动通过/多级审核推进等业务逻辑生效。
+        // MainVerifyProcess 的状态变更统一走 internshipService.auditProcess。
+        // 其内部 auditProcessOne 已根据 tableName 分派到 enterpriseInfoService.audit 等子服务，
+        // 此处无需再次按 tableName 分支，避免双重派发遗漏新增业务表时不同步。
         if ("MainVerifyProcess".equals(tblName)) {
-            Integer verifyId = node == null ? null : node.getInteger("id");
-            if (verifyId != null) {
-                Object vpObj = iCommonService.getOneRecordById("MainVerifyProcess", verifyId);
-                if (vpObj != null
-                        && "MainEnterpriseInfo".equals(FastJsonUtil.toJson(vpObj).getString("tableName"))) {
-                    return enterpriseInfoService.audit(node, getLoginUserId());
-                }
-            }
             return iInternshipService.auditProcess(node);
         }
         // 判断是否为新增操作

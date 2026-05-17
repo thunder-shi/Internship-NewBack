@@ -173,6 +173,17 @@ public class Constant {
 
     public static final String BUCKET_NAME = "internship";
 
+    /**
+     * 审核行（MainVerifyProcess）由系统而非真人写入时的标记常量。
+     * 前端会按这两个值识别「系统自动通过」「系统自动作废」等场景做特殊渲染。
+     */
+    public static final class SYSTEM_AUDIT_NOTE {
+        /** NO_VERIFY 自动通过 / verifyUserId 解析不到时落库的占位 */
+        public static final String AUTO_PASS = "系统自动通过";
+        /** 同项目一岗位互斥 / 满员等场景作废报名时的占位 */
+        public static final String AUTO_CANCEL = "系统自动";
+    }
+
     // 审核级别
     public static final class VERIFY_LEVEL {
         public static final int NO_VERIFY = 1; // 无需审核

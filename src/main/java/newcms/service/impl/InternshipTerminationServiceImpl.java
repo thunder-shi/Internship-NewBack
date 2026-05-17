@@ -127,6 +127,7 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
 
         Object savedTermination = iCommonService.saveOneRecord(TABLE_TERMINATION, terminationJson);
         Integer terminationId = FastJsonUtil.toJson(savedTermination).getInteger("id");
+        bindAttachmentsToTermination(terminationId, node.getString("attachmentIds"));
         markRelation(relationTable, relationId, Constant.INTERNSHIP_RELATION_STATUS.TERMINATING, terminationId);
 
         JSONObject verifyJson = new JSONObject();
@@ -146,7 +147,8 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
             iCommonService.saveOneRecord(TABLE_VERIFY, verifyJson);
         } else {
-            verifyJson.put("verifyUserId", "system auto approved");
+            verifyJson.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
+            verifyJson.put("reason", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.PASS);
             iCommonService.saveOneRecord(TABLE_VERIFY, verifyJson);
             afterAuditPassed(terminationId, currentUserId);
@@ -173,7 +175,22 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
         JSONObject result = new JSONObject();
         result.put("termination", termination);
         result.put("verifyProcesses", verifyPage.getContent());
+        result.put("attachments", listAttachmentsForTermination(terminationId));
         return result;
+    }
+
+    private List<JSONObject> listAttachmentsForTermination(Integer terminationId) {
+        List<SysOssFile> files = sysOssFileDao.findByRelationIdsAndTableNameAndIsDeletedFalse(
+                terminationId, TABLE_TERMINATION);
+        List<JSONObject> out = new ArrayList<>(files.size());
+        for (SysOssFile file : files) {
+            JSONObject item = FastJsonUtil.toJson(file);
+            item.put("url", "/common/minio/file/" + file.getId());
+            item.put("previewUrl", "/common/minio/preview/" + file.getId());
+            item.put("downloadUrl", "/common/minio/download/" + file.getId());
+            out.add(item);
+        }
+        return out;
     }
 
     @Override
@@ -238,6 +255,7 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
         }
         if (node.containsKey("attachmentIds")) {
             update.put("attachmentIds", normalizeOptionalText(node.getString("attachmentIds")));
+            bindAttachmentsToTermination(terminationId, node.getString("attachmentIds"));
         }
         iCommonService.saveOneRecord(TABLE_TERMINATION, update);
         markRelation(termination.getRelationTable(), termination.getRelationId(),
@@ -429,6 +447,37 @@ public class InternshipTerminationServiceImpl extends Base implements IInternshi
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
+    }
+
+    /**
+     * 将逗号分隔的 SysOssFile id 与本终止记录绑定（写 tableName + relationIds），与其他业务表的附件标准模式一致。
+     * 同时保留实体 attachmentIds CSV 列以便旧前端读取，过渡完成后可删列。
+     */
+    private void bindAttachmentsToTermination(Integer terminationId, String attachmentIdsCsv) {
+        if (terminationId == null) {
+            return;
+        }
+        String normalized = normalizeOptionalText(attachmentIdsCsv);
+        if (normalized == null) {
+            return;
+        }
+        for (String piece : normalized.split(Constant.SPLIT_OPERATOR.COMMA)) {
+            String trimmed = piece.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            Integer fileId;
+            try {
+                fileId = Integer.valueOf(trimmed);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+            JSONObject patch = new JSONObject();
+            patch.put("id", fileId);
+            patch.put("tableName", TABLE_TERMINATION);
+            patch.put("relationIds", terminationId);
+            iCommonService.saveOneRecord("SysOssFile", patch);
+        }
     }
 
     private static class RelationInfo {

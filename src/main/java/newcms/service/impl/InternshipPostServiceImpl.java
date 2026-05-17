@@ -287,9 +287,9 @@ public class InternshipPostServiceImpl extends Base implements IInternshipPostSe
             verifyJson.put("relationId", relationId);
             verifyJson.put("processId", processId);
             verifyJson.put("createUserId", createUserId);
-            verifyJson.put("verifyUserId", "系统自动通过");
+            verifyJson.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.PASS);
-            verifyJson.put("reason", "系统自动通过");
+            verifyJson.put("reason", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             verifyJson.put("tableName", TABLE_REL_STU_INTERNSHIP);
             Object savedVp = iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
             Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");

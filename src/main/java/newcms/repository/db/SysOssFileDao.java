@@ -25,6 +25,10 @@ public interface SysOssFileDao extends BaseDao<SysOssFile, Integer> {
     /** 批量按业务记录查询 */
     List<SysOssFile> findByRelationIdsInAndIsDeletedFalse(List<Integer> relationIds);
 
+    /** 批量按业务记录 + 表名查询附件（避免 N+1） */
+    List<SysOssFile> findByRelationIdsInAndTableNameAndIsDeletedFalse(
+            java.util.Collection<Integer> relationIds, String tableName);
+
     @Modifying
     @Query(nativeQuery = true, value = "update sys_oss_file set is_deleted = 1 where id in ?1")
     void updateByIds(List<Integer> ids);

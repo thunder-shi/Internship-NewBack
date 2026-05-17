@@ -263,7 +263,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         vp.put("relationId", postId);
         vp.put("processId", processId);
         vp.put("createUserId", Base.getLoginUserId());
-        vp.put("verifyUserId", "系统自动通过");
+        vp.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
         vp.put("isAudit", Constant.AUDIT_STATUS.PASS);
         vp.put("reason", "系统创建：自主实习岗位");
         vp.put("tableName", "MainInternshipPost");
@@ -516,9 +516,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         vp.put("relationId", relStuPostId);
         vp.put("processId", processId);
         vp.put("createUserId", studentId);
-        vp.put("verifyUserId", "系统自动通过");
+        vp.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
         vp.put("isAudit", Constant.AUDIT_STATUS.PASS);
-        vp.put("reason", "系统自动通过");
+        vp.put("reason", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
         vp.put("tableName", TABLE_REL_STU_INTERNSHIP_POST);
         Object savedVp = iCommonService.saveOneRecord("MainVerifyProcess", vp);
         Integer vpId = FastJsonUtil.toJson(savedVp).getInteger("id");
@@ -619,7 +619,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int isAudit;
         if (noVerify) {
             // 无需审核：直接标记为通过
-            verifyUserId = "系统自动通过";
+            verifyUserId = Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS;
             isAudit = 1;
         } else {
             // 需要审核：获取审核用户ID字符串，状态为未提交
@@ -2428,6 +2428,39 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
+     * 一次性返回某实习项目在校内导师分配合并视图里所有仍为 SAVE 的 RelTeacherStudent id 集合。
+     * 用于循环写入前替代每条记录 2 次回查（{@link #isInternalTutorAssignMergeRowStillSave} 的批量等价）。
+     */
+    @SuppressWarnings("unchecked")
+    private Set<Integer> snapshotStillSaveRtsIds(Integer internshipId) {
+        if (internshipId == null) {
+            return Collections.emptySet();
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        applyExternalAssignInternalTutorMergeFilter(sk);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                VIEW_VERIFY_REL_INT_TEA_STU_MERGE, sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> rows = page.getContent();
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<Integer> ids = new HashSet<>(rows.size());
+        for (Object row : rows) {
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer id = j.getInteger("relationId");
+            if (id == null) {
+                id = j.getInteger("relTeaStuId");
+            }
+            if (id != null) {
+                ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    /**
      * 再次确认该师生关联在校内导师分配合并视图中仍为 SAVE，避免列表拉取后用户已提交仍被改派。
      */
     @SuppressWarnings("unchecked")
@@ -2463,6 +2496,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             List<Object> mergeRows, Map<Integer, Integer> teacherLoadMap, int currentVerifyTypeId) {
         int assignedCount = 0;
         int verifyUpdatedCount = 0;
+        // 一次性快照本实习当前仍为 SAVE 的 rtsId 集合，避免在循环里对每条行做 2 次回查（原 2N 次缩到 1 次）。
+        Set<Integer> stillSaveRtsIds = snapshotStillSaveRtsIds(internshipId);
         for (Object row : mergeRows) {
             JSONObject j = FastJsonUtil.toJson(row);
             Integer rtsId = j.getInteger("relationId");
@@ -2472,7 +2507,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if (rtsId == null) {
                 continue;
             }
-            if (!isInternalTutorAssignMergeRowStillSave(internshipId, rtsId)) {
+            if (!stillSaveRtsIds.contains(rtsId)) {
                 logger.warn("校内导师分配跳过：RelTeacherStudent id={} 已非待提交（SAVE）", rtsId);
                 continue;
             }
@@ -2803,7 +2838,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (shouldAutoApproveNoVerifyTitleSelectionSubmit(isAudit, tableName, verifyObj)) {
             isAudit = Constant.AUDIT_STATUS.PASS;
             node.put("isAudit", isAudit);
-            node.put("verifyUserId", "系统自动通过");
+            node.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             markLimitedTitleSelectionAsFullyApproved(verifyObj);
             noVerifyTitleAutoApproved = true;
         }
@@ -2813,7 +2848,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (!noVerifyTitleAutoApproved && shouldAutoApproveLimitedTitleSelectionSubmit(isAudit, tableName, verifyObj)) {
             isAudit = Constant.AUDIT_STATUS.PASS;
             node.put("isAudit", isAudit);
-            node.put("verifyUserId", "系统自动通过");
+            node.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             markLimitedTitleSelectionAsFullyApproved(verifyObj);
             limitedTitleAutoApproved = true;
         }
@@ -3486,7 +3521,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             verifyUserId = "";
             isAudit = Constant.AUDIT_STATUS.SAVE;
         } else {
-            verifyUserId = "系统自动通过";
+            verifyUserId = Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS;
             isAudit = Constant.AUDIT_STATUS.PASS;
         }
 

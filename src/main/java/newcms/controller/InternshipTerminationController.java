@@ -8,20 +8,24 @@ import newcms.annotation.PathRestController;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.controller.commonCtrl.ControllerQueryArgs;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.utils.LogUtil;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Tag(name = "终止学生实习")
 @PathRestController("internshipTermination")
 public class InternshipTerminationController {
+
+    /** 终止实习候选/审核列表特有的元 key（合并 searchKey 时排除）。 */
+    private static final Set<String> EXTRA_RESERVED_KEYS = Set.of("onlyMine");
+
     @Resource
     private IInternshipTerminationService internshipTerminationService;
     @Resource
@@ -31,32 +35,31 @@ public class InternshipTerminationController {
     @PostMapping(value = "/listCandidates", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listCandidates(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("internshipTermination.listCandidates", requestJson);
-        QueryArgs args = parseQueryArgs(requestJson);
+        ControllerQueryArgs args = ControllerQueryArgs.parse(requestJson, true, EXTRA_RESERVED_KEYS);
         normalizeCandidateSearch(args);
         Integer currentUserId = Base.getLoginUserId();
         if (currentUserId == null) {
             throw BaseResponse.lackPermissions.error("current user cannot be empty");
         }
-        args.searchKeys.put("studentId", currentUserId);
-        args.regMap.remove("studentId");
+        args.searchKeys().put("studentId", currentUserId);
+        args.regMap().remove("studentId");
         return BaseResponse.ok(internshipTerminationService.listCandidates(
-                args.searchKeys, args.regMap, args.sort, args.page, args.size));
+                args.searchKeys(), args.regMap(), args.sort(), args.page(), args.size()));
     }
 
     @Operation(summary = "终止学生实习审核列表")
     @PostMapping(value = "/listAudits", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAudits(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("internshipTermination.listAudits", requestJson);
-        QueryArgs args = parseQueryArgs(requestJson);
+        ControllerQueryArgs args = ControllerQueryArgs.parse(requestJson, true, EXTRA_RESERVED_KEYS);
         JSONObject node = requestJson == null ? null : requestJson.getJSONObject("node");
         boolean onlyMine = getBoolean(node, "onlyMine") || getBoolean(requestJson, "onlyMine");
         if (onlyMine) {
-            args.searchKeys.put("verifyUserId", String.valueOf(Base.getLoginUserId()));
-            args.regMap.put("verifyUserId", Constant.FIND_IN);
-            args.searchKeys.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+            args.searchKeys().put("verifyUserId", String.valueOf(Base.getLoginUserId()));
+            args.regMap().put("verifyUserId", Constant.FIND_IN);
         }
         return BaseResponse.ok(internshipTerminationService.listAudits(
-                args.searchKeys, args.regMap, args.sort, args.page, args.size));
+                args.searchKeys(), args.regMap(), args.sort(), args.page(), args.size()));
     }
 
     @Operation(summary = "发起终止学生实习")
@@ -118,109 +121,51 @@ public class InternshipTerminationController {
         return node;
     }
 
-    private QueryArgs parseQueryArgs(JSONObject requestJson) {
-        JSONObject node = requestJson == null ? null : requestJson.getJSONObject("node");
-        JSONObject searchKeys = parseSearchKeys(requestJson, node);
-        JSONObject regJson = node != null && node.getJSONObject("reg") != null
-                ? node.getJSONObject("reg")
-                : requestJson != null && requestJson.getJSONObject("reg") != null
-                ? requestJson.getJSONObject("reg")
-                : new JSONObject();
-        Map<String, String> regMap = new HashMap<>();
-        for (String key : regJson.keySet()) {
-            regMap.put(key, regJson.getString(key));
-        }
-        JSONObject pageInfo = node != null && node.getJSONObject("pageInfo") != null
-                ? node.getJSONObject("pageInfo")
-                : requestJson != null ? requestJson.getJSONObject("pageInfo") : null;
-        Integer requestPage = pageInfo != null ? pageInfo.getInteger("page") : null;
-        Integer requestSize = pageInfo != null ? pageInfo.getInteger("size") : null;
-        if (requestPage == null) {
-            requestPage = node != null && node.getInteger("page") != null
-                    ? node.getInteger("page")
-                    : requestJson != null ? requestJson.getInteger("page") : null;
-        }
-        if (requestSize == null) {
-            requestSize = node != null && node.getInteger("size") != null
-                    ? node.getInteger("size")
-                    : requestJson != null ? requestJson.getInteger("size") : null;
-        }
-        int page = requestPage == null ? Constant.DEFAULT_PAGE : requestPage;
-        int size = requestSize == null ? Constant.DEFAULT_SIZE : requestSize;
-        JSONObject sortJson = node != null && node.getJSONObject("sort") != null
-                ? node.getJSONObject("sort")
-                : requestJson != null ? requestJson.getJSONObject("sort") : null;
-        Sort sort = parseSort(sortJson);
-        return new QueryArgs(searchKeys, regMap, sort, page, size);
-    }
-
-    private JSONObject parseSearchKeys(JSONObject requestJson, JSONObject node) {
-        JSONObject explicitSearchKeys = node != null && node.getJSONObject("searchKey") != null
-                ? node.getJSONObject("searchKey")
-                : requestJson != null ? requestJson.getJSONObject("searchKey") : null;
-        JSONObject searchKeys = new JSONObject();
-        if (explicitSearchKeys != null) {
-            searchKeys.putAll(explicitSearchKeys);
-            return searchKeys;
-        }
-
-        if (requestJson != null) {
-            searchKeys.putAll(requestJson);
-        }
-        if (node != null) {
-            searchKeys.putAll(node);
-        }
-        searchKeys.remove("node");
-        searchKeys.remove("reg");
-        searchKeys.remove("pageInfo");
-        searchKeys.remove("sort");
-        searchKeys.remove("page");
-        searchKeys.remove("size");
-        searchKeys.remove("onlyMine");
-        return searchKeys;
-    }
-
-    private void normalizeCandidateSearch(QueryArgs args) {
+    private void normalizeCandidateSearch(ControllerQueryArgs args) {
         normalizeCandidateInternshipMode(args);
         normalizeCandidateStatus(args);
     }
 
-    private void normalizeCandidateInternshipMode(QueryArgs args) {
-        Object raw = firstPresent(args.searchKeys,
+    private void normalizeCandidateInternshipMode(ControllerQueryArgs args) {
+        JSONObject searchKeys = args.searchKeys();
+        Map<String, String> regMap = args.regMap();
+        Object raw = firstPresent(searchKeys,
                 "internshipMode", "internshipType", "type", "intTypeId", "relationTable");
-        removeSearchAliases(args, "internshipType", "type", "intTypeId");
+        removeSearchAliases(searchKeys, regMap, "internshipType", "type", "intTypeId");
         if (raw == null) {
             return;
         }
         String mode = normalizeInternshipMode(raw);
         if (mode == null) {
-            args.searchKeys.remove("internshipMode");
-            args.searchKeys.remove("relationTable");
-            args.regMap.remove("internshipMode");
-            args.regMap.remove("relationTable");
+            searchKeys.remove("internshipMode");
+            searchKeys.remove("relationTable");
+            regMap.remove("internshipMode");
+            regMap.remove("relationTable");
             return;
         }
-        args.searchKeys.put("internshipMode", mode);
-        args.searchKeys.remove("relationTable");
-        args.regMap.remove("internshipMode");
-        args.regMap.remove("relationTable");
+        searchKeys.put("internshipMode", mode);
+        searchKeys.remove("relationTable");
+        regMap.remove("internshipMode");
+        regMap.remove("relationTable");
     }
 
-    private void normalizeCandidateStatus(QueryArgs args) {
-        Object raw = firstPresent(args.searchKeys,
+    private void normalizeCandidateStatus(ControllerQueryArgs args) {
+        JSONObject searchKeys = args.searchKeys();
+        Map<String, String> regMap = args.regMap();
+        Object raw = firstPresent(searchKeys,
                 "internshipStatus", "relationStatus", "status", "terminationStatus");
-        removeSearchAliases(args, "relationStatus", "status", "terminationStatus");
+        removeSearchAliases(searchKeys, regMap, "relationStatus", "status", "terminationStatus");
         if (raw == null) {
             return;
         }
         Integer status = normalizeInternshipStatus(raw);
         if (status == null) {
-            args.searchKeys.remove("internshipStatus");
-            args.regMap.remove("internshipStatus");
+            searchKeys.remove("internshipStatus");
+            regMap.remove("internshipStatus");
             return;
         }
-        args.searchKeys.put("internshipStatus", status);
-        args.regMap.remove("internshipStatus");
+        searchKeys.put("internshipStatus", status);
+        regMap.remove("internshipStatus");
     }
 
     private Object firstPresent(JSONObject json, String... keys) {
@@ -236,10 +181,10 @@ public class InternshipTerminationController {
         return null;
     }
 
-    private void removeSearchAliases(QueryArgs args, String... keys) {
+    private void removeSearchAliases(JSONObject searchKeys, Map<String, String> regMap, String... keys) {
         for (String key : keys) {
-            args.searchKeys.remove(key);
-            args.regMap.remove(key);
+            searchKeys.remove(key);
+            regMap.remove(key);
         }
     }
 
@@ -295,43 +240,7 @@ public class InternshipTerminationController {
         }
     }
 
-    private Sort parseSort(JSONObject sortJson) {
-        if (sortJson == null) {
-            return Sort.by(Sort.Direction.DESC, "id");
-        }
-        String properties = sortJson.getString("properties");
-        if (properties == null || properties.isBlank()) {
-            return Sort.by(Sort.Direction.DESC, "id");
-        }
-        Sort.Direction direction = Sort.Direction.DESC;
-        String directionStr = sortJson.getString("direction");
-        if (directionStr != null && !directionStr.isBlank()) {
-            try {
-                direction = Sort.Direction.fromString(directionStr);
-            } catch (IllegalArgumentException ignored) {
-                direction = Sort.Direction.DESC;
-            }
-        }
-        return Sort.by(direction, properties.split(Constant.SPLIT_OPERATOR.COMMA));
-    }
-
     private boolean getBoolean(JSONObject json, String key) {
         return json != null && Boolean.TRUE.equals(json.getBoolean(key));
-    }
-
-    private static class QueryArgs {
-        private final JSONObject searchKeys;
-        private final Map<String, String> regMap;
-        private final Sort sort;
-        private final Integer page;
-        private final Integer size;
-
-        private QueryArgs(JSONObject searchKeys, Map<String, String> regMap, Sort sort, Integer page, Integer size) {
-            this.searchKeys = searchKeys;
-            this.regMap = regMap;
-            this.sort = sort;
-            this.page = page;
-            this.size = size;
-        }
     }
 }

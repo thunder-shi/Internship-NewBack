@@ -363,7 +363,7 @@ public class CommonController extends Base {
                 && "MainEnterpriseInfo".equals(ossFile.getTableName())
                 && ossFile.getRelationIds() != null) {
             if (!enterpriseInfoService.canAccessAttachment(getLoginUserId(), ossFile.getRelationIds())) {
-                throw BaseResponse.unAuthorization.error("鏃犳潈璁块棶姝ゆ枃浠?");
+                throw BaseResponse.unAuthorization.error("无权访问此文件");
             }
             return;
         }

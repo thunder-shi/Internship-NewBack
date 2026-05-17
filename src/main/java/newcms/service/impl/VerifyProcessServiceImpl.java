@@ -365,7 +365,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         // 计算审核人
         Integer verifyRoleId = needsVerify ? getVerifyRoleIdByLevel(relJson, 2) : null;
         Integer internshipId = relJson.getInteger("internshipId");
-        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId, internshipId) : "系统自动通过";
+        String  verifyUserId = needsVerify ? GetVerifyUserId(verifyRoleId, createUserId, internshipId) : Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS;
         // 创建审核记录
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess",
                 buildVerifyProcessJson(relationId, processId, createUserId, verifyUserId,
@@ -1091,7 +1091,7 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
         vp.put("relationId", relationId);
         if (processId != null) vp.put("processId", processId);
         vp.put("createUserId", createUserId);
-        vp.put("verifyUserId", "系统自动");
+        vp.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_CANCEL);
         vp.put("isAudit", Constant.AUDIT_STATUS.NOTPASS);
         vp.put("reason", reason);
         vp.put("tableName", tableName);

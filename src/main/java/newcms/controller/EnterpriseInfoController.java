@@ -7,10 +7,9 @@ import jakarta.annotation.Resource;
 import newcms.annotation.PathRestController;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
-import newcms.base.Constant;
+import newcms.controller.commonCtrl.ControllerQueryArgs;
 import newcms.service.IEnterpriseInfoService;
 import newcms.utils.LogUtil;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,9 +31,9 @@ public class EnterpriseInfoController {
     @PostMapping(value = "/history", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object history(@RequestBody(required = false) JSONObject requestJson) {
         LogUtil.loggerRecord("enterpriseInfo.history", requestJson);
-        QueryArgs args = parseQueryArgs(requestJson);
+        ControllerQueryArgs args = ControllerQueryArgs.parse(requestJson);
         return BaseResponse.ok(enterpriseInfoService.listMyHistory(
-                args.searchKeys, Base.getLoginUserId(), args.sort, args.page, args.size));
+                args.searchKeys(), Base.getLoginUserId(), args.sort(), args.page(), args.size()));
     }
 
     @Operation(summary = "企业信息详情")
@@ -74,9 +73,9 @@ public class EnterpriseInfoController {
     @PostMapping(value = "/audit/list", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object auditList(@RequestBody(required = false) JSONObject requestJson) {
         LogUtil.loggerRecord("enterpriseInfo.auditList", requestJson);
-        QueryArgs args = parseQueryArgs(requestJson);
+        ControllerQueryArgs args = ControllerQueryArgs.parse(requestJson);
         return BaseResponse.ok(enterpriseInfoService.listAudits(
-                args.searchKeys, Base.getLoginUserId(), args.sort, args.page, args.size));
+                args.searchKeys(), Base.getLoginUserId(), args.sort(), args.page(), args.size()));
     }
 
     @Operation(summary = "企业信息审核详情")
@@ -121,53 +120,6 @@ public class EnterpriseInfoController {
         return node;
     }
 
-    private QueryArgs parseQueryArgs(JSONObject requestJson) {
-        JSONObject node = requestJson == null ? null : requestJson.getJSONObject("node");
-        JSONObject searchKeys = node != null && node.getJSONObject("searchKey") != null
-                ? node.getJSONObject("searchKey")
-                : requestJson != null && requestJson.getJSONObject("searchKey") != null
-                ? requestJson.getJSONObject("searchKey")
-                : new JSONObject();
-        JSONObject pageInfo = node != null && node.getJSONObject("pageInfo") != null
-                ? node.getJSONObject("pageInfo")
-                : requestJson != null ? requestJson.getJSONObject("pageInfo") : null;
-        Integer page = pageInfo != null ? pageInfo.getInteger("page") : null;
-        Integer size = pageInfo != null ? pageInfo.getInteger("size") : null;
-        if (page == null) {
-            page = node != null ? node.getInteger("page") : requestJson == null ? null : requestJson.getInteger("page");
-        }
-        if (size == null) {
-            size = node != null ? node.getInteger("size") : requestJson == null ? null : requestJson.getInteger("size");
-        }
-        JSONObject sortJson = node != null && node.getJSONObject("sort") != null
-                ? node.getJSONObject("sort")
-                : requestJson != null ? requestJson.getJSONObject("sort") : null;
-        Sort sort = parseSort(sortJson);
-        return new QueryArgs(searchKeys, sort,
-                page == null ? Constant.DEFAULT_PAGE : page,
-                size == null ? Constant.DEFAULT_SIZE : size);
-    }
-
-    private Sort parseSort(JSONObject sortJson) {
-        if (sortJson == null) {
-            return Sort.by(Sort.Direction.DESC, "id");
-        }
-        String properties = sortJson.getString("properties");
-        if (properties == null || properties.isBlank()) {
-            return Sort.by(Sort.Direction.DESC, "id");
-        }
-        Sort.Direction direction = Sort.Direction.DESC;
-        String directionStr = sortJson.getString("direction");
-        if (directionStr != null && !directionStr.isBlank()) {
-            try {
-                direction = Sort.Direction.fromString(directionStr);
-            } catch (IllegalArgumentException ignored) {
-                direction = Sort.Direction.DESC;
-            }
-        }
-        return Sort.by(direction, properties.split(Constant.SPLIT_OPERATOR.COMMA));
-    }
-
     private Integer firstInteger(JSONObject node, String... keys) {
         for (String key : keys) {
             Integer value = node.getInteger(key);
@@ -176,19 +128,5 @@ public class EnterpriseInfoController {
             }
         }
         return null;
-    }
-
-    private static class QueryArgs {
-        private final JSONObject searchKeys;
-        private final Sort sort;
-        private final Integer page;
-        private final Integer size;
-
-        private QueryArgs(JSONObject searchKeys, Sort sort, Integer page, Integer size) {
-            this.searchKeys = searchKeys;
-            this.sort = sort;
-            this.page = page;
-            this.size = size;
-        }
     }
 }

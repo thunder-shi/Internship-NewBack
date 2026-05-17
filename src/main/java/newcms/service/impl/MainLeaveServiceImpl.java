@@ -107,9 +107,9 @@ public class MainLeaveServiceImpl extends Base implements IMainLeaveService {
                 }
             }
             if (verifyTypeId < Constant.VERIFY_LEVEL.ONE_VERIFY || verifyUserId == null || verifyUserId.isBlank()) {
-                verifyUserId = "系统自动通过";
+                verifyUserId = Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS;
                 isAudit = Constant.AUDIT_STATUS.PASS;
-                reason = "系统自动通过";
+                reason = Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS;
             }
 
             JSONObject leaveState = new JSONObject();

@@ -21,10 +21,13 @@ import newcms.service.ICommonService;
 import newcms.service.IEnterpriseInfoService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
+import newcms.utils.LogUtil;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -140,21 +143,37 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         Integer companyId = searchKeys == null ? null : searchKeys.getInteger("companyId");
         Integer schoolId = searchKeys == null ? null : searchKeys.getInteger("schoolId");
 
+        Integer effectiveSchoolFilter;
+        if (schoolScope != null) {
+            effectiveSchoolFilter = schoolScope;
+        } else if (schoolWide && schoolId != null) {
+            effectiveSchoolFilter = schoolId;
+        } else {
+            effectiveSchoolFilter = null;
+        }
+
+        Specification<MainEnterpriseInfo> spec = buildAuditListSpec(effectiveSchoolFilter, companyId, auditStatus);
+        Sort dbSort = resolveDbSort(sort);
+        List<MainEnterpriseInfo> records = mainEnterpriseInfoDao.findAll(spec, dbSort);
+        if (records.isEmpty()) {
+            return toPage(Collections.emptyList(), page, size);
+        }
+
+        List<Integer> recordIds = records.stream().map(MainEnterpriseInfo::getId).collect(Collectors.toList());
+        Map<Integer, List<MainVerifyProcess>> verifyProcessByRecordId =
+                mainVerifyProcessDao
+                        .findByRelationIdInAndTableNameAndIsDeletedFalse(recordIds, TABLE_ENTERPRISE_INFO)
+                        .stream()
+                        .collect(Collectors.groupingBy(MainVerifyProcess::getRelationId));
+        Map<Integer, Long> attachmentCountByRecordId =
+                sysOssFileDao
+                        .findByRelationIdsInAndTableNameAndIsDeletedFalse(recordIds, TABLE_OSS)
+                        .stream()
+                        .collect(Collectors.groupingBy(SysOssFile::getRelationIds, Collectors.counting()));
+
         Map<Integer, Integer> effectiveIdByCompanyCache = new HashMap<>();
-        List<JSONObject> rows = new ArrayList<>();
-        for (MainEnterpriseInfo record : mainEnterpriseInfoDao.findByIsDeletedFalse()) {
-            if (schoolScope != null && !schoolScope.equals(record.getSchoolId())) {
-                continue;
-            }
-            if (schoolWide && schoolId != null && !Objects.equals(schoolId, record.getSchoolId())) {
-                continue;
-            }
-            if (companyId != null && !Objects.equals(companyId, record.getCompanyId())) {
-                continue;
-            }
-            if (auditStatus != null && !Objects.equals(auditStatus, record.getAuditStatus())) {
-                continue;
-            }
+        List<JSONObject> rows = new ArrayList<>(records.size());
+        for (MainEnterpriseInfo record : records) {
             if (Boolean.TRUE.equals(onlyEffectiveCurrent)) {
                 Integer effId = effectiveIdByCompanyCache.computeIfAbsent(
                         record.getCompanyId(), this::resolveEffectiveApprovedRecordId);
@@ -162,7 +181,11 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
                     continue;
                 }
             }
-            JSONObject row = buildRecordSummary(record, true, effectiveIdByCompanyCache);
+            List<MainVerifyProcess> verifyProcesses = verifyProcessByRecordId.getOrDefault(
+                    record.getId(), Collections.emptyList());
+            long attachmentCount = attachmentCountByRecordId.getOrDefault(record.getId(), 0L);
+            JSONObject row = buildRecordSummary(record, true, effectiveIdByCompanyCache,
+                    verifyProcesses, attachmentCount);
             if (!matchesAuditVisibility(currentUserId, record, row, onlyMine)) {
                 continue;
             }
@@ -171,9 +194,40 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             }
             rows.add(row);
         }
-
-        sortRows(rows, sort);
         return toPage(rows, page, size);
+    }
+
+    private Specification<MainEnterpriseInfo> buildAuditListSpec(
+            Integer schoolId, Integer companyId, Integer auditStatus) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.isFalse(root.get("isDeleted")));
+            if (schoolId != null) {
+                predicates.add(cb.equal(root.get("schoolId"), schoolId));
+            }
+            if (companyId != null) {
+                predicates.add(cb.equal(root.get("companyId"), companyId));
+            }
+            if (auditStatus != null) {
+                predicates.add(cb.equal(root.get("auditStatus"), auditStatus));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    private Sort resolveDbSort(Sort sort) {
+        if (sort == null || !sort.iterator().hasNext()) {
+            return Sort.by(Sort.Direction.DESC, "id");
+        }
+        Sort.Order order = sort.iterator().next();
+        String property = order.getProperty();
+        // 仅允许实体已有列直接下推，其他列回退到 id 排序，避免 JPA 抛 PropertyReferenceException
+        Set<String> entityColumns = Set.of("id", "versionNo", "auditStatus", "updateTime",
+                "createTime", "code", "name", "approvedTime");
+        if (!entityColumns.contains(property)) {
+            property = "id";
+        }
+        return Sort.by(order.isAscending() ? Sort.Direction.ASC : Sort.Direction.DESC, property);
     }
 
     @Override
@@ -203,14 +257,13 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         if (!canCurrentUserAuditRecord(currentUserId, record)) {
             throw BaseResponse.lackPermissions.error("no permission to audit this enterprise info");
         }
-        boolean pendingLike = verifyProcess.getIsAudit() != null
-                && (verifyProcess.getIsAudit() == Constant.AUDIT_STATUS.SUBMIT
-                || verifyProcess.getIsAudit() == Constant.AUDIT_STATUS.SAVE);
+        boolean pendingLike = Objects.equals(verifyProcess.getIsAudit(), Constant.AUDIT_STATUS.SUBMIT)
+                || Objects.equals(verifyProcess.getIsAudit(), Constant.AUDIT_STATUS.SAVE);
         // 审核通过后仍允许「退回 / 不通过」纠错：此时审核行已是 PASS，但企业单据仍为已通过态
-        boolean revokeApproved = verifyProcess.getIsAudit() != null
-                && verifyProcess.getIsAudit() == Constant.AUDIT_STATUS.PASS
+        boolean revokeApproved = Objects.equals(verifyProcess.getIsAudit(), Constant.AUDIT_STATUS.PASS)
                 && Objects.equals(record.getAuditStatus(), Constant.AUDIT_STATUS.PASS)
-                && (isAudit == Constant.AUDIT_STATUS.BACK || isAudit == Constant.AUDIT_STATUS.NOTPASS);
+                && (Objects.equals(isAudit, Constant.AUDIT_STATUS.BACK)
+                        || Objects.equals(isAudit, Constant.AUDIT_STATUS.NOTPASS));
         if (!pendingLike && !revokeApproved) {
             throw BaseResponse.parameterInvalid.error("verify process is not pending");
         }
@@ -222,7 +275,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         verifyUpdate.put("reason", auditText);
         Object saved = iCommonService.saveOneRecord(TABLE_VERIFY, verifyUpdate);
 
-        if (isAudit == Constant.AUDIT_STATUS.PASS) {
+        if (Objects.equals(isAudit, Constant.AUDIT_STATUS.PASS)) {
             iVerifyProcessService.onVerifyProcessApproved(verifyProcessId);
             MainEnterpriseInfo refreshed = requireEnterpriseInfo(record.getId());
             if (isVerifyFinished(refreshed)) {
@@ -233,7 +286,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
                 update.put("auditStatus", Constant.AUDIT_STATUS.SUBMIT);
                 iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, update);
             }
-        } else if (isAudit == Constant.AUDIT_STATUS.NOTPASS) {
+        } else if (Objects.equals(isAudit, Constant.AUDIT_STATUS.NOTPASS)) {
             JSONObject update = new JSONObject();
             update.put("id", record.getId());
             update.put("auditStatus", Constant.AUDIT_STATUS.NOTPASS);
@@ -245,7 +298,7 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             }
             iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, update);
             syncIsCurrentForCompany(record.getCompanyId());
-        } else if (isAudit == Constant.AUDIT_STATUS.BACK) {
+        } else if (Objects.equals(isAudit, Constant.AUDIT_STATUS.BACK)) {
             handleReturnedRecord(record, verifyProcess);
         } else {
             throw BaseResponse.parameterInvalid.error("isAudit must be pass, not pass or back");
@@ -374,9 +427,9 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
             JSONObject verifyJson = new JSONObject();
             verifyJson.put("relationId", record.getId());
             verifyJson.put("createUserId", currentUserId);
-            verifyJson.put("verifyUserId", "system auto approved");
+            verifyJson.put("verifyUserId", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.PASS);
-            verifyJson.put("reason", "system auto approved");
+            verifyJson.put("reason", Constant.SYSTEM_AUDIT_NOTE.AUTO_PASS);
             verifyJson.put("tableName", TABLE_ENTERPRISE_INFO);
             iCommonService.saveOneRecord(TABLE_VERIFY, verifyJson);
             finalizeApproval(requireEnterpriseInfo(record.getId()), currentUserId);
@@ -524,7 +577,8 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         result.put("attachments", listAttachments(record.getId()));
         result.put("verifyProcesses", listVerifyProcessJson(record.getId()));
         result.put("currentRoleName", resolveCurrentRoleName(record));
-        result.put("canEdit", EDITABLE_STATUSES.contains(record.getAuditStatus()) || record.getAuditStatus() == Constant.AUDIT_STATUS.NOTPASS);
+        result.put("canEdit", EDITABLE_STATUSES.contains(record.getAuditStatus())
+                || Objects.equals(record.getAuditStatus(), Constant.AUDIT_STATUS.NOTPASS));
         return result;
     }
 
@@ -534,11 +588,24 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
 
     private JSONObject buildRecordSummary(MainEnterpriseInfo record, boolean includeAuditTrail,
             Map<Integer, Integer> effectiveIdByCompanyIdCache) {
+        return buildRecordSummary(record, includeAuditTrail, effectiveIdByCompanyIdCache, null, null);
+    }
+
+    /**
+     * cached 路径：列表场景下由调用方批量预取 verifyProcesses / attachmentCount，避免每条记录都触发独立查询。
+     * 传 null 则走原有的逐条查询路径。
+     */
+    private JSONObject buildRecordSummary(MainEnterpriseInfo record, boolean includeAuditTrail,
+            Map<Integer, Integer> effectiveIdByCompanyIdCache,
+            List<MainVerifyProcess> cachedVerifyProcesses,
+            Long cachedAttachmentCount) {
         JSONObject row = FastJsonUtil.toJson(record);
-        enrichEnterpriseSubmitter(row, record);
+        enrichEnterpriseSubmitter(row, record, cachedVerifyProcesses);
         BaseDepartment company = tblDepartmentInfoDao.getByIdAndIsDeletedFalse(record.getCompanyId());
         row.put("companyName", company == null ? record.getName() : company.getName());
-        row.put("attachmentsCount", listAttachments(record.getId()).size());
+        row.put("attachmentsCount", cachedAttachmentCount != null
+                ? cachedAttachmentCount.intValue()
+                : listAttachments(record.getId()).size());
         row.put("currentRoleName", resolveCurrentRoleName(record));
 
         Integer effId = effectiveIdByCompanyIdCache != null
@@ -547,7 +614,11 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         row.put("effectiveCurrent", effId != null && effId.equals(record.getId()));
 
         if (includeAuditTrail) {
-            putEnterpriseVerifyListTrail(row, record.getId());
+            if (cachedVerifyProcesses != null) {
+                putEnterpriseVerifyListTrail(row, cachedVerifyProcesses);
+            } else {
+                putEnterpriseVerifyListTrail(row, record.getId());
+            }
         }
         return row;
     }
@@ -638,10 +709,18 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
      * 与通用审核列表字段对齐：提交人 id / 姓名（前端「提交人」列绑定 createUserName）。
      */
     private void enrichEnterpriseSubmitter(JSONObject row, MainEnterpriseInfo record) {
+        enrichEnterpriseSubmitter(row, record, null);
+    }
+
+    private void enrichEnterpriseSubmitter(JSONObject row, MainEnterpriseInfo record,
+            List<MainVerifyProcess> cachedVerifyProcesses) {
         Integer submitterId = record.getAdminUserId();
         if (submitterId == null) {
-            submitterId = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(
-                            record.getId(), TABLE_ENTERPRISE_INFO).stream()
+            List<MainVerifyProcess> processes = cachedVerifyProcesses != null
+                    ? cachedVerifyProcesses
+                    : mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(
+                            record.getId(), TABLE_ENTERPRISE_INFO);
+            submitterId = processes.stream()
                     .min(Comparator.comparing(MainVerifyProcess::getId))
                     .map(MainVerifyProcess::getCreateUserId)
                     .orElse(null);
@@ -740,9 +819,12 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
      * 审核意见/待审 id：不能仅用 max(审核行 id)，否则多级流程在通过后插入的下级「待审」占位行会盖住上一级已填的 reason。
      */
     private void putEnterpriseVerifyListTrail(JSONObject row, Integer enterpriseInfoId) {
-        List<MainVerifyProcess> all = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(
-                enterpriseInfoId, TABLE_ENTERPRISE_INFO);
-        if (all.isEmpty()) {
+        putEnterpriseVerifyListTrail(row, mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(
+                enterpriseInfoId, TABLE_ENTERPRISE_INFO));
+    }
+
+    private void putEnterpriseVerifyListTrail(JSONObject row, List<MainVerifyProcess> all) {
+        if (all == null || all.isEmpty()) {
             return;
         }
         Comparator<MainVerifyProcess> byId = Comparator.comparing(MainVerifyProcess::getId);
@@ -773,7 +855,17 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         row.put("verifyProcessId", pending.map(MainVerifyProcess::getId).orElseGet(opinionRow::getId));
     }
 
-    /** 与通用审核表单字段对齐：部分前端传 remarks / auditRemark 而非 reason，或包在 node 子对象里 */
+    /**
+     * 审核意见字段：规范字段名为 {@code reason}，历史上前端混用过 remarks / auditRemark 等别名。
+     * 现阶段仍兼容这些别名以避免破坏旧前端，但命中任一别名时打 WARN 日志方便发现并整改；
+     * 后续整改完成可直接保留 {@code REASON_FIELD_CANONICAL} 单一逻辑。
+     */
+    private static final String REASON_FIELD_CANONICAL = "reason";
+    private static final String[] REASON_FIELD_DEPRECATED_ALIASES = {
+            "remarks", "auditRemark", "auditReason", "auditOpinion",
+            "auditReasonText", "auditDescription", "handleOpinion", "comment"
+    };
+
     private String auditReasonFromNode(JSONObject node) {
         if (node == null) {
             return null;
@@ -793,12 +885,18 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         if (node == null) {
             return null;
         }
-        for (String key : new String[] {
-                "reason", "remarks", "auditRemark", "auditReason", "auditOpinion",
-                "auditReasonText", "auditDescription", "handleOpinion", "comment"
-        }) {
-            String s = normalizeOptionalText(node.getString(key));
+        String canonical = normalizeOptionalText(node.getString(REASON_FIELD_CANONICAL));
+        if (canonical != null) {
+            return canonical;
+        }
+        for (String alias : REASON_FIELD_DEPRECATED_ALIASES) {
+            String s = normalizeOptionalText(node.getString(alias));
             if (s != null) {
+                JSONObject warn = new JSONObject();
+                warn.put("deprecatedField", alias);
+                warn.put("canonical", REASON_FIELD_CANONICAL);
+                warn.put("message", "deprecated audit reason alias; please switch front-end to use 'reason'");
+                LogUtil.loggerRecord("EnterpriseInfo.audit.deprecatedReasonAlias", warn);
                 return s;
             }
         }
@@ -970,20 +1068,26 @@ public class EnterpriseInfoServiceImpl extends Base implements IEnterpriseInfoSe
         return null;
     }
 
-    /** 若主档 schoolId 与当前应使用的合作高校不一致则写回库表，并返回最新实体。 */
+    /**
+     * 仅在 record.schoolId 缺失（null 或 0）时按合作高校回填一次，写入即冻结，不再随当前
+     * 合作关系变化静默回写历史记录的 schoolId（避免审核轨迹错乱）。
+     */
     private MainEnterpriseInfo ensureEnterpriseRecordCooperatingSchool(MainEnterpriseInfo record) {
         if (record == null) {
             return null;
         }
-        Integer coop = resolveCooperatingSchoolIdForEnterprise(record.getSchoolId());
-        if (coop != null && !Objects.equals(coop, record.getSchoolId())) {
-            JSONObject patch = new JSONObject();
-            patch.put("id", record.getId());
-            patch.put("schoolId", coop);
-            iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, patch);
-            return requireEnterpriseInfo(record.getId());
+        if (record.getSchoolId() != null && record.getSchoolId() > 0) {
+            return record;
         }
-        return record;
+        Integer coop = resolveCooperatingSchoolIdForEnterprise(null);
+        if (coop == null || coop <= 0) {
+            return record;
+        }
+        JSONObject patch = new JSONObject();
+        patch.put("id", record.getId());
+        patch.put("schoolId", coop);
+        iCommonService.saveOneRecord(TABLE_ENTERPRISE_INFO, patch);
+        return requireEnterpriseInfo(record.getId());
     }
 
     private MainEnterpriseInfo requireEnterpriseInfo(Integer enterpriseInfoId) {

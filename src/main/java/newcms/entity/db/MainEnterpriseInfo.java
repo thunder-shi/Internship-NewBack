@@ -2,6 +2,8 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
@@ -12,6 +14,10 @@ import java.util.Date;
 @Getter
 @Setter
 @Entity
+@Table(uniqueConstraints = {
+        @UniqueConstraint(name = "uk_main_enterprise_company_version",
+                columnNames = {"company_id", "version_no"})
+})
 public class MainEnterpriseInfo extends VerifyConfigInfo {
 
     @Column(nullable = false, columnDefinition = "int unsigned comment 'company department id'")

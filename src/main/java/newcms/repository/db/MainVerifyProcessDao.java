@@ -13,4 +13,8 @@ public interface MainVerifyProcessDao extends BaseDao<MainVerifyProcess, Integer
 
     List<MainVerifyProcess> findByRelationIdAndTableNameAndIsAuditInAndIsDeletedFalse(
             Integer relationId, String tableName, Collection<Integer> isAudits);
+
+    /** 批量按业务记录主键 + 表名查询审核行（避免 N+1） */
+    List<MainVerifyProcess> findByRelationIdInAndTableNameAndIsDeletedFalse(
+            Collection<Integer> relationIds, String tableName);
 }
