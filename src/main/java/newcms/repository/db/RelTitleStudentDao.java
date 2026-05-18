@@ -23,5 +23,8 @@ public interface RelTitleStudentDao extends BaseDao<RelTitleStudent, Integer> {
             Integer stuId, Integer internshipId, Integer isFinal);
 
     List<RelTitleStudent> findByTitleIdAndStuIdAndIsDeletedFalse(Integer titleId, Integer stuId);
+
+    /** 评分配置查询：列出某实习项目下全部师生关联 */
+    List<RelTitleStudent> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
 }
 

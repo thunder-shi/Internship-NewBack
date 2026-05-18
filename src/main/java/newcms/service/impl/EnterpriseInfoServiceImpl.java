@@ -2,6 +2,7 @@ package newcms.service.impl;
 
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
+import jakarta.persistence.criteria.Predicate;
 import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
@@ -27,7 +28,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
-import jakarta.persistence.criteria.Predicate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;

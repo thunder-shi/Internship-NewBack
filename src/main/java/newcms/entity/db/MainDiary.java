@@ -7,6 +7,9 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.NameRemarkInfo;
 
+import java.math.BigDecimal;
+import java.util.Date;
+
 /**
  * 实习日志表
  * 公共字段：BaseInfo(组一) + NameRemarkInfo(组二) + VerifyConfigInfo(组五) + VerifyProcessInfo(组六)
@@ -60,6 +63,17 @@ public class MainDiary extends NameRemarkInfo {
 
     @Column(columnDefinition = "integer default '1' comment '流程当前处在的审核级别id'")
     private Integer currentVerifyTypeId = 1;
+
+    // ===== 组七：评分 =====
+
+    @Column(columnDefinition = "decimal(5,2) comment '总成绩；最后一级 PASS 时由后端按 grade_config 加权汇总写入，老数据为 null'")
+    private BigDecimal totalScore;
+
+    @Column(columnDefinition = "text comment '评分明细 JSON 快照：[{levelOrder,itemName,weight,maxScore,score,verifyUserId,verifyUserName}]'")
+    private String scoreDetail;
+
+    @Column(columnDefinition = "datetime comment '总成绩物化时间'")
+    private Date totalScoreLockTime;
 
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")

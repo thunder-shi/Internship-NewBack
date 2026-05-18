@@ -18,6 +18,7 @@ import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.service.IEnterpriseInfoService;
+import newcms.service.IInternshipGradeConfigService;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
@@ -99,6 +100,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private RelStuInternshipPostDao relStuInternshipPostDao;
+
+    @Resource
+    private IInternshipGradeConfigService gradeConfigService;
 
     /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
     @Resource
@@ -2753,6 +2757,26 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
      */
     private Object auditProcessMultiLevelRelationBiz(JSONObject node, Object verifyObj, String bizTableName,
             Integer isAudit, boolean clearSubmitOnBack) {
+        JSONObject verifyJsonPre = FastJsonUtil.toJson(verifyObj);
+        Integer bizIdPre = verifyJsonPre.getInteger("relationId");
+
+        // 评分配置：PASS 前校验本级是否需要 score，命中即必填且范围校验
+        if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && bizIdPre != null) {
+            Integer internshipId = gradeConfigService.resolveInternshipIdForDiary(bizIdPre);
+            if (internshipId != null) {
+                JSONObject bizJsonPre = FastJsonUtil.toJson(iCommonService.getOneRecordById(bizTableName, bizIdPre));
+                Integer currentLevel = bizJsonPre.getInteger("currentVerifyTypeId");
+                if (currentLevel != null) {
+                    // currentVerifyTypeId 2 表示一级在审，3 表示二级在审…… 对应 levelOrder = currentLevel - 1
+                    int levelOrder = currentLevel - 1;
+                    if (levelOrder >= 1) {
+                        gradeConfigService.requireScoreOnPass(
+                                internshipId, bizTableName, levelOrder, node.getBigDecimal("score"));
+                    }
+                }
+            }
+        }
+
         Object saved = iCommonService.saveOneRecord("MainVerifyProcess", node);
 
         JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
@@ -2792,6 +2816,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                         newVerify.put("tableName", bizTableName);
                         iCommonService.saveOneRecord("MainVerifyProcess", newVerify);
                     }
+                } else {
+                    // 最后一级 PASS 完成（nextLevel > verifyTypeId，即 currentVerifyTypeId > verifyTypeId，
+                    // 符合 CLAUDE.md 中"审核完成判断用 currentVerifyTypeId > verifyTypeId"的约定）
+                    // 若 grade_config 有配置则触发总成绩计算与物化
+                    gradeConfigService.computeAndPersistTotalScore(bizId, bizTableName);
                 }
             }
         } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && bizId != null) {

@@ -6,6 +6,8 @@ import lombok.Getter;
 import lombok.Setter;
 import newcms.entity.base.BaseInfo;
 
+import java.math.BigDecimal;
+
 /**
  * 审核情况表
  */
@@ -33,4 +35,7 @@ public class MainVerifyProcess extends BaseInfo {
 
     @Column(columnDefinition = "varchar(50) comment '当前审核操作表名（例如 MainDairy）'")
     private String tableName;
+
+    @Column(columnDefinition = "decimal(5,2) comment '该级评分；该级若有 grade_config 配置且本行 PASS 时由审核接口写入，否则为 null'")
+    private BigDecimal score;
 }
