@@ -27,10 +27,10 @@ public interface IInternshipGradeConfigService {
     JSONObject list(Integer internshipId, String sourceTable);
 
     /**
-     * 单项新增/编辑评分项。node 含：id?（编辑时必传）、internshipId、sourceTable、levelOrder、itemName、weight、maxScore?、orderNum?
+     * 单项新增/编辑评分项。node 含：id?（编辑时必传）、internshipId、sourceTable、levelOrder、weight、maxScore?
      * <p>会强制校验：</p>
      * <ul>
-     *   <li>levelOrder ∈ [1, 业务实体 verifyTypeId]；NO_VERIFY 配置直接拒绝</li>
+     *   <li>levelOrder ∈ [1, 业务实体 verifyTypeId - 1]；NO_VERIFY 配置直接拒绝</li>
      *   <li>本次保存后同 (internshipId, sourceTable) 下 SUM(weight) = 100</li>
      *   <li>该 internshipId 下该 sourceTable 若已有 MainVerifyProcess 处于 SUBMIT/PASS，禁止改动</li>
      *   <li>同 (internshipId, sourceTable, levelOrder) 仅允许 1 条未软删记录</li>
@@ -45,7 +45,7 @@ public interface IInternshipGradeConfigService {
      * <p>入参示例：</p>
      * <pre>
      * { internshipId: 123, sourceTable: 'MainDiary',
-     *   items: [{levelOrder, itemName, weight, maxScore?, orderNum?}, ...] }
+     *   items: [{levelOrder, weight, maxScore?}, ...] }
      * </pre>
      * 用于"≥2 项首次配置"场景，规避单项保存因 SUM≠100 失败的死锁。
      * @return 保存后的列表（同 list 接口的 items）

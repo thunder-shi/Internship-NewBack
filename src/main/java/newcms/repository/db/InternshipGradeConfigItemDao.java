@@ -10,9 +10,9 @@ import java.util.Optional;
 @Repository
 public interface InternshipGradeConfigItemDao extends BaseDao<InternshipGradeConfigItem, Integer> {
 
-    /** 查询某实习项目下某业务表的全部已生效评分项，按 levelOrder + orderNum 排序 */
+    /** 查询某实习项目下某业务表的全部已生效评分项，按 levelOrder 升序 */
     List<InternshipGradeConfigItem>
-        findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+        findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                 Integer internshipId, String sourceTable);
 
     /** 查同 (internshipId, sourceTable, levelOrder) 下唯一一条 */

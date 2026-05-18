@@ -12,15 +12,19 @@ import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
 import newcms.entity.db.RelStuInternshipPost;
 import newcms.entity.db.RelTitleStudent;
+import newcms.entity.db.ViewRelProcessInternship;
 import newcms.repository.db.InternshipGradeConfigItemDao;
 import newcms.repository.db.MainDiaryDao;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.MainVerifyProcessDao;
 import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTitleStudentDao;
+import newcms.repository.db.ViewRelProcessInternshipDao;
 import newcms.service.ICommonService;
 import newcms.service.IInternshipGradeConfigService;
 import newcms.utils.FastJsonUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,10 +47,14 @@ import java.util.stream.Collectors;
 @Transactional(rollbackFor = Exception.class)
 public class InternshipGradeConfigServiceImpl extends Base implements IInternshipGradeConfigService {
 
+    private static final Logger log = LoggerFactory.getLogger(InternshipGradeConfigServiceImpl.class);
+
     private static final String TABLE_CONFIG = "InternshipGradeConfigItem";
     private static final String TABLE_MAIN_DIARY = "MainDiary";
     private static final String TABLE_REL_STU_INT = "RelStuInternshipPost";
     private static final String TABLE_REL_TITLE_STU = "RelTitleStudent";
+    /** "实习项目进行"流程的 BaseProcessType.name；该行 code 字段为空，只能用 name 匹配 */
+    private static final String PROCESS_NAME_INTERNSHIP_RUNNING = "实习项目进行";
     private static final BigDecimal HUNDRED = new BigDecimal("100");
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final Set<Integer> ONGOING_AUDIT_STATUSES = Set.of(
@@ -66,6 +74,8 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
     private RelTitleStudentDao relTitleStudentDao;
     @Resource
     private MainInternshipPostDao mainInternshipPostDao;
+    @Resource
+    private ViewRelProcessInternshipDao viewRelProcessInternshipDao;
 
     // ============================================================
     // 公开接口
@@ -85,7 +95,6 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         Integer internshipId = node.getInteger("internshipId");
         String sourceTable = trim(node.getString("sourceTable"));
         Integer levelOrder = node.getInteger("levelOrder");
-        String itemName = trim(node.getString("itemName"));
         BigDecimal weight = node.getBigDecimal("weight");
         BigDecimal maxScore = node.getBigDecimal("maxScore");
         if (maxScore == null) {
@@ -95,9 +104,6 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         assertSourceTableSupported(sourceTable);
         if (levelOrder == null || levelOrder < 1 || levelOrder > 5) {
             throw BaseResponse.parameterInvalid.error("levelOrder must be in [1,5]");
-        }
-        if (itemName == null) {
-            throw BaseResponse.parameterInvalid.error("itemName cannot be empty");
         }
         if (weight == null || weight.compareTo(ZERO) < 0 || weight.compareTo(HUNDRED) > 0) {
             throw BaseResponse.parameterInvalid.error("weight must be in [0,100]");
@@ -149,11 +155,8 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         patch.put("internshipId", internshipId);
         patch.put("sourceTable", sourceTable);
         patch.put("levelOrder", levelOrder);
-        patch.put("itemName", itemName);
         patch.put("weight", weight);
         patch.put("maxScore", maxScore);
-        Integer orderNum = node.getInteger("orderNum");
-        patch.put("orderNum", orderNum == null ? 0 : orderNum);
         Object saved = iCommonService.saveOneRecord(TABLE_CONFIG, patch);
         return FastJsonUtil.toJson(saved);
     }
@@ -214,40 +217,42 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         }
 
         // 守卫 3: 逐项基本校验 + levelOrder 唯一 + SUM = 100
-        Set<Integer> seenLevels = new HashSet<>();
+        // 报错消息全部使用 1-based 行号，前端可原样 toast
+        Map<Integer, Integer> levelToRow = new HashMap<>(); // level → 首次出现的 1-based 行号
         BigDecimal sum = ZERO;
         List<JSONObject> normalized = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
+            int row1 = i + 1;
             JSONObject raw = items.getJSONObject(i);
             if (raw == null) {
-                throw BaseResponse.parameterInvalid.error("items[" + i + "] is null");
+                throw BaseResponse.parameterInvalid.error("第 " + row1 + " 项为空");
             }
             Integer levelOrder = raw.getInteger("levelOrder");
-            String itemName = trim(raw.getString("itemName"));
             BigDecimal weight = raw.getBigDecimal("weight");
             BigDecimal maxScore = raw.getBigDecimal("maxScore");
             if (maxScore == null) maxScore = HUNDRED;
-            Integer orderNum = raw.getInteger("orderNum");
-            if (orderNum == null) orderNum = 0;
 
             if (levelOrder == null || levelOrder < 1 || levelOrder > 5) {
-                throw BaseResponse.parameterInvalid.error("items[" + i + "].levelOrder must be in [1,5]");
+                throw BaseResponse.parameterInvalid.error(
+                        "第 " + row1 + " 项 levelOrder 必须在 [1,5] 范围内，当前=" + levelOrder);
             }
             if (levelOrder > maxLevel) {
                 throw BaseResponse.parameterInvalid.error(
-                        "items[" + i + "].levelOrder=" + levelOrder + " 超过实际审核级数 " + maxLevel);
+                        "第 " + row1 + " 项 levelOrder=" + levelOrder + " 超过该实习实际审核级数 " + maxLevel);
             }
-            if (!seenLevels.add(levelOrder)) {
-                throw BaseResponse.parameterInvalid.error("items 内 levelOrder=" + levelOrder + " 重复");
+            Integer firstRow = levelToRow.get(levelOrder);
+            if (firstRow != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "第 " + row1 + " 项 levelOrder=" + levelOrder + " 与第 " + firstRow + " 项冲突，同一级别只能配一项");
             }
-            if (itemName == null) {
-                throw BaseResponse.parameterInvalid.error("items[" + i + "].itemName cannot be empty");
-            }
+            levelToRow.put(levelOrder, row1);
             if (weight == null || weight.compareTo(ZERO) < 0 || weight.compareTo(HUNDRED) > 0) {
-                throw BaseResponse.parameterInvalid.error("items[" + i + "].weight must be in [0,100]");
+                throw BaseResponse.parameterInvalid.error(
+                        "第 " + row1 + " 项 weight 必须在 [0,100] 范围内，当前=" + weight);
             }
             if (maxScore.compareTo(ZERO) <= 0) {
-                throw BaseResponse.parameterInvalid.error("items[" + i + "].maxScore must be positive");
+                throw BaseResponse.parameterInvalid.error(
+                        "第 " + row1 + " 项 maxScore 必须 > 0，当前=" + maxScore);
             }
             sum = sum.add(weight);
 
@@ -255,19 +260,25 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
             row.put("internshipId", internshipId);
             row.put("sourceTable", sourceTable);
             row.put("levelOrder", levelOrder);
-            row.put("itemName", itemName);
             row.put("weight", weight);
             row.put("maxScore", maxScore);
-            row.put("orderNum", orderNum);
             normalized.add(row);
         }
         if (sum.compareTo(HUNDRED) != 0) {
-            throw BaseResponse.parameterInvalid.error("items 权重总和 = " + sum + "，必须等于 100");
+            StringBuilder breakdown = new StringBuilder();
+            for (int i = 0; i < normalized.size(); i++) {
+                JSONObject r = normalized.get(i);
+                if (i > 0) breakdown.append(", ");
+                breakdown.append("第").append(i + 1).append("项 lv")
+                        .append(r.getInteger("levelOrder")).append("=").append(r.getBigDecimal("weight"));
+            }
+            throw BaseResponse.parameterInvalid.error(
+                    "权重总和=" + sum + "，必须等于 100。当前各项：" + breakdown);
         }
 
         // 软删旧的，插入新的（同一事务，校验失败整体回滚）
         List<InternshipGradeConfigItem> oldItems = gradeConfigDao
-                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable);
         for (InternshipGradeConfigItem old : oldItems) {
             iCommonService.deleteRecordByDelflag(TABLE_CONFIG, old.getId());
@@ -285,7 +296,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
             return false;
         }
         return !gradeConfigDao
-                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable)
                 .isEmpty();
     }
@@ -304,7 +315,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         InternshipGradeConfigItem cfg = opt.get();
         if (score == null) {
             throw BaseResponse.parameterInvalid.error(
-                    "当前级别已配置评分项「" + cfg.getItemName() + "」，PASS 前必须填 score");
+                    "当前级别（第 " + cfg.getLevelOrder() + " 级）已配置评分，PASS 前必须填 score");
         }
         if (score.compareTo(ZERO) < 0 || score.compareTo(cfg.getMaxScore()) > 0) {
             throw BaseResponse.parameterInvalid.error(
@@ -338,7 +349,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         Integer internshipId = resolveInternshipIdForSource(relationId, sourceTable);
         if (internshipId == null) return;
         List<InternshipGradeConfigItem> configs = gradeConfigDao
-                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable);
         if (configs.isEmpty()) return; // 未配置评分，静默跳过
 
@@ -360,7 +371,6 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
 
             JSONObject row = new JSONObject(true); // 保留插入顺序
             row.put("levelOrder", cfg.getLevelOrder());
-            row.put("itemName", cfg.getItemName());
             row.put("weight", cfg.getWeight());
             row.put("maxScore", cfg.getMaxScore());
             row.put("score", score);
@@ -388,7 +398,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
      */
     private JSONObject buildListPayload(Integer internshipId, String sourceTable) {
         List<InternshipGradeConfigItem> items = gradeConfigDao
-                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable);
         BigDecimal sum = ZERO;
         JSONArray arr = new JSONArray();
@@ -480,17 +490,24 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
 
     /**
      * 取该 internship 下 sourceTable 业务实体的 verifyTypeId。
-     * 当前实现：用任一日志的 verifyTypeId（同一实习下日志的审核配置假定一致）。
+     * <p>MainDiary 走"实习项目进行"流程：从 ViewRelProcessInternship 按 processTypeName 匹配，
+     * 不依赖日志是否生成。匹配不到说明该实习未配该流程，返回 null。</p>
      */
     private Integer resolveVerifyTypeIdForSource(Integer internshipId, String sourceTable) {
         if (!TABLE_MAIN_DIARY.equals(sourceTable)) return null;
-        List<Integer> diaryIds = listDiaryIdsInInternship(internshipId);
-        if (diaryIds.isEmpty()) return null;
-        for (Integer id : diaryIds) {
-            MainDiary d = mainDiaryDao.getByIdAndIsDeletedFalse(id);
-            if (d != null && d.getVerifyTypeId() != null) return d.getVerifyTypeId();
+        if (internshipId == null) return null;
+        Optional<ViewRelProcessInternship> processOpt = viewRelProcessInternshipDao
+                .findByInternshipIdAndProcessTypeNameAndIsDeletedFalse(
+                        internshipId, PROCESS_NAME_INTERNSHIP_RUNNING);
+        if (processOpt.isEmpty()) {
+            log.info("[GradeConfig] no '{}' process for internshipId={}",
+                    PROCESS_NAME_INTERNSHIP_RUNNING, internshipId);
+            return null;
         }
-        return null;
+        Integer verifyTypeId = processOpt.get().getVerifyTypeId();
+        log.debug("[GradeConfig] internshipId={} '{}' verifyTypeId={}",
+                internshipId, PROCESS_NAME_INTERNSHIP_RUNNING, verifyTypeId);
+        return verifyTypeId;
     }
 
     /**
@@ -512,7 +529,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
     private BigDecimal sumWeightsAfterChange(Integer internshipId, String sourceTable,
                                              Integer changingId, BigDecimal changingWeight) {
         List<InternshipGradeConfigItem> items = gradeConfigDao
-                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAscOrderNumAsc(
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable);
         BigDecimal sum = ZERO;
         boolean foundChanging = false;
