@@ -133,9 +133,11 @@ public interface IInternshipService {
                                                   Integer currentVerifyTypeId);
 
     /**
-     * 查询当前实习项目下可参与系统分配的校内导师（审核通过），按部门树过滤。
+     * 查询当前实习项目下可参与分配的老师（入项审核通过），按部门过滤。
+     *
+     * @param jobCode {@link newcms.base.Constant.USER_JOB_CODE#SCHOOL_TEACHER} 或 {@link newcms.base.Constant.USER_JOB_CODE#COMPANY_TUTOR}
      */
-    Object listAssignableTeachers(Integer internshipId, Integer departmentId);
+    Object listAssignableTeachers(Integer internshipId, Integer departmentId, String jobCode);
 
     /**
      * 查询当前实习项目下可参与系统分配的学生（岗位审核通过且选岗审核通过），按部门树过滤。

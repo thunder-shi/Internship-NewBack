@@ -850,10 +850,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object listAssignableTeachers(Integer internshipId, Integer departmentId) {
+    public Object listAssignableTeachers(Integer internshipId, Integer departmentId, String jobCode) {
+        if (jobCode == null || jobCode.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("jobCode 不能为空");
+        }
+        String normalizedJobCode = jobCode.trim();
+        if (!Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(normalizedJobCode)
+                && !Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(normalizedJobCode)) {
+            throw BaseResponse.parameterInvalid.error("jobCode 仅支持 SCHOOL_TEACHER 或 COMPANY_TUTOR");
+        }
         JSONObject teacherSearchKeys = new JSONObject();
         teacherSearchKeys.put("internshipId", internshipId);
-        teacherSearchKeys.put("jobCode", TEACHER_JOB_CODE);
+        teacherSearchKeys.put("jobCode", normalizedJobCode);
         teacherSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
         @SuppressWarnings("unchecked")
         Page<Object> teacherPage = (Page<Object>) iCommonService.getSomeRecords(

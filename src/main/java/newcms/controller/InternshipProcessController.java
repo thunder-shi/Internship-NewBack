@@ -364,7 +364,8 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "查询可分配老师列表",
-            description = "根据 internshipId 和 departmentId 查询当前实习项目下审核已通过的校内导师，口径与系统自动分配一致。"
+            description = "根据 internshipId、departmentId、jobCode 查询当前实习项目下审核已通过的老师。"
+                    + "jobCode：SCHOOL_TEACHER（校内导师）或 COMPANY_TUTOR（企业导师）。"
     )
     @PostMapping(value = "/listAssignableTeachers", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableTeachers(@RequestBody JSONObject requestJson) {
@@ -375,10 +376,19 @@ public class InternshipProcessController {
         JSONObject node = requestJson.getJSONObject("node");
         Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
         Integer departmentId = node != null ? node.getInteger("departmentId") : requestJson.getInteger("departmentId");
+        String jobCode = node != null ? node.getString("jobCode") : requestJson.getString("jobCode");
         if (internshipId == null || departmentId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId、departmentId 不能为空");
         }
-        return BaseResponse.ok(iInternshipService.listAssignableTeachers(internshipId, departmentId));
+        if (jobCode == null || jobCode.trim().isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("jobCode 不能为空");
+        }
+        jobCode = jobCode.trim();
+        if (!Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(jobCode)
+                && !Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(jobCode)) {
+            throw BaseResponse.parameterInvalid.error("jobCode 仅支持 SCHOOL_TEACHER 或 COMPANY_TUTOR");
+        }
+        return BaseResponse.ok(iInternshipService.listAssignableTeachers(internshipId, departmentId, jobCode));
     }
 
     @Operation(
