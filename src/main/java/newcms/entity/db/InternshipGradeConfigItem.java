@@ -2,8 +2,6 @@ package newcms.entity.db;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,20 +13,17 @@ import java.math.BigDecimal;
  * 实习评分配置项：按 (internshipId, sourceTable, levelOrder) 维度，每级配一项 weight + maxScore。
  * <p>规则：</p>
  * <ul>
- *   <li>一级一行：同 (internshipId, sourceTable, levelOrder) 至多 1 条未软删记录</li>
+ *   <li>一级一行：同 (internshipId, sourceTable, levelOrder) 至多 1 条未软删记录（应用层守卫）</li>
  *   <li>同 (internshipId, sourceTable) 下所有 levelOrder 的 weight 总和 = 100</li>
  *   <li>levelOrder ∈ [1, 5]，且必须 ≤ 该业务实体在该 internship 下的 verifyTypeId - 1</li>
  *   <li>NO_VERIFY 级别（verifyTypeId &lt; ONE_VERIFY）不允许配置</li>
  * </ul>
- * <p>软删 + 唯一键：把 isDeleted 纳入唯一约束，避免软删后复用同 key 报 Duplicate。</p>
+ * <p>唯一性由 save() 方法的应用层查询守卫保证（查 isDeleted=false 的已有记录），
+ * 不使用数据库唯一约束——软删后同 key 的 isDeleted 状态会冲突。</p>
  */
 @Getter
 @Setter
 @Entity
-@Table(uniqueConstraints = {
-        @UniqueConstraint(name = "uk_grade_cfg_internship_source_level_deleted",
-                columnNames = {"internship_id", "source_table", "level_order", "is_deleted"})
-})
 public class InternshipGradeConfigItem extends BaseInfo {
 
     @Column(nullable = false, columnDefinition = "int unsigned comment '关联 BaseInternship.id（实习项目）'")
