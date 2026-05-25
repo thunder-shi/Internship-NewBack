@@ -8,6 +8,7 @@ import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.InternshipGradeConfigItem;
 import newcms.entity.db.MainDiary;
+import newcms.entity.db.MainDiaryScoreDetail;
 import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.MainVerifyProcess;
 import newcms.entity.db.RelStuInternshipPost;
@@ -15,6 +16,7 @@ import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.ViewRelProcessInternship;
 import newcms.repository.db.InternshipGradeConfigItemDao;
 import newcms.repository.db.MainDiaryDao;
+import newcms.repository.db.MainDiaryScoreDetailDao;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.MainVerifyProcessDao;
 import newcms.repository.db.RelStuInternshipPostDao;
@@ -64,6 +66,8 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
     private ICommonService iCommonService;
     @Resource
     private InternshipGradeConfigItemDao gradeConfigDao;
+    @Resource
+    private MainDiaryScoreDetailDao scoreDetailDao;
     @Resource
     private MainVerifyProcessDao mainVerifyProcessDao;
     @Resource
@@ -143,21 +147,24 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
                     "levelOrder=" + levelOrder + " 已存在评分项，请编辑现有项而非新增");
         }
 
-        // 守卫 5: 权重总和 = 100（按"本次保存生效后"计算）
+        // 守卫 5: 权重总和。直接落库模式允许中间态 SUM ≠ 100；
+        // 仍校验 SUM ≤ 100 防止单次输入越界，最终一致性由"首次 PASS 前 SUM=100 校验"兜底。
         BigDecimal sumAfter = sumWeightsAfterChange(internshipId, sourceTable, id, weight);
-        if (sumAfter.compareTo(HUNDRED) != 0) {
+        if (sumAfter.compareTo(HUNDRED) > 0) {
             throw BaseResponse.parameterInvalid.error(
-                    "本次保存后权重总和 = " + sumAfter + "，必须等于 100");
+                    "本次保存后权重总和 = " + sumAfter + "，超过 100");
         }
 
-        JSONObject patch = new JSONObject();
-        if (id != null) patch.put("id", id);
-        patch.put("internshipId", internshipId);
-        patch.put("sourceTable", sourceTable);
-        patch.put("levelOrder", levelOrder);
-        patch.put("weight", weight);
-        patch.put("maxScore", maxScore);
-        Object saved = iCommonService.saveOneRecord(TABLE_CONFIG, patch);
+        InternshipGradeConfigItem item = (id != null) ? gradeConfigDao.getByIdAndIsDeletedFalse(id) : new InternshipGradeConfigItem();
+        if (item == null) {
+            throw BaseResponse.parameterInvalid.error("grade config item does not exist");
+        }
+        item.setInternshipId(internshipId);
+        item.setSourceTable(sourceTable);
+        item.setLevelOrder(levelOrder);
+        item.setWeight(weight);
+        item.setMaxScore(maxScore);
+        InternshipGradeConfigItem saved = gradeConfigDao.save(item);
         return FastJsonUtil.toJson(saved);
     }
 
@@ -174,7 +181,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
             throw BaseResponse.parameterInvalid.error(
                     "该 internship 下 " + item.getSourceTable() + " 存在进行中或已通过的审核记录，禁止删除评分配置");
         }
-        iCommonService.deleteRecordByDelflag(TABLE_CONFIG, configItemId);
+        gradeConfigDao.deleteByIsDeleted(configItemId);
     }
 
     @Override
@@ -264,7 +271,9 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
             row.put("maxScore", maxScore);
             normalized.add(row);
         }
-        if (sum.compareTo(HUNDRED) != 0) {
+        // 直接落库模式允许 SUM ≠ 100 的中间态；仅当 SUM > 100 时拒绝（明显错误录入）。
+        // 最终一致性由"首次 PASS 前 SUM=100 校验"兜底，前端可用 /list 返回的 valid 字段做实时提示。
+        if (sum.compareTo(HUNDRED) > 0) {
             StringBuilder breakdown = new StringBuilder();
             for (int i = 0; i < normalized.size(); i++) {
                 JSONObject r = normalized.get(i);
@@ -273,7 +282,7 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
                         .append(r.getInteger("levelOrder")).append("=").append(r.getBigDecimal("weight"));
             }
             throw BaseResponse.parameterInvalid.error(
-                    "权重总和=" + sum + "，必须等于 100。当前各项：" + breakdown);
+                    "权重总和=" + sum + "，超过 100。当前各项：" + breakdown);
         }
 
         // 软删旧的，插入新的（同一事务，校验失败整体回滚）
@@ -281,10 +290,10 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
                 .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
                         internshipId, sourceTable);
         for (InternshipGradeConfigItem old : oldItems) {
-            iCommonService.deleteRecordByDelflag(TABLE_CONFIG, old.getId());
+            gradeConfigDao.deleteByIsDeleted(old.getId());
         }
         for (JSONObject row : normalized) {
-            iCommonService.saveOneRecord(TABLE_CONFIG, row);
+            gradeConfigDao.save(buildItemFromJson(row));
         }
 
         return buildListPayload(internshipId, sourceTable);
@@ -305,6 +314,20 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
     public void requireScoreOnPass(Integer internshipId, String sourceTable, Integer levelOrder, BigDecimal score) {
         if (internshipId == null || sourceTable == null || levelOrder == null) {
             return;
+        }
+        // 兜底：直接落库模式下配置可能停在 SUM ≠ 100 的中间态；首次 PASS 前必须修正
+        List<InternshipGradeConfigItem> allItems = gradeConfigDao
+                .findByInternshipIdAndSourceTableAndIsDeletedFalseOrderByLevelOrderAsc(
+                        internshipId, sourceTable);
+        if (!allItems.isEmpty()) {
+            BigDecimal totalWeight = ZERO;
+            for (InternshipGradeConfigItem it : allItems) {
+                totalWeight = totalWeight.add(it.getWeight() == null ? ZERO : it.getWeight());
+            }
+            if (totalWeight.compareTo(HUNDRED) != 0) {
+                throw BaseResponse.parameterInvalid.error(
+                        "评分配置权重总和=" + totalWeight + "，必须等于 100 才能通过审核，请先完成评分配置");
+            }
         }
         Optional<InternshipGradeConfigItem> opt = gradeConfigDao
                 .findByInternshipIdAndSourceTableAndLevelOrderAndIsDeletedFalse(
@@ -357,8 +380,11 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
                 .findByRelationIdAndTableNameAndIsDeletedFalse(relationId, sourceTable);
         Map<Integer, MainVerifyProcess> latestPassPerLevel = latestPassPerLevel(all);
 
+        // 清理旧的评分明细（幂等：重算时先软删再插入）
+        scoreDetailDao.softDeleteByDiaryId(relationId);
+
         BigDecimal total = ZERO;
-        JSONArray detail = new JSONArray();
+        JSONArray detailJson = new JSONArray(); // 仍写入 scoreDetail 列做兼容快照
         for (InternshipGradeConfigItem cfg : configs) {
             MainVerifyProcess vp = latestPassPerLevel.get(cfg.getLevelOrder());
             BigDecimal score = vp == null ? null : vp.getScore();
@@ -369,21 +395,33 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
             }
             total = total.add(weighted);
 
-            JSONObject row = new JSONObject(true); // 保留插入顺序
+            // 写入新表
+            MainDiaryScoreDetail detail = new MainDiaryScoreDetail();
+            detail.setDiaryId(relationId);
+            detail.setLevelOrder(cfg.getLevelOrder());
+            detail.setWeight(cfg.getWeight());
+            detail.setMaxScore(cfg.getMaxScore());
+            detail.setScore(score);
+            detail.setVerifyUserId(vp == null ? null : vp.getVerifyUserId());
+            detail.setVerifyUserName(resolveVerifyUserName(vp == null ? null : vp.getVerifyUserId()));
+            scoreDetailDao.save(detail);
+
+            // 兼容快照
+            JSONObject row = new JSONObject(true);
             row.put("levelOrder", cfg.getLevelOrder());
             row.put("weight", cfg.getWeight());
             row.put("maxScore", cfg.getMaxScore());
             row.put("score", score);
             row.put("verifyUserId", vp == null ? null : vp.getVerifyUserId());
             row.put("verifyUserName", resolveVerifyUserName(vp == null ? null : vp.getVerifyUserId()));
-            detail.add(row);
+            detailJson.add(row);
         }
         total = total.setScale(2, RoundingMode.HALF_UP);
 
         JSONObject update = new JSONObject();
         update.put("id", relationId);
         update.put("totalScore", total);
-        update.put("scoreDetail", detail.toJSONString());
+        update.put("scoreDetail", detailJson.toJSONString());
         update.put("totalScoreLockTime", new Date());
         iCommonService.saveOneRecord(sourceTable, update);
     }
@@ -425,6 +463,19 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
         result.put("expected", HUNDRED);
         result.put("valid", sum.compareTo(HUNDRED) == 0);
         return result;
+    }
+
+    private InternshipGradeConfigItem buildItemFromJson(JSONObject row) {
+        InternshipGradeConfigItem item = new InternshipGradeConfigItem();
+        Integer id = row.getInteger("id");
+        if (id != null) item.setId(id);
+        item.setInternshipId(row.getInteger("internshipId"));
+        item.setSourceTable(row.getString("sourceTable"));
+        item.setLevelOrder(row.getInteger("levelOrder"));
+        item.setWeight(row.getBigDecimal("weight"));
+        BigDecimal maxScore = row.getBigDecimal("maxScore");
+        if (maxScore != null) item.setMaxScore(maxScore);
+        return item;
     }
 
     private void requireKey(Integer internshipId, String sourceTable) {
@@ -511,15 +562,30 @@ public class InternshipGradeConfigServiceImpl extends Base implements IInternshi
     }
 
     /**
-     * 该 (internshipId, sourceTable) 是否已存在 isAudit ∈ {SUBMIT, PASS} 的审核行。
+     * 该 (internshipId, sourceTable) 是否仍处于审核进行中（locked 判定）。
+     * <p>语义：对每条业务日志取其"最新一条 MainVerifyProcess"（按 id 降序首条），
+     * 仅当该最新行的 {@code isAudit ∈ {SUBMIT, PASS}} 时视为锁定。</p>
+     * <p>不再扫描历史 PASS 行——退回（BACK）后旧 PASS 仍留在表中，但最新行已是
+     * BACK/SAVE/NOTPASS，应当解锁允许重新配置。</p>
      */
     private boolean hasOngoingAudit(Integer internshipId, String sourceTable) {
         List<Integer> diaryIds = listDiaryIdsInInternship(internshipId);
         if (diaryIds.isEmpty()) return false;
         List<MainVerifyProcess> processes = mainVerifyProcessDao
                 .findByRelationIdInAndTableNameAndIsDeletedFalse(diaryIds, sourceTable);
+        if (processes.isEmpty()) return false;
+
+        // 按 relationId 分组，取每组中 id 最大的一条
+        Map<Integer, MainVerifyProcess> latestByRelation = new HashMap<>();
         for (MainVerifyProcess p : processes) {
-            if (p.getIsAudit() != null && ONGOING_AUDIT_STATUSES.contains(p.getIsAudit())) {
+            if (p.getRelationId() == null || p.getId() == null) continue;
+            MainVerifyProcess prev = latestByRelation.get(p.getRelationId());
+            if (prev == null || p.getId() > prev.getId()) {
+                latestByRelation.put(p.getRelationId(), p);
+            }
+        }
+        for (MainVerifyProcess latest : latestByRelation.values()) {
+            if (latest.getIsAudit() != null && ONGOING_AUDIT_STATUSES.contains(latest.getIsAudit())) {
                 return true;
             }
         }

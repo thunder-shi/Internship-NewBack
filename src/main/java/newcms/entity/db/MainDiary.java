@@ -73,7 +73,7 @@ public class MainDiary extends NameRemarkInfo {
     private String scoreDetail;
 
     @Column(columnDefinition = "datetime comment '总成绩物化时间'")
-    private Date totalScoreLockTime;
+    private Date totalScoreLockTime                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ;
 
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
