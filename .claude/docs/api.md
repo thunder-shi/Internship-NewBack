@@ -70,7 +70,8 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 |------|------|------|
 | /internshipProcess/listExternalInternshipCollegeStats | 校外实习项目报名汇总 | departmentId? |
 | /internshipProcess/listApprovedExternalInternshipPosts | 校外实习已审核岗位 | internshipId |
-| /internshipProcess/getExternalInternshipStudentPostBreakdown | 校外实习学生选岗情况 | internshipId, status?, departmentId? |
+| /internshipProcess/getExternalInternshipStudentPostBreakdown | 校外实习学生选岗情况（有选岗时含 verifyProcessId） | internshipId, status?, departmentId? |
+| /internshipProcess/randomAssignPostsForUnselectedStudents | 未选岗学生随机分配岗位（复用 stuSelPost） | internshipId |
 | /internshipProcess/listInternalInternshipCollegeStats | 校内实习报名与选题汇总 | departmentId? |
 | /internshipProcess/getInternalInternshipTitleSelectionBreakdown | 校内实习学生选题情况 | internshipId, status?, departmentId? |
 | /internshipProcess/listInternalInternshipTeachersNotSubmittedTopic | 校内实习未提交题目的教师 | internshipId, departmentId? |

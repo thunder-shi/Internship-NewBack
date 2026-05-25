@@ -562,6 +562,7 @@ public class InternshipProcessController {
             description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
                     + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
                     + "departmentId 可选：传则只含所属部门为该节点或其下级（BaseDepartment 子树）的用户；不传则与原先一致，不按部门过滤。"
+                    + "已有选岗记录时 rows 含 verifyProcessId（MainVerifyProcess.id）；未选岗无此字段。"
                     + "counts 为当前过滤范围内三类人数。分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -583,6 +584,25 @@ public class InternshipProcessController {
                 : Constant.DEFAULT_SIZE;
         return BaseResponse.ok(iInternshipService.getExternalInternshipStudentPostBreakdown(internshipId, page, size, status,
                 departmentId));
+    }
+
+    @Operation(
+            summary = "未选岗学生随机分配岗位",
+            description = "根据 internshipId 取未选岗学生（与 getExternalInternshipStudentPostBreakdown 的 notSelected 口径一致），"
+                    + "在 listApprovedExternalInternshipPosts 岗位池内随机分配，内部调用 stuSelPost(studentId,0,postId)。"
+    )
+    @PostMapping(value = "/randomAssignPostsForUnselectedStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object randomAssignPostsForUnselectedStudents(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("randomAssignPostsForUnselectedStudents", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer internshipId = node != null ? node.getInteger("internshipId") : requestJson.getInteger("internshipId");
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        return BaseResponse.ok(iInternshipService.randomAssignPostsForUnselectedStudents(internshipId));
     }
 
     @Operation(

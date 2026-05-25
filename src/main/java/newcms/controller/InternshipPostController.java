@@ -29,7 +29,7 @@ public class InternshipPostController {
     private IInternshipPostService iInternshipPostService;
 
     @Operation(summary = "学生选择岗位", description = "学生选择新的实习岗位")
-    @PostMapping(value = "/StuSelPost", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/stuSelPost", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object StuSelPost(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("StuSelPost", requestJson);
         if (requestJson == null) {

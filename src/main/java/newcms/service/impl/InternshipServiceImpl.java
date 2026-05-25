@@ -19,6 +19,7 @@ import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.service.IEnterpriseInfoService;
 import newcms.service.IInternshipGradeConfigService;
+import newcms.service.IInternshipPostService;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
@@ -103,6 +104,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IInternshipGradeConfigService gradeConfigService;
+
+    @Resource
+    private IInternshipPostService iInternshipPostService;
 
     /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
     @Resource
@@ -1620,6 +1624,160 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return out;
     }
 
+    @Override
+    public Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+        assertExternalInternship(internshipId);
+        List<Integer> studentIds = collectNotSelectedStudentUserIds(internshipId);
+        List<Integer> postIds = collectApprovedAssignablePostIds(internshipId);
+
+        JSONObject result = new JSONObject();
+        result.put("internshipId", internshipId);
+        result.put("candidateStudentCount", studentIds.size());
+        result.put("candidatePostCount", postIds.size());
+
+        if (postIds.isEmpty()) {
+            throw BaseResponse.moreInfoError.error("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+        }
+        if (studentIds.isEmpty()) {
+            result.put("assignedCount", 0);
+            result.put("failedCount", 0);
+            result.put("unassignedCount", 0);
+            result.put("details", new JSONArray());
+            return result;
+        }
+
+        List<Integer> shuffled = new ArrayList<>(studentIds);
+        Collections.shuffle(shuffled);
+
+        int assignedCount = 0;
+        int failedCount = 0;
+        int unassignedCount = 0;
+        JSONArray details = new JSONArray();
+
+        for (Integer studentId : shuffled) {
+            List<Integer> eligiblePostIds = filterPostIdsWithRemainingCapacity(postIds);
+            if (eligiblePostIds.isEmpty()) {
+                unassignedCount++;
+                JSONObject item = new JSONObject();
+                item.put("studentId", studentId);
+                item.put("success", false);
+                item.put("message", "所有岗位已满，无法继续分配");
+                details.add(item);
+                continue;
+            }
+            int postId = eligiblePostIds.get(ThreadLocalRandom.current().nextInt(eligiblePostIds.size()));
+            try {
+                Object selResult = iInternshipPostService.stuSelPost(studentId, 0, postId);
+                assignedCount++;
+                JSONObject item = new JSONObject();
+                item.put("studentId", studentId);
+                item.put("internshipPostId", postId);
+                item.put("success", true);
+                if (selResult instanceof JSONObject) {
+                    item.put("selection", selResult);
+                }
+                details.add(item);
+            } catch (RuntimeException ex) {
+                failedCount++;
+                JSONObject item = new JSONObject();
+                item.put("studentId", studentId);
+                item.put("internshipPostId", postId);
+                item.put("success", false);
+                item.put("message", ex.getMessage());
+                details.add(item);
+                logger.warn("随机分配岗位失败 internshipId={} studentId={} postId={}: {}",
+                        internshipId, studentId, postId, ex.getMessage());
+            }
+        }
+
+        result.put("assignedCount", assignedCount);
+        result.put("failedCount", failedCount);
+        result.put("unassignedCount", unassignedCount);
+        result.put("details", details);
+        return result;
+    }
+
+    /**
+     * 与 {@link #getExternalInternshipStudentPostBreakdown} 中 status=notSelected 口径一致：已入项学生且无选岗记录。
+     */
+    private List<Integer> collectNotSelectedStudentUserIds(Integer internshipId) {
+        Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
+        Set<Integer> anyStuPostUser = loadStudentUserIdsWithAnyPostSelection(internshipId);
+        return projectStudentUserIds.stream()
+                .filter(u -> !anyStuPostUser.contains(u))
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
+    private Set<Integer> loadStudentUserIdsWithAnyPostSelection(Integer internshipId) {
+        JSONObject stuSk = new JSONObject();
+        stuSk.put("internshipId", internshipId);
+        @SuppressWarnings("unchecked")
+        Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelStuInternshipPostMerge", stuSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> mergeList = mergePage.getContent() == null ? Collections.emptyList() : mergePage.getContent();
+        Set<Integer> anyStuPostUser = new HashSet<>();
+        for (Object o : mergeList) {
+            Integer uid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(o));
+            if (uid != null) {
+                anyStuPostUser.add(uid);
+            }
+        }
+        return anyStuPostUser;
+    }
+
+    /**
+     * 与 {@link #listApprovedExternalInternshipPosts} 岗位池一致：审核通过、去重，排除自主实习与已满员岗位。
+     */
+    private List<Integer> collectApprovedAssignablePostIds(Integer internshipId) {
+        List<Object> list = fetchAllPagesInternshipPostMergePass(internshipId);
+        List<Integer> postIds = new ArrayList<>();
+        Set<Integer> seenPostIds = new HashSet<>();
+        if (list == null) {
+            return postIds;
+        }
+        for (Object o : list) {
+            JSONObject j = FastJsonUtil.toJson(o);
+            Integer postId = parseInternshipPostIdFromInternshipPostMergeRow(j);
+            if (postId == null || !seenPostIds.add(postId)) {
+                continue;
+            }
+            MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(postId);
+            if (post == null || SELF_INTERNSHIP_POST_CODE.equals(post.getCode())) {
+                continue;
+            }
+            if (!internshipPostHasRemainingCapacity(post)) {
+                continue;
+            }
+            postIds.add(postId);
+        }
+        return postIds;
+    }
+
+    private List<Integer> filterPostIdsWithRemainingCapacity(List<Integer> postIds) {
+        if (postIds == null || postIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return postIds.stream()
+                .filter(pid -> {
+                    MainInternshipPost post = mainInternshipPostDao.getByIdAndIsDeletedFalse(pid);
+                    return post != null && internshipPostHasRemainingCapacity(post);
+                })
+                .collect(Collectors.toList());
+    }
+
+    private boolean internshipPostHasRemainingCapacity(MainInternshipPost post) {
+        if (post == null) {
+            return false;
+        }
+        Integer all = post.getAllPersonNum();
+        if (all == null || all <= 0 || all == SELF_INTERNSHIP_UNLIMITED) {
+            return true;
+        }
+        int now = post.getNowPersonNum() != null ? post.getNowPersonNum() : 0;
+        return now < all;
+    }
+
     /**
      * 拉取某项目下岗位合并视图中 isAudit=PASS 的全部行（分页拼接），避免仅取第一页导致去重后 total 偏少。
      */
@@ -2316,16 +2474,20 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         if (mergeSample != null && mergeSample.containsKey(uid)) {
             JSONObject m = mergeSample.get(uid);
             row.put("userName", m.getString("studentName"));
+            row.put("account", firstNonEmpty(m.getString("studentAccount"), m.getString("account")));
             row.put("departmentId", m.getInteger("departmentId"));
             row.put("departmentName", m.getString("departmentName"));
             row.put("internshipPostName", m.getString("internshipPostName"));
             row.put("companyName", m.getString("companyName"));
             row.put("isAudit", m.getInteger("isAudit"));
+            // 合并视图 id 即 main_verify_process.id
+            row.put("verifyProcessId", m.getInteger("id"));
         } else {
             Object uo = iCommonService.getOneRecordById("ViewBaseUser", uid);
             if (uo != null) {
                 JSONObject uj = FastJsonUtil.toJson(uo);
                 row.put("userName", uj.getString("name"));
+                row.put("account", uj.getString("account"));
                 row.put("departmentId", uj.getInteger("departmentId"));
                 row.put("departmentName", uj.getString("departmentName"));
             }

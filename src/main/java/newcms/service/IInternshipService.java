@@ -230,4 +230,9 @@ public interface IInternshipService {
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                      Integer departmentId);
+
+    /**
+     * 校外实习：对未选岗学生随机分配审核通过且有空位的企业岗位（复用 {@code stuSelPost} 选岗逻辑）。
+     */
+    Object randomAssignPostsForUnselectedStudents(Integer internshipId);
 }
