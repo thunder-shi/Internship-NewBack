@@ -8,7 +8,7 @@
 | /sign/logout | POST | 匿名 | 用户登出 |
 | /sign/info | GET | 认证 | 获取当前登录用户信息 |
 | /sign/editUserInfo/{userId} | POST | 认证 | 编辑用户信息（触发审核人刷新） |
-| /sign/editPassword | POST | 认证 | 修改密码 |
+| /sign/editPassword | POST | 认证 | body 固定四字段：userId, oldPassword, password, reset；reset=true 用 password 重置且不校验弱密码/原密码 |
 | /sign/oss/uploadAvatar | POST | 认证 | 上传头像 |
 | /sign/saveUserRoles | POST | 认证 | 设置用户角色（触发审核人刷新） |
 | /sign/getUserListIsNotDelete | POST | 认证 | 获取用户列表（未删除） |

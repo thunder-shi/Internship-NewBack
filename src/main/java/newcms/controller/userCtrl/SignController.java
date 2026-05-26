@@ -65,12 +65,26 @@ public class SignController extends CommonController {
         return BaseResponse.ok(iUserService.editUserInfo(requestJson, userId));
     }
 
+    /** 固定接收 userId、oldPassword、password、reset；reset=true 时用 password 重置，忽略 oldPassword */
     @PostMapping(value = "editPassword", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object editPassword(@RequestBody JSONObject requestJson) {
         String userId = requestJson.getString("userId");
+        String oldPassword = requestJson.getString("oldPassword");
         String password = requestJson.getString("password");
-        iUserService.editPassword(userId, password);
+        boolean reset = parseResetFlag(requestJson);
+        iUserService.editPassword(userId, oldPassword, password, reset);
         return BaseResponse.ok;
+    }
+
+    private static boolean parseResetFlag(JSONObject requestJson) {
+        Object reset = requestJson.get("reset");
+        if (reset instanceof Boolean) {
+            return Boolean.TRUE.equals(reset);
+        }
+        if (reset != null) {
+            return "true".equalsIgnoreCase(String.valueOf(reset).trim());
+        }
+        return false;
     }
     @PostMapping(value = "/oss/uploadAvatar",consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Object uploadAvatar(@RequestParam MultipartFile file ){

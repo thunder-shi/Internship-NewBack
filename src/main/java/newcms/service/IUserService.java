@@ -33,10 +33,10 @@ public interface IUserService {
     void login(String account, String password, Boolean rememberMe);
 
     /**
-     * 修改密码
-     * @param password
+     * 修改/重置密码（请求体固定含 userId、oldPassword、password、reset 四字段）
+     * @param reset true 时使用 password 重置，忽略 oldPassword，不做弱密码校验
      */
-    void editPassword(String userId, String password);
+    void editPassword(String userId, String oldPassword, String password, boolean reset);
 
 
     /**
