@@ -15,7 +15,6 @@ import newcms.entity.db.BaseMajor;
 import newcms.entity.db.SysRole;
 import newcms.repository.db.BaseDepartmentDao;
 import newcms.repository.db.BaseJobPositionDao;
-import newcms.repository.db.BaseMajorDao;
 import newcms.repository.db.SysRoleDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataListService;
@@ -500,10 +499,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业名称*", "入学年份", "毕业年份", "学制（年）");
-                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业代码*", "入学年份", "毕业年份", "学制（年）", "角色*");
+                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
-                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 break;
         }
         //给除表头外 50行单元格非必填项设置默认值（空字符串）
@@ -550,8 +549,6 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
     BaseDepartmentDao baseDepartmentDao;
     @Resource
     BaseJobPositionDao baseJobPositionDao;
-    @Resource
-    BaseMajorDao baseMajorDao;
     /**
      * 安全获取单元格字符串值，自动处理不同类型
      */
@@ -657,7 +654,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
                 
-                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业名称, 入学年份, 毕业年份, 学制（年）
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业代码, 入学年份, 毕业年份, 学制（年）, 角色（多个用分号隔开）
                 String name = getCellStringValue(row.getCell(0));
                 String sex = getCellStringValue(row.getCell(1));
                 String phone = getCellStringValue(row.getCell(2));
@@ -672,10 +669,11 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 String departmentCode = getCellStringValue(row.getCell(11));
                 String jobName = getCellStringValue(row.getCell(12));
                 String workId = getCellStringValue(row.getCell(13));
-                String majorName = getCellStringValue(row.getCell(14));
+                String majorCode = getCellStringValue(row.getCell(14));
                 String startYearStr = getCellStringValue(row.getCell(15));
                 String endYearStr = getCellStringValue(row.getCell(16));
                 String schoolLengthStr = getCellStringValue(row.getCell(17));
+                String rolesStr = getCellStringValue(row.getCell(18));
                 
                 // 跳过空行（姓名为空则跳过）
                 if (name.isEmpty()) continue;
@@ -685,8 +683,12 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (departmentCode.isEmpty()) continue;
                 // 检查身份类别是否为空
                 if (jobName.isEmpty()) continue;
-                // 检查专业名称是否为空
-                if (majorName.isEmpty()) continue;
+                // 检查专业代码是否为空
+                if (majorCode.isEmpty()) continue;
+                // 角色为必填
+                if (rolesStr.isEmpty()) {
+                    throw new RuntimeException("第 " + (i + 1) + " 行：角色不能为空");
+                }
                 
                 JSONObject data = new JSONObject();
                 data.put("name", name);
@@ -749,28 +751,20 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 }
                 data.put("jobId", jobId);
                 
-                // 通过名称查找专业ID（必填）
-                // 如果专业名称有重复，选择专业编码最长的那个
+                // 通过专业代码查找专业ID（必填）
                 Integer majorId = null;
                 try {
-                    List<BaseMajor> majorList = baseMajorDao.findByNameAndIsDeletedFalse(majorName);
-                    if (majorList != null && !majorList.isEmpty()) {
-                        // 如果有多条记录，按专业编码长度排序，选择编码最长的
-                        BaseMajor majorObj = majorList.stream()
-                                .max(Comparator.comparing(m -> m.getCode() != null ? m.getCode().length() : 0))
-                                .orElse(null);
-                        if (majorObj != null) {
-                            majorId = majorObj.getId();
-                        }
-                    } else {
-                        logger.warn("未找到专业名称为 {} 的记录，跳过该行数据", majorName);
+                    BaseMajor major = (BaseMajor) iCommonService.getOneRecordByCode("BaseMajor", majorCode, false);
+                    if (major == null) {
+                        logger.warn("未找到专业代码为 {} 的记录，跳过该行数据", majorCode);
                         continue;
                     }
+                    majorId = major.getId();
                 } catch (Exception e) {
-                    throw new RuntimeException("第 " + (i + 1) + " 行：查找专业名称 " + majorName + " 时发生异常", e);
+                    throw new RuntimeException("第 " + (i + 1) + " 行：查找专业代码 " + majorCode + " 时发生异常", e);
                 }
                 if (majorId == null) {
-                    logger.warn("专业名称 {} 对应的ID为空，跳过该行数据", majorName);
+                    logger.warn("专业代码 {} 对应的ID为空，跳过该行数据", majorCode);
                     continue;
                 }
                 data.put("majorId", majorId);
@@ -822,18 +816,12 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     }
                 }
                 
-                // 如果成功获取到userId，则调用saveUserRoles方法
                 if (userId != null) {
                     try {
-                        // 查找SysRole表中name值为"学生"的实体的id
-                        SysRole studentRole = sysRoleDao.findByNameAndIsDeletedFalse("学生");
-                        if (studentRole != null && studentRole.getId() != null) {
-                            Integer[] roleIds = new Integer[]{studentRole.getId()};
-                            // 调用saveUserRoles方法，userId转为String类型
-                            iUserService.saveUserRoles(String.valueOf(userId), roleIds);
-                        } else {
-                            logger.warn("未找到名称为'学生'的角色，跳过用户角色设置，userId: {}", userId);
-                        }
+                        Integer[] roleIds = resolveImportUserRoleIds(rolesStr, i + 1);
+                        iUserService.saveUserRoles(String.valueOf(userId), roleIds);
+                    } catch (RuntimeException e) {
+                        throw e;
                     } catch (Exception e) {
                         throw new RuntimeException("第 " + (i + 1) + " 行：设置用户角色失败，userId: " + userId, e);
                     }
@@ -844,6 +832,30 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             throw new RuntimeException("导入数据时发生错误", e);
         }
         return result;
+    }
+
+    /**
+     * 解析导入 Excel「角色*」列：多个角色名用英文或中文分号隔开（必填，至少一个有效角色名）。
+     */
+    private Integer[] resolveImportUserRoleIds(String rolesStr, int rowNum) {
+        List<Integer> roleIds = new ArrayList<>();
+        for (String part : rolesStr.split("[;；]")) {
+            String roleName = part.trim();
+            if (roleName.isEmpty()) {
+                continue;
+            }
+            SysRole role = sysRoleDao.findByNameAndIsDeletedFalse(roleName);
+            if (role == null || role.getId() == null) {
+                throw new RuntimeException("第 " + rowNum + " 行：未找到角色「" + roleName + "」");
+            }
+            if (!roleIds.contains(role.getId())) {
+                roleIds.add(role.getId());
+            }
+        }
+        if (roleIds.isEmpty()) {
+            throw new RuntimeException("第 " + rowNum + " 行：角色不能为空或无效");
+        }
+        return roleIds.toArray(new Integer[0]);
     }
 }
 
