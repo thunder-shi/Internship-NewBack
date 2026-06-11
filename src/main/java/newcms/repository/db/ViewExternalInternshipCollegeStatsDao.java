@@ -23,6 +23,8 @@ public interface ViewExternalInternshipCollegeStatsDao extends
     /**
      * 按「部门及其全部子部门」汇总：同一实习在视图中多行（每部门一行），此处按 internship_id 聚合。
      * 人数类 SUM；岗位/待审核/计划人数为实习维度，多行相同，取 MAX。
+     * <p>仅返回 {@code base_internship_type.university_id} 属于 {@code owningCollegeIds} 的项目，
+     * 避免跨学院项目泄漏到其他学院统计页。</p>
      */
     @Query(
             value = "SELECT v.internship_id, MAX(v.internship_name), MAX(v.internship_create_time), "
@@ -31,10 +33,20 @@ public interface ViewExternalInternshipCollegeStatsDao extends
                     + "COALESCE(SUM(v.student_with_post_selection_count), 0) "
                     + "FROM view_external_internship_college_stats v "
                     + "WHERE v.department_id IN :deptIds "
+                    + "AND EXISTS (SELECT 1 FROM main_internship mi "
+                    + "JOIN base_internship_type bit ON bit.id = mi.internship_type_id AND bit.is_deleted = 0 "
+                    + "WHERE mi.id = v.internship_id AND mi.is_deleted = 0 "
+                    + "AND bit.university_id IN :owningCollegeIds) "
                     + "GROUP BY v.internship_id "
                     + "ORDER BY MAX(v.internship_create_time) DESC",
             countQuery = "SELECT COUNT(DISTINCT v.internship_id) FROM view_external_internship_college_stats v "
-                    + "WHERE v.department_id IN :deptIds",
+                    + "WHERE v.department_id IN :deptIds "
+                    + "AND EXISTS (SELECT 1 FROM main_internship mi "
+                    + "JOIN base_internship_type bit ON bit.id = mi.internship_type_id AND bit.is_deleted = 0 "
+                    + "WHERE mi.id = v.internship_id AND mi.is_deleted = 0 "
+                    + "AND bit.university_id IN :owningCollegeIds)",
             nativeQuery = true)
-    Page<Object[]> findAggregatedByDepartmentIds(@Param("deptIds") List<Integer> deptIds, Pageable pageable);
+    Page<Object[]> findAggregatedByDepartmentIds(@Param("deptIds") List<Integer> deptIds,
+                                                 @Param("owningCollegeIds") List<Integer> owningCollegeIds,
+                                                 Pageable pageable);
 }

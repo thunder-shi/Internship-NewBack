@@ -24,6 +24,7 @@ import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
 import newcms.utils.FastJsonUtil;
+import newcms.utils.GeneralUtil;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -57,6 +58,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final int POST_PAGE_SIZE = 10000;
     /** 与库中 base_int_type / view_main_internship.int_type_name 一致，用于识别校外实习 */
     private static final String EXTERNAL_INT_TYPE_NAME = "校外实习";
+    /** {@code base_department.the_level}：学校下学院节点（与 {@code base_internship_type.university_id} 一致） */
+    private static final int COLLEGE_DEPARTMENT_LEVEL = 2;
     /** 与库中 view_main_internship.int_type_name 一致，用于识别校内实习 */
     private static final String INTERNAL_INT_TYPE_NAME = "校内实习";
     private static final String STU_POST_STATUS_ALL = "all";
@@ -1155,6 +1158,115 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return loadAllDepartmentIdsPaged("ViewBaseDepartment", new JSONObject());
     }
 
+    /**
+     * 从统计查询范围内的部门 id 解析所属学院（{@code the_level=2}），用于限定可见的校内/校外实习项目。
+     * 院系管理员即使挂在班级节点，也会沿父链上溯到学院再过滤。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Integer> resolveOwningCollegeIdsForStatsDeptScope(List<Integer> deptIds) {
+        if (deptIds == null || deptIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<Integer> collegeIds = new LinkedHashSet<>();
+        for (Integer deptId : deptIds) {
+            if (deptId == null || deptId <= 0) {
+                continue;
+            }
+            List<Object> chain = (List<Object>) iDataTreeService.getAllParentIndex("BaseDepartment", deptId);
+            if (chain == null || chain.isEmpty()) {
+                continue;
+            }
+            for (Object node : chain) {
+                JSONObject j = FastJsonUtil.toJson(node);
+                Integer level = j.getInteger("theLevel");
+                if (level != null && level == COLLEGE_DEPARTMENT_LEVEL) {
+                    Integer collegeId = j.getInteger("id");
+                    if (collegeId != null) {
+                        collegeIds.add(collegeId);
+                    }
+                    break;
+                }
+            }
+        }
+        return new ArrayList<>(collegeIds);
+    }
+
+    /** 校内/校外实习统计：按当前登录人权限与 {@code requestDepartmentId} 解析可见的所属学院 id 列表。 */
+    private List<Integer> resolveCollegeStatsOwningCollegeIds(Integer requestDepartmentId) {
+        List<Integer> deptIds = resolveExternalCollegeStatsDepartmentIds(requestDepartmentId);
+        return resolveOwningCollegeIdsForStatsDeptScope(deptIds);
+    }
+
+    /**
+     * 查询指定学院下、指定校内外类型（{@code intTypeName}）的实习类型 id 列表。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Integer> loadInternshipTypeIdsForColleges(List<Integer> collegeIds, String intTypeName) {
+        if (collegeIds == null || collegeIds.isEmpty() || intTypeName == null || intTypeName.isEmpty()) {
+            return Collections.emptyList();
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("typeName", intTypeName);
+        Map<String, String> repMap = new HashMap<>();
+        GeneralUtil.addInCondition(sk, repMap, "universityId", collegeIds);
+        List<Integer> out = new ArrayList<>();
+        int p = 1;
+        while (true) {
+            Page<Object> pg = (Page<Object>) iCommonService.getSomeRecords(
+                    "ViewBaseInternshipType", sk, repMap, Sort.unsorted(), p, POST_PAGE_SIZE);
+            List<Object> c = pg.getContent();
+            if (c == null || c.isEmpty()) {
+                break;
+            }
+            for (Object o : c) {
+                Integer id = FastJsonUtil.toJson(o).getInteger("id");
+                if (id != null) {
+                    out.add(id);
+                }
+            }
+            if (c.size() < POST_PAGE_SIZE) {
+                break;
+            }
+            p++;
+        }
+        return out.stream().distinct().collect(Collectors.toList());
+    }
+
+    /**
+     * 校验实习项目属于当前统计口径下可见的学院（{@code base_internship_type.university_id}）。
+     */
+    private void assertInternshipAccessibleInCollegeStats(Integer internshipId, Integer requestDepartmentId,
+                                                          String expectedIntTypeName) {
+        if (internshipId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        }
+        Object v = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+        if (v == null) {
+            throw BaseResponse.parameterInvalid.error("实习项目不存在");
+        }
+        JSONObject j = FastJsonUtil.toJson(v);
+        String intTypeName = j.getString("intTypeName");
+        if (intTypeName == null || !expectedIntTypeName.equals(intTypeName.trim())) {
+            throw BaseResponse.parameterInvalid.error("仅支持" + expectedIntTypeName + "项目");
+        }
+        List<Integer> owningCollegeIds = resolveCollegeStatsOwningCollegeIds(requestDepartmentId);
+        if (owningCollegeIds.isEmpty()) {
+            throw BaseResponse.lackPermissions.error("无权查看该学院实习统计");
+        }
+        Integer internshipTypeId = j.getInteger("internshipTypeId");
+        if (internshipTypeId == null) {
+            throw BaseResponse.parameterInvalid.error("实习类型无效");
+        }
+        Object typeObj = iCommonService.getOneRecordById("ViewBaseInternshipType", internshipTypeId);
+        if (typeObj == null) {
+            throw BaseResponse.parameterInvalid.error("实习类型不存在");
+        }
+        Integer universityId = FastJsonUtil.toJson(typeObj).getInteger("universityId");
+        if (universityId == null || !owningCollegeIds.contains(universityId)) {
+            throw BaseResponse.lackPermissions.error("无权查看其他学院的实习项目");
+        }
+    }
+
     private List<Integer> resolveExternalCollegeStatsDepartmentIds(Integer requestDepartmentId) {
         ViewBaseUser u = requireLoginViewBaseUser();
         String jc = u.getJobCode();
@@ -1252,8 +1364,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
         List<Integer> deptIds = resolveExternalCollegeStatsDepartmentIds(departmentId);
+        List<Integer> owningCollegeIds = resolveOwningCollegeIdsForStatsDeptScope(deptIds);
+        if (owningCollegeIds.isEmpty()) {
+            JSONObject empty = new JSONObject();
+            empty.put("rows", new JSONArray());
+            empty.put("totalElements", 0L);
+            empty.put("totalPages", 0);
+            empty.put("page", pageNum);
+            empty.put("size", pageSize);
+            return empty;
+        }
         Page<Object[]> statsPage = viewExternalInternshipCollegeStatsDao.findAggregatedByDepartmentIds(
-                deptIds, PageRequest.of(pageNum - 1, pageSize));
+                deptIds, owningCollegeIds, PageRequest.of(pageNum - 1, pageSize));
         JSONArray rows = new JSONArray();
         for (Object[] r : statsPage.getContent()) {
             if (r == null || r.length < 9) {
@@ -1330,12 +1452,27 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         Set<Integer> deptSchoolTeacherIds = scope.schoolTeacherUserIds;
         Integer reportDepartmentId = scope.reportDepartmentId;
 
+        List<Integer> owningCollegeIds = resolveCollegeStatsOwningCollegeIds(departmentId);
+        List<Integer> allowedTypeIds = loadInternshipTypeIdsForColleges(owningCollegeIds, INTERNAL_INT_TYPE_NAME);
+        if (allowedTypeIds.isEmpty()) {
+            JSONObject empty = new JSONObject();
+            empty.put("departmentId", reportDepartmentId);
+            empty.put("rows", new JSONArray());
+            empty.put("totalElements", 0L);
+            empty.put("totalPages", 0);
+            empty.put("page", pageNum);
+            empty.put("size", pageSize);
+            return empty;
+        }
+
         JSONObject internshipSk = new JSONObject();
         internshipSk.put("intTypeName", INTERNAL_INT_TYPE_NAME);
+        Map<String, String> internshipRepMap = new HashMap<>();
+        GeneralUtil.addInCondition(internshipSk, internshipRepMap, "internshipTypeId", allowedTypeIds);
         Sort newestFirst = Sort.by(Sort.Direction.DESC, "createTime");
         @SuppressWarnings("unchecked")
         Page<Object> internshipPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewMainInternship", internshipSk, null, newestFirst, pageNum, pageSize);
+                "ViewMainInternship", internshipSk, internshipRepMap, newestFirst, pageNum, pageSize);
         List<Object> internshipList = internshipPage.getContent();
         if (internshipList == null || internshipList.isEmpty()) {
             JSONObject empty = new JSONObject();
@@ -1415,6 +1552,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     public Object getInternalInternshipTitleSelectionBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                                Integer departmentId) {
         assertInternalInternship(internshipId);
+        assertInternshipAccessibleInCollegeStats(internshipId, departmentId, INTERNAL_INT_TYPE_NAME);
         String st = normalizeTitleSelectionBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
@@ -1518,6 +1656,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     @Override
     public Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size) {
         assertInternalInternship(internshipId);
+        assertInternshipAccessibleInCollegeStats(internshipId, departmentId, INTERNAL_INT_TYPE_NAME);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
 
