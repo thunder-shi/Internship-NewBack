@@ -512,9 +512,12 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "本学院校外实习项目报名汇总",
-            description = "权限：超级管理员/学校管理员/教务处管理员可看全校（不传 departmentId 时按当前用户 schoolId 下全部部门聚合；超级管理员无 schoolId 时聚合全部部门）；"
-                    + "院系管理员仅看本部门子树，忽略请求中的 departmentId。"
-                    + "按学院部门树（departmentId 含其全部子部门）统计各校外实习项目：报名学生数、报名校内导师数、岗位数、招聘总人数、待审核岗位数、已选岗学生数等。"
+            description = "权限：超级管理员/学校管理员/教务处管理员可看全校（不传 departmentId 时按当前用户 schoolId 下全部学院；超级管理员无 schoolId 时看全部学院）；"
+                    + "院系管理员仅看本学院，忽略请求中的 departmentId。"
+                    + "列表按实习类型所属学院（base_internship_type.university_id）归属。"
+                    + "返回各校外实习项目：signupStudentTotalCount（报名学生总数）、signupStudentCount（当前部门子树报名学生数）、"
+                    + "报名校内导师数、岗位数、招聘总人数、pendingAuditPostCount（当前部门子树待审岗位数）、"
+                    + "studentWithPostSelectionCount（当前部门子树已选岗学生数）等。"
     )
     @PostMapping(value = "/listExternalInternshipCollegeStats", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listExternalInternshipCollegeStats(@RequestBody JSONObject requestJson) {
@@ -561,9 +564,9 @@ public class InternshipProcessController {
             summary = "校外实习项目-学生选岗情况",
             description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
                     + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
-                    + "departmentId 可选：传则只含所属部门为该节点或其下级（BaseDepartment 子树）的用户；不传则与原先一致，不按部门过滤。"
-                    + "已有选岗记录时 rows 含 verifyProcessId（MainVerifyProcess.id）；未选岗无此字段。"
-                    + "counts 为当前过滤范围内三类人数。分页：pageInfo.page、pageInfo.size。"
+                    + "权限与 listExternalInternshipCollegeStats 一致：院系管理员固定本院子树；校级管理员不传 departmentId 为全校口径，传则下钻该节点子树。"
+                    + "rows/counts 仅含当前部门子树内已报名学生。已有选岗记录时 rows 含 verifyProcessId（MainVerifyProcess.id）。"
+                    + "分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object getExternalInternshipStudentPostBreakdown(@RequestBody JSONObject requestJson) {

@@ -175,9 +175,11 @@ public interface IInternshipService {
     // Object getNowInternship(String processTypeCode);
 
     /**
-     * 本学院校外实习项目报名汇总（按部门树：含 departmentId 及其全部子部门）。
+     * 本学院校外实习项目报名汇总。
      * <p>权限：{@code SUPER_ADMIN}、{@code SCHOOL_ADMIN}、{@code ACADEMIC_AFFAIRS_ADMIN} 可看全校（{@code departmentId} 为 {@code null} 时按用户学校全部部门；超级管理员无 school 时按全部部门）；
      * {@code DEPARTMENT_ADMIN} 仅本院系，忽略传入的 {@code departmentId}。</p>
+     * <p>每行含 {@code signupStudentTotalCount}（项目报名学生总数）、{@code signupStudentCount}、
+     * {@code pendingAuditPostCount}、{@code studentWithPostSelectionCount}（后三者为当前统计口径部门子树内统计）。</p>
      *
      * @param departmentId 学院/部门节点 ID（校级管理员可选，用于下钻子树）
      * @param page         页码，从 1 开始
@@ -194,19 +196,6 @@ public interface IInternshipService {
      */
     Object listApprovedExternalInternshipPosts(Integer internshipId, Integer page, Integer size);
 
-    /**
-     * 指定校外实习项目：学生选岗情况。{@code counts} 始终为三类全量人数。
-     * <ul>
-     *   <li>{@code status=all}：不分状态，返回本项目内全部学生一条列表并分页；每条含 {@code selectionStatus}。</li>
-     *   <li>其余三个值：仅查询并分页返回该状态对应的学生 {@code rows}。</li>
-     * </ul>
-     *
-     * @param internshipId 实习项目 ID
-     * @param page         页码，从 1 开始
-     * @param size         每页条数
-     * @param status       {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}；{@code null} 视为 {@code all}
-     * @param departmentId 可选；若传则只统计用户所属部门为该节点或其下级部门（与 BaseDepartment 树一致）的学生；{@code null} 不按部门过滤
-     */
     /**
      * 本学院校内实习项目汇总：报名师生数、题目审核通过数、未提交题目教师数、学生选题三类人数等。
      * <p>权限规则同 {@link #listExternalInternshipCollegeStats(Integer, Integer, Integer)}。</p>
@@ -228,6 +217,13 @@ public interface IInternshipService {
      * <p>{@code departmentId} 规则同 {@link #listInternalInternshipCollegeStats(Integer, Integer, Integer)}（子树内报名教师）。</p>
      */
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
+
+    /**
+     * 指定校外实习项目：学生选岗情况（当前统计口径部门子树内已报名学生）。
+     * <p>权限规则同 {@link #listExternalInternshipCollegeStats(Integer, Integer, Integer)}。</p>
+     *
+     * @param status {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}
+     */
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                      Integer departmentId);
 

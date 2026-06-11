@@ -1374,22 +1374,23 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             empty.put("size", pageSize);
             return empty;
         }
-        Page<Object[]> statsPage = viewExternalInternshipCollegeStatsDao.findAggregatedByDepartmentIds(
-                deptIds, owningCollegeIds, PageRequest.of(pageNum - 1, pageSize));
+        Page<Object[]> statsPage = viewExternalInternshipCollegeStatsDao.findByOwningCollegeIds(
+                owningCollegeIds, deptIds, PageRequest.of(pageNum - 1, pageSize));
         JSONArray rows = new JSONArray();
         for (Object[] r : statsPage.getContent()) {
-            if (r == null || r.length < 9) {
+            if (r == null || r.length < 10) {
                 continue;
             }
             JSONObject row = new JSONObject();
             row.put("internshipId", toInteger(r[0]));
             row.put("internshipName", r[1] != null ? String.valueOf(r[1]) : null);
-            row.put("signupStudentCount", nzInt(toInteger(r[3])));
-            row.put("signupTeacherCount", nzInt(toInteger(r[4])));
-            row.put("postSignupCount", nzInt(toInteger(r[5])));
-            row.put("totalRecruitmentHeadcount", nzNumberInt(r[6]));
-            row.put("pendingAuditPostCount", nzInt(toInteger(r[7])));
-            row.put("studentWithPostSelectionCount", nzInt(toInteger(r[8])));
+            row.put("signupStudentTotalCount", nzInt(toInteger(r[3])));
+            row.put("signupStudentCount", nzInt(toInteger(r[4])));
+            row.put("signupTeacherCount", nzInt(toInteger(r[5])));
+            row.put("postSignupCount", nzInt(toInteger(r[6])));
+            row.put("totalRecruitmentHeadcount", nzNumberInt(r[7]));
+            row.put("pendingAuditPostCount", nzInt(toInteger(r[8])));
+            row.put("studentWithPostSelectionCount", nzInt(toInteger(r[9])));
             rows.add(row);
         }
         JSONObject result = new JSONObject();
@@ -1947,10 +1948,14 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     public Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                             Integer departmentId) {
         assertExternalInternship(internshipId);
+        assertInternshipAccessibleInCollegeStats(internshipId, departmentId, EXTERNAL_INT_TYPE_NAME);
+        CollegeStatsUserScope scope = resolveInternalCollegeStatsUserScope(departmentId);
+        Set<Integer> deptStudentUserIds = scope.studentUserIds;
         String st = normalizeStudentPostBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
         Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
+        projectStudentUserIds.retainAll(deptStudentUserIds);
         JSONObject stuSk = new JSONObject();
         stuSk.put("internshipId", internshipId);
         @SuppressWarnings("unchecked")
@@ -1964,7 +1969,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         for (Object o : mergeList) {
             JSONObject j = FastJsonUtil.toJson(o);
             Integer uid = parseStudentUserIdFromStuPostMerge(j);
-            if (uid == null) {
+            if (uid == null || !deptStudentUserIds.contains(uid)) {
                 continue;
             }
             anyStuPostUser.add(uid);
@@ -2014,6 +2019,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             JSONObject result = new JSONObject();
             result.put("internshipId", internshipId);
             result.put("internshipName", invJ.getString("name"));
+            result.put("departmentId", scope.reportDepartmentId);
             result.put("status", STU_POST_STATUS_ALL);
             result.put("page", pageNum);
             result.put("size", pageSize);
@@ -2041,6 +2047,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         JSONObject result = new JSONObject();
         result.put("internshipId", internshipId);
         result.put("internshipName", invJ.getString("name"));
+        result.put("departmentId", scope.reportDepartmentId);
         result.put("status", st);
         result.put("page", paged.getInteger("page"));
         result.put("size", paged.getInteger("size"));

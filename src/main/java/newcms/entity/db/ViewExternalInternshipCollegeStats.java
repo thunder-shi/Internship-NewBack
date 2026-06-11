@@ -14,7 +14,8 @@ import java.math.BigDecimal;
 import java.util.Date;
 
 /**
- * 只读视图：本学院校外实习报名汇总（与 SQL view_external_internship_college_stats 对应）。
+ * 只读视图：校外实习报名汇总（与 SQL view_external_internship_college_stats 对应）。
+ * {@code departmentId} 为 {@code base_internship_type.university_id}（学院节点），每项目一行。
  */
 @Getter
 @Setter

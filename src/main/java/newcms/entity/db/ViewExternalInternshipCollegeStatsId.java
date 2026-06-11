@@ -9,7 +9,7 @@ import lombok.Setter;
 import java.io.Serializable;
 
 /**
- * 复合主键：校外实习项目 × 学院（与视图 view_external_internship_college_stats 一致）。
+ * 复合主键：校外实习项目 × 所属学院（department_id = base_internship_type.university_id）。
  */
 @Getter
 @Setter
