@@ -191,10 +191,34 @@ WHERE (`mvp`.`table_name` = 'RelStuInternshipPost');
 
 
 -- ---------------------------------------------------------------------
--- 5. 重建 view_external_internship_college_stats
---    过滤自主实习岗位（code='SELF_INTERNSHIP'），避免污染"岗位数"和"招聘人数"
---    注意：allPersonNum=-1 的自主岗位 max(all_person_num) 也会被 SUM 吞进 total_recruitment_headcount
+-- 5. 校外实习学院统计学院隔离 + 重建 view_external_internship_college_stats
+--    - 新增 department_isUnder：判断部门是否在指定学院子树内
+--    - 视图仅关联 base_internship_type.university_id 子树内部门，不再与全校 base_department 笛卡尔积
+--    - 过滤自主实习岗位（code='SELF_INTERNSHIP'），避免污染"岗位数"和"招聘人数"
+--    - 注意：allPersonNum=-1 的自主岗位 max(all_person_num) 也会被 SUM 吞进 total_recruitment_headcount
 -- ---------------------------------------------------------------------
+DROP FUNCTION IF EXISTS `department_isUnder`;
+DELIMITER ;;
+CREATE FUNCTION `department_isUnder`(childId INT, ancestorId INT)
+RETURNS TINYINT(1)
+DETERMINISTIC
+BEGIN
+    DECLARE tempId INT;
+    IF childId IS NULL OR ancestorId IS NULL OR childId <= 0 OR ancestorId <= 0 THEN
+        RETURN 0;
+    END IF;
+    SET tempId = childId;
+    WHILE tempId IS NOT NULL DO
+        IF tempId = ancestorId THEN
+            RETURN 1;
+        END IF;
+        SET tempId = (SELECT `PARENT_ID` FROM `base_department`
+                      WHERE `ID` = tempId AND `IS_DELETED` = 0 LIMIT 1);
+    END WHILE;
+    RETURN 0;
+END;;
+DELIMITER ;
+
 DROP VIEW IF EXISTS `view_external_internship_college_stats`;
 CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW `view_external_internship_college_stats` AS
 SELECT
@@ -248,11 +272,14 @@ SELECT
           AND (`s`.`DEPARTMENT_ID` = `dep`.`ID`)
           AND (`s`.`student_id` IS NOT NULL)
           AND (TRIM(`s`.`student_id`) <> ''))) AS `student_with_post_selection_count`
-FROM (`internship`.`view_main_internship` `vmi`
-      JOIN `internship`.`base_department` `dep`)
+FROM ((`internship`.`view_main_internship` `vmi`
+       JOIN `internship`.`base_internship_type` `bit`
+         ON ((`bit`.`id` = `vmi`.`internship_type_id`) AND (`bit`.`is_deleted` = 0)))
+      JOIN `internship`.`base_department` `dep`
+        ON ((`dep`.`IS_DELETED` = 0)
+            AND (`department_isUnder`(`dep`.`ID`, `bit`.`university_id`) = 1)))
 WHERE ((`vmi`.`is_deleted` = 0)
-   AND (`vmi`.`int_type_name` = '校外实习')
-   AND (`dep`.`IS_DELETED` = 0));
+   AND (`vmi`.`int_type_name` = '校外实习'));
 
 
 -- ---------------------------------------------------------------------
