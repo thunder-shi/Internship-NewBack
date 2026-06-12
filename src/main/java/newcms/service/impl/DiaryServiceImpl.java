@@ -3,19 +3,24 @@ package newcms.service.impl;
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
+import newcms.base.BaseException;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
+import newcms.config.CozeProperties;
 import newcms.entity.db.*;
 import newcms.repository.db.*;
 import newcms.service.ICommonService;
 import newcms.service.IDiaryService;
 import newcms.service.IInternshipTerminationService;
+import newcms.service.CozeWorkflowService;
 import newcms.utils.FastJsonUtil;
+import newcms.utils.MinIOUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -74,7 +79,17 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   @Resource
   private IInternshipTerminationService internshipTerminationService;
 
-  // ==================== 提交/保存日志 ====================
+  @Resource
+  private MinIOUtils minIOUtils;
+
+  @Resource
+  private CozeWorkflowService cozeWorkflowService;
+
+  @Resource
+  private CozeProperties cozeProperties;
+
+  private static final Set<String> REVIEWABLE_SUFFIXES = Set.of("pdf", "doc", "docx");
+  private static final List<String> DIARY_OSS_TABLE_NAMES = List.of("MainDiary", "main_diary");
 
   @Override
   public Integer submitDiary(Integer relationId, String tableName, Integer periodId,
@@ -868,5 +883,102 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     response.put("successCount", successCount);
     response.put("results", results);
     return response;
+  }
+
+  // ==================== AI 批改（Coze） ====================
+
+  @Override
+  public JSONObject aiReviewDiary(Integer diaryId) {
+    MainDiary diary = mainDiaryDao.findById(diaryId)
+        .filter(d -> !Boolean.TRUE.equals(d.getIsDeleted()))
+        .orElseThrow(() -> BaseResponse.parameterInvalid.error("日志不存在"));
+    if (!Boolean.TRUE.equals(diary.getSubmit())) {
+      throw BaseResponse.parameterInvalid.error("仅已提交的日志可进行 AI 批改");
+    }
+
+    markAiReviewStatus(diaryId, "RUNNING", null, null);
+
+    try {
+      SysOssFile attachment = findReviewableAttachment(diaryId)
+          .orElseThrow(() -> BaseResponse.parameterInvalid.error("未找到 pdf/docx 格式的日志附件"));
+
+      JSONObject cozeResult;
+      if (cozeProperties.useFileIdInput()) {
+        byte[] fileBytes = minIOUtils.readBytes(attachment.getBucketName(), attachment.getOssPath());
+        cozeResult = cozeWorkflowService.runDiaryReview(fileBytes, attachment.getFileName());
+      } else {
+        String fileUrl = minIOUtils.presignedPreviewUrl(
+            attachment.getBucketName(),
+            attachment.getOssPath(),
+            cozeProperties.getFileUrlExpireSeconds());
+        cozeResult = cozeWorkflowService.runDiaryReviewByUrl(fileUrl, attachment.getFileName());
+      }
+      String output = cozeResult.getString("output");
+      BigDecimal score = cozeResult.getBigDecimal("score");
+      String rawData = cozeResult.getString("rawData");
+
+      JSONObject update = new JSONObject();
+      update.put("id", diaryId);
+      update.put("aiReviewComment", output);
+      update.put("aiReviewScore", score);
+      update.put("aiReviewStatus", "SUCCESS");
+      update.put("aiReviewTime", new Date());
+      update.put("aiReviewRaw", rawData);
+      iCommonService.saveOneRecord("MainDiary", update);
+
+      JSONObject response = new JSONObject();
+      response.put("diaryId", diaryId);
+      response.put("aiReviewStatus", "SUCCESS");
+      response.put("output", output);
+      response.put("score", score);
+      response.put("aiReviewComment", output);
+      response.put("aiReviewScore", score);
+      response.put("aiReviewTime", update.get("aiReviewTime"));
+      response.put("debugUrl", cozeResult.getString("debugUrl"));
+      return response;
+    } catch (Exception e) {
+      markAiReviewStatus(diaryId, "FAILED", null, e.getMessage());
+      if (e instanceof BaseException) {
+        throw e;
+      }
+      throw BaseResponse.moreInfoError.error("AI 批改失败: " + e.getMessage());
+    }
+  }
+
+  private void markAiReviewStatus(Integer diaryId, String status, String comment, String raw) {
+    JSONObject update = new JSONObject();
+    update.put("id", diaryId);
+    update.put("aiReviewStatus", status);
+    if (comment != null) {
+      update.put("aiReviewComment", comment);
+    }
+    if (raw != null) {
+      update.put("aiReviewRaw", raw);
+    }
+    if ("SUCCESS".equals(status)) {
+      update.put("aiReviewTime", new Date());
+    }
+    iCommonService.saveOneRecord("MainDiary", update);
+  }
+
+  private Optional<SysOssFile> findReviewableAttachment(Integer diaryId) {
+    for (String tableName : DIARY_OSS_TABLE_NAMES) {
+      List<SysOssFile> files = sysOssFileDao
+          .findByRelationIdsAndTableNameAndIsDeletedFalse(diaryId, tableName);
+      Optional<SysOssFile> match = files.stream()
+          .filter(this::isReviewableFile)
+          .findFirst();
+      if (match.isPresent()) {
+        return match;
+      }
+    }
+    return Optional.empty();
+  }
+
+  private boolean isReviewableFile(SysOssFile file) {
+    if (file.getSuffix() == null) {
+      return false;
+    }
+    return REVIEWABLE_SUFFIXES.contains(file.getSuffix().toLowerCase(Locale.ROOT));
   }
 }

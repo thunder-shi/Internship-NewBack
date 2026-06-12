@@ -173,4 +173,17 @@ public class DiaryController {
         Integer userId = node.getInteger("userId");
         return BaseResponse.ok(iDiaryService.getPeriodStudents(internshipId, periodId, userId));
     }
+
+    @Operation(summary = "AI 批改实习日志（Coze 工作流）",
+            description = "对已提交日志的 pdf/docx 附件调用 Coze 工作流（入参 file，出参 score/output）。"
+                    + "结果写入 aiReviewScore、aiReviewComment。")
+    @PostMapping(value = "/ai-review", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object aiReviewDiary(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("aiReviewDiary", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) throw BaseResponse.parameterInvalid.error("node 不能为空");
+        Integer diaryId = node.getInteger("diaryId");
+        if (diaryId == null) throw BaseResponse.parameterInvalid.error("diaryId 不能为空");
+        return BaseResponse.ok(iDiaryService.aiReviewDiary(diaryId));
+    }
 }

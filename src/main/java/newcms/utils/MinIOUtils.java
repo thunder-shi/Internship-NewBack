@@ -178,6 +178,18 @@ public class MinIOUtils {
     }
 
     /**
+     * 从 MinIO 读取文件字节。
+     */
+    public byte[] readBytes(String bucketName, String ossPath) {
+        try (InputStream in = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucketName).object(ossPath).build())) {
+            return in.readAllBytes();
+        } catch (Exception e) {
+            throw new RuntimeException("MinIO 文件读取失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * 将 MinIO 文件流式输出到 HTTP 响应。
      *
      * @param bucketName MinIO bucket
