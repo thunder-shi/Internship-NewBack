@@ -120,4 +120,12 @@ public interface IDiaryService {
      * @return { successCount, results: [{ periodId, diaryId, message }] }
      */
     JSONObject submitDiaryBatch(List<JSONObject> nodes, Integer currentUserId);
+
+    /**
+     * 调用 Coze 工作流对日志附件（pdf/docx）进行 AI 批改，结果写入 MainDiary.aiReview* 字段。
+     *
+     * @param diaryId 日志 ID（MainDiary.id）
+     * @return { diaryId, aiReviewStatus, aiReviewScore, aiReviewComment(output), aiReviewTime, debugUrl? }
+     */
+    JSONObject aiReviewDiary(Integer diaryId);
 }

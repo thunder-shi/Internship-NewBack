@@ -73,7 +73,24 @@ public class MainDiary extends NameRemarkInfo {
     private String scoreDetail;
 
     @Column(columnDefinition = "datetime comment '总成绩物化时间'")
-    private Date totalScoreLockTime                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ;
+    private Date totalScoreLockTime;
+
+    // ===== AI 批改（Coze 工作流） =====
+
+    @Column(columnDefinition = "text comment 'AI批改意见（对应 Coze output）'")
+    private String aiReviewComment;
+
+    @Column(columnDefinition = "decimal(5,2) comment 'AI批改分数（对应 Coze score）'")
+    private BigDecimal aiReviewScore;
+
+    @Column(columnDefinition = "varchar(20) comment 'AI批改状态：PENDING/RUNNING/SUCCESS/FAILED'")
+    private String aiReviewStatus;
+
+    @Column(columnDefinition = "datetime comment 'AI批改完成时间'")
+    private Date aiReviewTime;
+
+    @Column(columnDefinition = "text comment 'AI批改原始响应，便于排错'")
+    private String aiReviewRaw;
 
     @Version
     @Column(columnDefinition = "int default 0 comment '乐观锁版本号'")
