@@ -30,7 +30,7 @@ public class ViewVerifyProcessRelTeacherStudent extends BaseInfo {
     @jakarta.persistence.Column(columnDefinition = "smallint comment '是否审核：-1-保存未提交，0-未审核，1-审核通过，2-审核退回'")
     private Integer isAudit;
 
-    @jakarta.persistence.Column(columnDefinition = "varchar(50) comment '审核理由'")
+    @jakarta.persistence.Column(columnDefinition = "varchar(1000) comment '审核理由'")
     private String reason;
 
     @jakarta.persistence.Column(columnDefinition = "varchar(50) comment '当前审核操作表名'")
