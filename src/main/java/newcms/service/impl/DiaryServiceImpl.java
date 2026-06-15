@@ -105,6 +105,9 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       MainDiary existing = existingOpt.get();
       Integer diaryId = existing.getId();
       boolean wasDraft = !Boolean.TRUE.equals(existing.getSubmit());
+      if (!isSubmit && !wasDraft) {
+        throw BaseResponse.parameterInvalid.error("日志已提交，不能保存为草稿");
+      }
 
       // 更新标题、内容、提交状态、审核进度
       JSONObject updateDiary = new JSONObject();
@@ -253,6 +256,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           JSONObject stub = new JSONObject();
           stub.put("id", diary.getId());
           stub.put("submit", diary.getSubmit());
+          stub.put("title", diary.getTitle());
           stub.put("content", diary.getContent());
           item.put("diary", stub);
         }

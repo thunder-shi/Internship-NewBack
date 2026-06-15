@@ -17,6 +17,7 @@ import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
+import newcms.service.IDiaryService;
 import newcms.service.IEnterpriseInfoService;
 import newcms.service.IInternshipGradeConfigService;
 import newcms.service.IInternshipPostService;
@@ -110,6 +111,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IInternshipPostService iInternshipPostService;
+
+    @Resource
+    private IDiaryService iDiaryService;
 
     /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
     @Resource
@@ -1000,6 +1004,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 throw BaseResponse.moreInfoError.error("studentId=" + studentId + " 未找到对应的通过学生选岗记录");
             }
             if (existingRelInternshipIds.contains(relInternshipId)) {
+                ensureDiaryEntriesForAssignedStuPost(relInternshipId);
                 skippedExistingCount++;
                 continue;
             }
@@ -1029,6 +1034,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             verifyJson.put("tableName", "RelTeacherStudent");
             iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
             createdVerifyProcessCount++;
+            ensureDiaryEntriesForAssignedStuPost(relInternshipId);
         }
 
         JSONObject result = buildInitTeacherStudentResult(createdRelTeacherStudentCount, createdVerifyProcessCount);
@@ -2843,10 +2849,17 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             upd.put("teacherId", selectedTeacherId);
             upd.put("currentVerifyTypeId", currentVerifyTypeId);
             iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
+            ensureDiaryEntriesForAssignedStuPost(j.getInteger("relInternshipId"));
             assignedCount++;
             verifyUpdatedCount += updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
         }
         return new int[]{assignedCount, verifyUpdatedCount};
+    }
+
+    private void ensureDiaryEntriesForAssignedStuPost(Integer relInternshipId) {
+        if (relInternshipId != null) {
+            iDiaryService.createDiaryEntriesForStudent(relInternshipId, TABLE_REL_STU_INTERNSHIP_POST);
+        }
     }
 
     /**
