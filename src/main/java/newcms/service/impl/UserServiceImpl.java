@@ -247,7 +247,7 @@ public Object getLoginUser(Date date, String userAgent) {
         String password = json.getString("password");
         // SEC-02: 恢复密码强度校验
         if (!EncodeUtil.isStrongPwd(password)) {
-            throw BaseResponse.moreInfoError.error("弱密码(应包含大小写字母、特殊符号及数字且长度大于8位)");
+            throw BaseResponse.moreInfoError.error("弱密码(应包含字母、特殊符号及数字且长度不小于8位)");
         }
         //查重
         String account = json.getString("account");
@@ -334,40 +334,56 @@ public Object getLoginUser(Date date, String userAgent) {
         }
     }
     /**
-     * 修改/重置密码。调用方固定传 userId、oldPassword、password、reset。
-     * reset=true：使用 password 作为新密码，忽略 oldPassword，不做弱密码校验，可为任意 userId；
-     * reset=false：校验 oldPassword 与 password（含弱密码规则），且仅能改当前登录用户。
+     * 修改/重置/新增密码。调用方传 userId、oldPassword、password、reset。
+     * reset=true：按用户姓名自动生成新密码，忽略 oldPassword 与 password，不做弱密码校验；
+     * reset=false 且 oldPassword 有值：修改密码，校验原密码与弱密码，且仅能改当前登录用户；
+     * reset=false 且 oldPassword 为空：新增密码，不校验原密码与弱密码；password 为空时按姓名自动生成（同重置逻辑）。
      */
     @Override
     public void editPassword(String userId, String oldPassword, String password, boolean reset) {
         if (!StringUtils.hasText(userId)) {
             throw BaseResponse.moreInfoError.error("userId不能为空");
         }
-        if (!StringUtils.hasText(password)) {
-            throw BaseResponse.moreInfoError.error("新密码不能为空");
-        }
         int targetUserId = Integer.parseInt(userId);
         BaseUser user = tblUserInfoDao.findById(targetUserId)
                 .orElseThrow(() -> BaseResponse.moreInfoError.error("用户不存在"));
-        String newPassword = password.trim();
-        if (!reset) {
-            if (!EncodeUtil.isStrongPwd(password)) {
-                throw BaseResponse.moreInfoError.error("弱密码(应包含大小写字母、特殊符号及数字且长度大于8位)");
-            }
-            if (!StringUtils.hasText(oldPassword)) {
-                throw BaseResponse.moreInfoError.error("原密码不能为空");
-            }
-            if (!Objects.equals(targetUserId, getLoginUserId())) {
-                throw BaseResponse.moreInfoError.error("只能修改当前登录用户密码");
-            }
-            String encryptedOld = EncodeUtil.pwdShiro(oldPassword.trim(), userId);
-            if (!encryptedOld.equals(user.getPassword())) {
-                throw BaseResponse.moreInfoError.error("原密码错误");
+        String newPassword;
+        if (reset) {
+            newPassword = buildPasswordFromUserName(user);
+        } else {
+            boolean isAppend = !StringUtils.hasText(oldPassword);
+            if (isAppend && !StringUtils.hasText(password)) {
+                newPassword = buildPasswordFromUserName(user);
+            } else {
+                if (!StringUtils.hasText(password)) {
+                    throw BaseResponse.moreInfoError.error("新密码不能为空");
+                }
+                newPassword = password.trim();
+                if (!isAppend) {
+                    if (!EncodeUtil.isStrongPwd(password)) {
+                        throw BaseResponse.moreInfoError.error("弱密码(应包含字母、特殊符号及数字且长度不小于8位)");
+                    }
+                    if (!Objects.equals(targetUserId, getLoginUserId())) {
+                        throw BaseResponse.moreInfoError.error("只能修改当前登录用户密码");
+                    }
+                    String encryptedOld = EncodeUtil.pwdShiro(oldPassword.trim(), userId);
+                    if (!encryptedOld.equals(user.getPassword())) {
+                        throw BaseResponse.moreInfoError.error("原密码错误");
+                    }
+                }
             }
         }
         JSONObject obj = FastJsonUtil.toJson(user);
         obj.put("password", EncodeUtil.pwdShiro(newPassword, userId));
         iCommonService.saveOneRecord("BaseUser", obj);
+    }
+
+    private String buildPasswordFromUserName(BaseUser user) {
+        try {
+            return EncodeUtil.buildResetPasswordFromName(user.getName());
+        } catch (IllegalArgumentException e) {
+            throw BaseResponse.moreInfoError.error(e.getMessage());
+        }
     }
 
 

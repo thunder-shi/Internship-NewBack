@@ -43,12 +43,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleException(Exception e) {
         logger.error("未捕获的异常", e);
-        
-        // 获取详细的异常信息
-        String errorMessage = e.getMessage();
-        if (errorMessage == null || errorMessage.isEmpty()) {
-            errorMessage = e.getClass().getName();
-        }
+
+        String errorMessage = resolveErrorMessage(e);
         
         // 如果是 Shiro 相关异常，提供更友好的提示
         if (e.getClass().getName().contains("shiro") || 
@@ -69,6 +65,25 @@ public class GlobalExceptionHandler {
         }
         
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    }
+
+    private static String resolveErrorMessage(Throwable e) {
+        if (e == null) {
+            return "Unknown error";
+        }
+        String message = e.getMessage();
+        Throwable cause = e.getCause();
+        if (cause != null) {
+            String causeMessage = cause.getMessage();
+            if (causeMessage != null && !causeMessage.isEmpty()
+                    && (message == null || message.isEmpty() || "导入数据时发生错误".equals(message))) {
+                return causeMessage;
+            }
+        }
+        if (message == null || message.isEmpty()) {
+            return e.getClass().getName();
+        }
+        return message;
     }
     
     /**

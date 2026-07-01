@@ -8,6 +8,8 @@ import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import newcms.base.Base;
+import newcms.base.BaseException;
+import newcms.base.BaseResponse;
 import newcms.entity.base.BaseTreeInfo;
 import newcms.entity.db.BaseDepartment;
 import newcms.entity.db.BaseJobPosition;
@@ -627,6 +629,8 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
 
             }
 
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("导入数据时发生错误", e);
         }
@@ -650,17 +654,17 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             int firstRowNum = 1;
             //获取最后一行下标
             int lastRowNum = sheet.getLastRowNum();
+            Set<String> importedAccounts = new HashSet<>();
             for (int i = firstRowNum; i <= lastRowNum; i++) {
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
                 
-                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码, 身份证号, 出生日期, 地址, 邮政编码, 昵称, 部门编码, 身份类别, 工号, 专业代码, 入学年份, 毕业年份, 学制（年）, 角色（多个用分号隔开）
+                // 根据模板字段顺序读取：姓名, 性别, 联系电话, 邮箱, 账号, 密码(已忽略), 身份证号, ...
                 String name = getCellStringValue(row.getCell(0));
                 String sex = getCellStringValue(row.getCell(1));
                 String phone = getCellStringValue(row.getCell(2));
                 String email = getCellStringValue(row.getCell(3));
                 String account = getCellStringValue(row.getCell(4));
-                String password = getCellStringValue(row.getCell(5));
                 String idCard = getCellStringValue(row.getCell(6));
                 String birthStr = getCellStringValue(row.getCell(7));
                 String address = getCellStringValue(row.getCell(8));
@@ -687,18 +691,31 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (majorCode.isEmpty()) continue;
                 // 角色为必填
                 if (rolesStr.isEmpty()) {
-                    throw new RuntimeException("第 " + (i + 1) + " 行：角色不能为空");
+                    throw importRowError(i + 1, "角色不能为空");
                 }
-                
+                if (account.isEmpty()) {
+                    throw importRowError(i + 1, "账号不能为空");
+                }
+                String normalizedAccount = account.trim();
+                if (importedAccounts.contains(normalizedAccount)) {
+                    throw importRowError(i + 1, "账号 " + normalizedAccount + " 在导入文件中重复");
+                }
+                JSONObject accountSearch = new JSONObject();
+                accountSearch.put("account", normalizedAccount);
+                @SuppressWarnings("unchecked")
+                Page<Object> existingUserPage = (Page<Object>) iCommonService.getSomeRecords("BaseUser", accountSearch);
+                if (existingUserPage.getContent() != null && !existingUserPage.getContent().isEmpty()) {
+                    throw importRowError(i + 1, "账号 " + normalizedAccount + " 已存在，不能重复导入");
+                }
+                importedAccounts.add(normalizedAccount);
+
                 JSONObject data = new JSONObject();
                 data.put("name", name);
                 if (!sex.isEmpty()) data.put("sex", sex);
                 if (!phone.isEmpty()) data.put("phone", phone);
                 if (!email.isEmpty()) data.put("email", email);
-                if (!account.isEmpty()) data.put("account", account);
-                // 保存原始密码（稍后在获取userId后加密）
-                String rawPassword = password.isEmpty() ? "000000" : password;
-                // 先不设置密码，等获取到userId后再加密并更新
+                data.put("account", normalizedAccount);
+                // 密码在获取 userId 后按姓名自动生成（同重置密码逻辑）
                 if (!idCard.isEmpty()) data.put("idCard", idCard);
                 // 处理出生日期
                 if (!birthStr.isEmpty()) {
@@ -724,7 +741,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     departmentId = department.getId();
                 } catch (Exception e) {
                     // DATA-04: 抛出而非 continue，确保事务回滚（全有或全无）
-                    throw new RuntimeException("第 " + (i + 1) + " 行：查找部门编码 " + departmentCode + " 时发生异常", e);
+                    throw importRowError(i + 1, "查找部门编码 " + departmentCode + " 时发生异常", e);
                 }
                 if (departmentId == null) {
                     logger.warn("未找到匹配的部门ID，跳过该行数据");
@@ -743,7 +760,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                         continue;
                     }
                 } catch (Exception e) {
-                    throw new RuntimeException("第 " + (i + 1) + " 行：查找身份类别 " + jobName + " 时发生异常", e);
+                    throw importRowError(i + 1, "查找身份类别 " + jobName + " 时发生异常", e);
                 }
                 if (jobId == null) {
                     logger.warn("身份类别 {} 对应的ID为空，跳过该行数据", jobName);
@@ -761,7 +778,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     }
                     majorId = major.getId();
                 } catch (Exception e) {
-                    throw new RuntimeException("第 " + (i + 1) + " 行：查找专业代码 " + majorCode + " 时发生异常", e);
+                    throw importRowError(i + 1, "查找专业代码 " + majorCode + " 时发生异常", e);
                 }
                 if (majorId == null) {
                     logger.warn("专业代码 {} 对应的ID为空，跳过该行数据", majorCode);
@@ -804,15 +821,16 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 // 如果成功获取到userId，则加密密码并更新
                 if (userId != null) {
                     try {
-                        // 使用userId作为salt加密密码
+                        String rawPassword = EncodeUtil.buildResetPasswordFromName(name);
                         String encryptedPassword = EncodeUtil.pwdShiro(rawPassword, userId);
                         JSONObject updateData = new JSONObject();
                         updateData.put("id", userId);
                         updateData.put("password", encryptedPassword);
-                        // 更新密码
                         iDataListService.editOneNode("BaseUser", updateData);
+                    } catch (IllegalArgumentException e) {
+                        throw importRowError(i + 1, "生成初始密码失败，" + e.getMessage());
                     } catch (Exception e) {
-                        throw new RuntimeException("第 " + (i + 1) + " 行：加密更新密码失败，userId: " + userId, e);
+                        throw importRowError(i + 1, "加密更新密码失败，userId: " + userId, e);
                     }
                 }
                 
@@ -823,13 +841,15 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                     } catch (RuntimeException e) {
                         throw e;
                     } catch (Exception e) {
-                        throw new RuntimeException("第 " + (i + 1) + " 行：设置用户角色失败，userId: " + userId, e);
+                        throw importRowError(i + 1, "设置用户角色失败，userId: " + userId, e);
                     }
                 }
             }
 
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("导入数据时发生错误", e);
+            throw BaseResponse.moreInfoError.error("导入数据时发生错误");
         }
         return result;
     }
@@ -846,16 +866,26 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
             }
             SysRole role = sysRoleDao.findByNameAndIsDeletedFalse(roleName);
             if (role == null || role.getId() == null) {
-                throw new RuntimeException("第 " + rowNum + " 行：未找到角色「" + roleName + "」");
+                throw importRowError(rowNum, "未找到角色「" + roleName + "」");
             }
             if (!roleIds.contains(role.getId())) {
                 roleIds.add(role.getId());
             }
         }
         if (roleIds.isEmpty()) {
-            throw new RuntimeException("第 " + rowNum + " 行：角色不能为空或无效");
+            throw importRowError(rowNum, "角色不能为空或无效");
         }
         return roleIds.toArray(new Integer[0]);
+    }
+
+    private static BaseException importRowError(int rowNum, String detail) {
+        return BaseResponse.moreInfoError.error("第 " + rowNum + " 行：" + detail);
+    }
+
+    private static BaseException importRowError(int rowNum, String detail, Throwable cause) {
+        BaseException ex = importRowError(rowNum, detail);
+        ex.initCause(cause);
+        return ex;
     }
 }
 

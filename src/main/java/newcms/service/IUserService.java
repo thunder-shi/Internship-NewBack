@@ -33,8 +33,9 @@ public interface IUserService {
     void login(String account, String password, Boolean rememberMe);
 
     /**
-     * 修改/重置密码（请求体固定含 userId、oldPassword、password、reset 四字段）
-     * @param reset true 时使用 password 重置，忽略 oldPassword，不做弱密码校验
+     * 修改/重置/新增密码（请求体含 userId、oldPassword、password、reset）
+     * @param reset true 时按用户姓名自动生成重置密码，忽略 oldPassword 与 password，不做弱密码校验
+     * reset=false 且 oldPassword 为空时表示新增，不校验原密码与弱密码；password 为空时按姓名自动生成
      */
     void editPassword(String userId, String oldPassword, String password, boolean reset);
 
