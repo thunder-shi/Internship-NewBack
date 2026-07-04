@@ -13,7 +13,7 @@ public interface IDiaryService {
     /**
      * 学生提交/保存实习日志。
      * 同一 relationId+tableName+periodId 只存一条，重复调用时就地更新。
-     * submit=false 时仅保存草稿，不创建审核记录；submit=true 时提交审核，若无待审核记录则新建。
+     * submit=false 时保存草稿并维护未提交审核占位；submit=true 时提交审核并复用占位审核行。
      *
      * @param relationId    关联 ID（RelStuInternshipPost.id 或 RelTitleStudent.id）
      * @param tableName     关联表名（"RelStuInternshipPost" 或 "RelTitleStudent"）
@@ -31,7 +31,7 @@ public interface IDiaryService {
      *
      * @param relationId 关联 ID
      * @param tableName  关联表名
-     * @return 各期次列表，每项包含 period 信息和 diary（ViewVerifyMainDiaryMerge，未提交时为 null）
+     * @return 各期次列表，每项包含 period 信息和 diary（无日志记录时为 null，草稿占位返回 submit=false）
      */
     Object getDiaryPeriods(Integer relationId, String tableName);
 
@@ -52,6 +52,26 @@ public interface IDiaryService {
      * @param userId       当前老师的用户 ID（可为 null）
      */
     Object getPeriodStudents(Integer internshipId, Integer periodId, Integer userId);
+
+    /**
+     * 获取当前校内导师可批阅日志涉及的实习项目和期次。
+     *
+     * @param currentUserId 当前登录校内导师 ID
+     * @return { internships: [{ internshipId, internshipName, periods: [...] }] }
+     */
+    JSONObject getReviewOptions(Integer currentUserId);
+
+    /**
+     * 获取当前校内导师在指定项目、期次下可批阅的学生日志。
+     *
+     * @param internshipId 实习项目 ID
+     * @param periodId     期次 ID
+     * @param page         页码（1-based）
+     * @param size         每页数量
+     * @param currentUserId 当前登录校内导师 ID
+     * @return { total, students: [...] }
+     */
+    JSONObject getReviewStudents(Integer internshipId, Integer periodId, Integer page, Integer size, Integer currentUserId);
 
     /**
      * 生成实习项目的日志期次（MainDiaryPeriod），并为已审核通过的学生追溯创建 submit=false 的日志桩。

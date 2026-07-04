@@ -3164,6 +3164,37 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return saved;
     }
 
+    private void assertCanAuditMainDiary(Object verifyObj) {
+        if (verifyObj == null) {
+            throw BaseResponse.parameterInvalid.error("审核记录不存在");
+        }
+        JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
+        if (!"MainDiary".equals(verifyJson.getString("tableName"))) {
+            return;
+        }
+        Integer isAudit = verifyJson.getInteger("isAudit");
+        if (!Objects.equals(isAudit, Constant.AUDIT_STATUS.SUBMIT)) {
+            throw BaseResponse.parameterInvalid.error("当前日志不是待审核状态，不能批阅");
+        }
+        Integer currentUserId = Base.getLoginUserId();
+        if (!verifyUserIdContains(verifyJson.getString("verifyUserId"), currentUserId)) {
+            throw BaseResponse.parameterInvalid.error("当前用户不是该日志的审核人，不能批阅");
+        }
+    }
+
+    private boolean verifyUserIdContains(String verifyUserId, Integer userId) {
+        if (verifyUserId == null || verifyUserId.isBlank() || userId == null) {
+            return false;
+        }
+        String target = String.valueOf(userId);
+        for (String part : verifyUserId.split("\\|")) {
+            if (target.equals(part.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * 单条审核推进（原 auditProcess 逻辑）。
      */
@@ -3212,6 +3243,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         // 日志 / 打卡：业务表自带审核配置的多级流程（relationId = 业务主键）；打卡无 submit，退回只重置审核级别
         if ("MainDiary".equals(tableName)) {
+            assertCanAuditMainDiary(verifyObj);
             return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
         }
         if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved && !noVerifyTitleAutoApproved) {
