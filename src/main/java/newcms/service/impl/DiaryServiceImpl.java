@@ -568,6 +568,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     int pageSize = size == null || size < 1 ? 20 : Math.min(size, 200);
     Page<Object> diaryPage = queryReviewableDiaryPage(currentUserId, periodId, pageNum, pageSize,
         Sort.by(Sort.Direction.ASC, "studentAccount"));
+    JSONObject summary = buildReviewSummary(internshipId, periodId, currentUserId, diaryPage.getTotalElements());
 
     JSONArray students = new JSONArray();
     for (Object obj : diaryPage.getContent()) {
@@ -586,6 +587,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
     JSONObject result = new JSONObject();
     result.put("total", diaryPage.getTotalElements());
+    result.putAll(summary);
     result.put("students", students);
     return result;
   }
@@ -614,6 +616,28 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     for (MainDiaryPeriod period : mainDiaryPeriodDao.findByIdInAndIsDeletedFalse(periodIds))
       result.put(period.getId(), period);
     return result;
+  }
+
+  @SuppressWarnings("unchecked")
+  private JSONObject buildReviewSummary(Integer internshipId, Integer periodId, Integer currentUserId,
+      long pendingReviewCount) {
+    List<JSONObject> rows = (List<JSONObject>) getPeriodStudents(internshipId, periodId, currentUserId);
+    long submittedCount = 0;
+    long notSubmittedCount = 0;
+    for (JSONObject row : rows) {
+      JSONObject diary = row.getJSONObject("diary");
+      if (diary != null && Boolean.TRUE.equals(diary.getBoolean("submit"))) {
+        submittedCount++;
+      } else {
+        notSubmittedCount++;
+      }
+    }
+
+    JSONObject summary = new JSONObject();
+    summary.put("submittedCount", submittedCount);
+    summary.put("notSubmittedCount", notSubmittedCount);
+    summary.put("pendingReviewCount", pendingReviewCount);
+    return summary;
   }
 
   private Integer getInternshipIdFromRelation(Integer relationId, String tableName) {

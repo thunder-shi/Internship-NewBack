@@ -69,7 +69,7 @@ public interface IDiaryService {
      * @param page         页码（1-based）
      * @param size         每页数量
      * @param currentUserId 当前登录校内导师 ID
-     * @return { total, students: [...] }
+     * @return { total, submittedCount, notSubmittedCount, pendingReviewCount, students: [...] }
      */
     JSONObject getReviewStudents(Integer internshipId, Integer periodId, Integer page, Integer size, Integer currentUserId);
 
