@@ -134,9 +134,6 @@ public class ShiroConfig {
         filterChainDefinitionMap.put("/sign/logout", "anon"); // 登出接口
         filterChainDefinitionMap.put("/common/getKey", "anon"); // 获取加密密钥（唯一允许匿名的公共接口）
         // SEC-03: /common/minio/** 等写操作接口需要认证，不可匿名访问
-        filterChainDefinitionMap.put("/hello", "anon");       // 测试接口
-        filterChainDefinitionMap.put("/swagger-ui/**", "anon");  // Swagger UI
-        filterChainDefinitionMap.put("/v3/api-docs/**", "anon"); // OpenAPI 文档
 
         // 其他路径需要认证
         filterChainDefinitionMap.put("/**", "authc");
@@ -155,4 +152,3 @@ public class ShiroConfig {
         return advisor;
     }
 }
-
