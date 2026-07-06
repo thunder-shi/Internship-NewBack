@@ -1,5 +1,6 @@
 package newcms.service.impl;
 
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
 import newcms.base.Base;
@@ -59,6 +60,9 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   private RelTeacherStudentDao relTeacherStudentDao;
 
   @Resource
+  private RelTitleStudentDao relTitleStudentDao;
+
+  @Resource
   private ViewRelTitleTeacherStudentDao viewRelTitleTeacherStudentDao;
 
   @Resource
@@ -72,9 +76,6 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
   @Resource
   private ViewBaseUserDao viewBaseUserDao;
-
-  @Resource
-  private newcms.service.IVerifyProcessService iVerifyProcessService;
 
   @Resource
   private IInternshipTerminationService internshipTerminationService;
@@ -119,9 +120,11 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           isSubmit ? Constant.VERIFY_LEVEL.ONE_VERIFY : Constant.VERIFY_LEVEL.NO_VERIFY);
       iCommonService.saveOneRecord("MainDiary", updateDiary);
 
-      // 从草稿变为提交时，创建审核记录（若无 SUBMIT 状态的记录）
-      if (isSubmit && wasDraft) {
-        ensureDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId);
+      if (isSubmit) {
+        // 提交时复用草稿审核占位，并按当前师生关系修正具体校内导师。
+        activateDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId, wasDraft);
+      } else if (wasDraft) {
+        ensureDraftDiaryVerifyProcess(diaryId, relationId, tableName);
       }
       return diaryId;
     }
@@ -140,77 +143,131 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     Integer diaryId = FastJsonUtil.toJson(savedDiary).getInteger("id");
 
     if (isSubmit) {
-      ensureDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId);
+      activateDiaryVerifyProcess(diaryId, relationId, tableName, currentUserId, true);
+    } else {
+      ensureDraftDiaryVerifyProcess(diaryId, relationId, tableName);
     }
     return diaryId;
   }
 
   /**
-   * 若没有 SUBMIT(0) 状态的审核记录，则新建第一级审核记录。
-   * 优先使用 MainDiary.verifyFirstRoleId 做角色匹配；角色未配置（0）时回落到具体分配的校内导师。
+   * 草稿阶段维护一条 SAVE(-1) 审核占位，审核人固定为该学生当前校内导师。
    */
-  private void ensureDiaryVerifyProcess(Integer diaryId, Integer relationId,
-      String tableName, Integer currentUserId) {
-    // 按 diaryId 加锁，防止并发提交同一期日志时重复创建审核行（CONC-06）
+  private void ensureDraftDiaryVerifyProcess(Integer diaryId, Integer relationId, String tableName) {
+    Integer teacherId = findSchoolTeacherId(relationId, tableName);
+    Integer studentId = resolveStudentId(relationId, tableName);
+    upsertDiaryVerifyProcess(diaryId, studentId, String.valueOf(teacherId), Constant.AUDIT_STATUS.SAVE);
+  }
+
+  /**
+   * 提交阶段复用 SAVE(-1) 占位审核行；若旧数据没有占位，则创建 SUBMIT(0) 审核行。
+   */
+  private void activateDiaryVerifyProcess(Integer diaryId, Integer relationId,
+      String tableName, Integer currentUserId, boolean createIfMissing) {
+    Integer teacherId = findSchoolTeacherId(relationId, tableName);
+    Integer createUserId = currentUserId != null ? currentUserId : resolveStudentId(relationId, tableName);
+    upsertDiaryVerifyProcess(diaryId, createUserId, String.valueOf(teacherId), Constant.AUDIT_STATUS.SUBMIT,
+        createIfMissing);
+  }
+
+  private void upsertDiaryVerifyProcess(Integer diaryId, Integer createUserId, String verifyUserId, Integer isAudit) {
+    upsertDiaryVerifyProcess(diaryId, createUserId, verifyUserId, isAudit, true);
+  }
+
+  private void upsertDiaryVerifyProcess(Integer diaryId, Integer createUserId, String verifyUserId, Integer isAudit,
+      boolean createIfMissing) {
     Object lock = DIARY_LOCKS.computeIfAbsent(diaryId, k -> new Object());
     synchronized (lock) {
+      List<MainVerifyProcess> existing = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(diaryId,
+          "MainDiary");
 
-    List<MainVerifyProcess> existing = mainVerifyProcessDao.findByRelationIdAndTableNameAndIsDeletedFalse(diaryId,
-        "MainDiary");
-    boolean hasPending = existing.stream()
-        .anyMatch(p -> p.getIsAudit() != null && p.getIsAudit() == Constant.AUDIT_STATUS.SUBMIT);
-    if (hasPending)
-      return;
+      MainVerifyProcess target;
+      if (Objects.equals(isAudit, Constant.AUDIT_STATUS.SAVE)) {
+        if (latestVerifyProcess(existing, Set.of(Constant.AUDIT_STATUS.SUBMIT)) != null)
+          return;
+        target = latestVerifyProcess(existing, Set.of(Constant.AUDIT_STATUS.SAVE));
+      } else {
+        MainVerifyProcess pending = latestVerifyProcess(existing, Set.of(Constant.AUDIT_STATUS.SUBMIT));
+        target = pending != null ? pending : latestVerifyProcess(existing, Set.of(Constant.AUDIT_STATUS.SAVE));
+      }
+      if (target == null && !createIfMissing)
+        return;
 
-    // 读取日志的第一级审核角色
-    JSONObject diaryJson = FastJsonUtil.toJson(iCommonService.getOneRecordById("MainDiary", diaryId));
-    Integer verifyFirstRoleId = diaryJson.getInteger("verifyFirstRoleId");
-
-    String verifyUserId;
-    if (verifyFirstRoleId != null && verifyFirstRoleId > 0) {
-      // 角色配置存在：按角色+学校范围查找所有可审核人
-      verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyFirstRoleId, currentUserId);
-    } else {
-      // 角色未配置：回落到具体分配的校内导师
-      Integer teacherId = findSchoolTeacherId(relationId, tableName);
-      verifyUserId = String.valueOf(teacherId);
+      JSONObject verifyJson = new JSONObject();
+      if (target != null)
+        verifyJson.put("id", target.getId());
+      verifyJson.put("relationId", diaryId);
+      verifyJson.put("createUserId", createUserId);
+      verifyJson.put("verifyUserId", verifyUserId);
+      verifyJson.put("isAudit", isAudit);
+      verifyJson.put("reason", target != null ? target.getReason() : "");
+      verifyJson.put("tableName", "MainDiary");
+      iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
     }
+  }
 
-    JSONObject verifyJson = new JSONObject();
-    verifyJson.put("relationId", diaryId);
-    verifyJson.put("createUserId", currentUserId);
-    verifyJson.put("verifyUserId", verifyUserId);
-    verifyJson.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
-    verifyJson.put("reason", "");
-    verifyJson.put("tableName", "MainDiary");
-    iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
-
-    } // end synchronized
+  private MainVerifyProcess latestVerifyProcess(List<MainVerifyProcess> records, Set<Integer> statuses) {
+    return records.stream()
+        .filter(r -> r.getIsAudit() != null && statuses.contains(r.getIsAudit()))
+        .max(Comparator.comparing(MainVerifyProcess::getId))
+        .orElse(null);
   }
 
   /**
    * 根据 relationId+tableName 查找负责审批该日志的校内导师 ID。
    */
   private Integer findSchoolTeacherId(Integer relationId, String tableName) {
+    return resolveSchoolTeacherId(relationId, tableName, true);
+  }
+
+  private Integer resolveSchoolTeacherId(Integer relationId, String tableName, boolean required) {
     if ("RelStuInternshipPost".equals(tableName)) {
       // RelTeacherStudent.relInternshipId 存的是 RelStuInternshipPost.id，即 relationId 本身
       List<RelTeacherStudent> teacherStudents = relTeacherStudentDao
           .findByRelInternshipIdAndIsDeletedFalse(relationId);
       Set<Integer> candidateIds = teacherStudents.stream()
           .map(RelTeacherStudent::getTeacherId).filter(Objects::nonNull).collect(Collectors.toSet());
+      if (candidateIds.isEmpty()) {
+        if (required)
+          throw BaseResponse.parameterInvalid.error("该学生尚未分配校内导师");
+        return null;
+      }
       return viewBaseUserDao.getByIdInAndIsDeletedFalse(candidateIds).stream()
           .filter(u -> Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(u.getJobCode()))
           .map(ViewBaseUser::getId)
           .findFirst()
-          .orElseThrow(() -> BaseResponse.parameterInvalid.error("该学生尚未分配校内导师"));
+          .orElseGet(() -> {
+            if (required)
+              throw BaseResponse.parameterInvalid.error("该学生尚未分配校内导师");
+            return null;
+          });
     } else {
       // RelTitleStudent（校内）
       List<ViewRelTitleTeacherStudent> records = viewRelTitleTeacherStudentDao
           .findByRelTitleStudentIdAndIsDeletedFalse(relationId);
-      if (records.isEmpty())
-        throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
-      return records.get(0).getTeacherId();
+      if (records.isEmpty()) {
+        if (required)
+          throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
+        return null;
+      }
+      Integer teacherId = records.get(0).getTeacherId();
+      if (teacherId == null && required)
+        throw BaseResponse.parameterInvalid.error("该学生尚未分配校内导师");
+      return teacherId;
     }
+  }
+
+  private Integer resolveStudentId(Integer relationId, String tableName) {
+    if ("RelStuInternshipPost".equals(tableName)) {
+      RelStuInternshipPost rel = relStuInternshipPostDao.getByIdAndIsDeletedFalse(relationId);
+      if (rel == null)
+        throw BaseResponse.parameterInvalid.error("学生实习岗位记录不存在");
+      return rel.getStudentId();
+    }
+    RelTitleStudent rel = relTitleStudentDao.getByIdAndIsDeletedFalse(relationId);
+    if (rel == null)
+      throw BaseResponse.parameterInvalid.error("学生题目关联记录不存在");
+    return rel.getStuId();
   }
 
   // ==================== 期次列表（学生视角） ====================
@@ -248,18 +305,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         item.put("diary", null);
       } else {
         ViewVerifyMainDiaryMerge merge = mergeMap.get(diary.getId());
-        if (merge != null) {
-          // 已提交，有审核记录，返回完整 merge 视图
-          item.put("diary", FastJsonUtil.toJson(merge));
-        } else {
-          // 草稿桩（submit=false），尚无审核记录，返回基础字段
-          JSONObject stub = new JSONObject();
-          stub.put("id", diary.getId());
-          stub.put("submit", diary.getSubmit());
-          stub.put("title", diary.getTitle());
-          stub.put("content", diary.getContent());
-          item.put("diary", stub);
-        }
+        item.put("diary", buildDiaryJson(diary, merge));
       }
       result.add(item);
     }
@@ -355,14 +401,14 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         List<MainDiary> diaries = mainDiaryDao
             .findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(
                 stuPostIds, "RelStuInternshipPost", periodId);
-        Map<Integer, Integer> stuPostIdToDiaryId = new HashMap<>();
+        Map<Integer, MainDiary> stuPostIdToDiary = new HashMap<>();
         for (MainDiary d : diaries) {
           if (d.getRelationId() != null)
-            stuPostIdToDiaryId.put(d.getRelationId(), d.getId());
+            stuPostIdToDiary.put(d.getRelationId(), d);
         }
 
         Map<Integer, ViewVerifyMainDiaryMerge> mergeMap = fetchMergeByDiaryIds(
-            new ArrayList<>(stuPostIdToDiaryId.values()));
+            stuPostIdToDiary.values().stream().map(MainDiary::getId).collect(Collectors.toList()));
 
         for (RelStuInternshipPost rsp : relStuPosts) {
           JSONObject item = new JSONObject();
@@ -383,7 +429,8 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           item.put("teacherName", teacher != null ? teacher.getNickName() : null);
           item.put("titleDescription", null);
 
-          Integer diaryId = stuPostIdToDiaryId.get(rsp.getId());
+          MainDiary diary = stuPostIdToDiary.get(rsp.getId());
+          Integer diaryId = diary != null ? diary.getId() : null;
           ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
           if (merge != null) {
             item.put("majorName", merge.getStudentMajorName());
@@ -392,7 +439,7 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
           } else {
             item.put("majorName", null);
           }
-          item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
+          item.put("diary", buildDiaryJson(diary, merge));
           result.add(item);
         }
       }
@@ -415,17 +462,17 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     List<MainDiary> diaries = mainDiaryDao
         .findByRelationIdInAndTableNameAndPeriodIdAndIsDeletedFalse(
             relTitleStudentIds, "RelTitleStudent", periodId);
-    Map<Integer, Integer> relTitleStudentIdToDiaryId = new HashMap<>();
+    Map<Integer, MainDiary> relTitleStudentIdToDiary = new HashMap<>();
     for (MainDiary d : diaries) {
       if (d.getRelationId() != null)
-        relTitleStudentIdToDiaryId.put(d.getRelationId(), d.getId());
+        relTitleStudentIdToDiary.put(d.getRelationId(), d);
     }
 
     Map<Integer, ViewVerifyMainDiaryMerge> mergeMap = fetchMergeByDiaryIds(
-        new ArrayList<>(relTitleStudentIdToDiaryId.values()));
+        relTitleStudentIdToDiary.values().stream().map(MainDiary::getId).collect(Collectors.toList()));
 
     Set<Integer> stuIdsWithoutDiary = titleStudents.stream()
-        .filter(t -> !relTitleStudentIdToDiaryId.containsKey(t.getRelTitleStudentId()))
+        .filter(t -> !relTitleStudentIdToDiary.containsKey(t.getRelTitleStudentId()))
         .map(ViewRelTitleTeacherStudent::getStuId)
         .filter(Objects::nonNull)
         .collect(Collectors.toSet());
@@ -443,7 +490,8 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       item.put("teacherName", rts.getTeacherName());
       item.put("companyName", null);
 
-      Integer diaryId = relTitleStudentIdToDiaryId.get(rts.getRelTitleStudentId());
+      MainDiary diary = relTitleStudentIdToDiary.get(rts.getRelTitleStudentId());
+      Integer diaryId = diary != null ? diary.getId() : null;
       ViewVerifyMainDiaryMerge merge = diaryId != null ? mergeMap.get(diaryId) : null;
       if (merge != null) {
         item.put("majorName", merge.getStudentMajorName());
@@ -454,13 +502,143 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
         item.put("className", bu != null ? bu.getDepartmentName() : null);
       }
       item.put("postDescription", null);
-      item.put("diary", merge != null ? FastJsonUtil.toJson(merge) : null);
+      item.put("diary", buildDiaryJson(diary, merge));
       result.add(item);
     }
     return result;
   }
 
+  @Override
+  public JSONObject getReviewOptions(Integer currentUserId) {
+    Page<Object> page = queryReviewableDiaryPage(currentUserId, null, 1, LARGE_PAGE_SIZE,
+        Sort.by(Sort.Direction.ASC, "periodId"));
+    List<JSONObject> rows = page.getContent().stream()
+        .map(FastJsonUtil::toJson)
+        .collect(Collectors.toList());
+
+    Set<Integer> periodIds = rows.stream()
+        .map(j -> j.getInteger("periodId"))
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+    Map<Integer, MainDiaryPeriod> periodMap = loadPeriodMap(periodIds);
+
+    Map<Integer, JSONObject> internshipMap = new LinkedHashMap<>();
+    Map<Integer, Set<Integer>> internshipPeriodIds = new HashMap<>();
+    for (JSONObject row : rows) {
+      Integer periodId = row.getInteger("periodId");
+      MainDiaryPeriod period = periodId != null ? periodMap.get(periodId) : null;
+      if (period == null || period.getInternshipId() == null)
+        continue;
+      Integer internshipId = period.getInternshipId();
+      JSONObject internship = internshipMap.computeIfAbsent(internshipId, id -> {
+        JSONObject obj = new JSONObject();
+        obj.put("internshipId", id);
+        obj.put("internshipName", row.getString("internshipName"));
+        obj.put("periods", new JSONArray());
+        return obj;
+      });
+      Set<Integer> seenPeriods = internshipPeriodIds.computeIfAbsent(internshipId, id -> new HashSet<>());
+      if (seenPeriods.add(period.getId())) {
+        JSONObject periodJson = new JSONObject();
+        periodJson.put("periodId", period.getId());
+        periodJson.put("periodIndex", period.getPeriodIndex());
+        periodJson.put("beginTime", period.getBeginTime());
+        periodJson.put("endTime", period.getEndTime());
+        internship.getJSONArray("periods").add(periodJson);
+      }
+    }
+
+    JSONArray internships = new JSONArray();
+    internshipMap.values().forEach(internships::add);
+    JSONObject result = new JSONObject();
+    result.put("internships", internships);
+    return result;
+  }
+
+  @Override
+  public JSONObject getReviewStudents(Integer internshipId, Integer periodId, Integer page, Integer size,
+      Integer currentUserId) {
+    MainDiaryPeriod period = mainDiaryPeriodDao.getByIdAndIsDeletedFalse(periodId);
+    if (period == null)
+      throw BaseResponse.parameterInvalid.error("期次不存在");
+    if (!Objects.equals(period.getInternshipId(), internshipId))
+      throw BaseResponse.parameterInvalid.error("periodId 不属于指定 internshipId");
+
+    int pageNum = page == null || page < 1 ? 1 : page;
+    int pageSize = size == null || size < 1 ? 20 : Math.min(size, 200);
+    Page<Object> diaryPage = queryReviewableDiaryPage(currentUserId, periodId, pageNum, pageSize,
+        Sort.by(Sort.Direction.ASC, "studentAccount"));
+    JSONObject summary = buildReviewSummary(internshipId, periodId, currentUserId, diaryPage.getTotalElements());
+
+    JSONArray students = new JSONArray();
+    for (Object obj : diaryPage.getContent()) {
+      JSONObject row = FastJsonUtil.toJson(obj);
+      JSONObject item = new JSONObject();
+      item.put("studentId", row.getInteger("studentId"));
+      item.put("studentName", row.getString("studentName"));
+      item.put("studentAccount", row.getString("studentAccount"));
+      item.put("internshipId", internshipId);
+      item.put("periodId", periodId);
+      item.put("internshipPostName", row.getString("internshipPostName"));
+      item.put("titleName", row.getString("titleName"));
+      item.put("diary", normalizeDiaryJson(row));
+      students.add(item);
+    }
+
+    JSONObject result = new JSONObject();
+    result.put("total", diaryPage.getTotalElements());
+    result.putAll(summary);
+    result.put("students", students);
+    return result;
+  }
+
   // ==================== 工具方法 ====================
+
+  @SuppressWarnings("unchecked")
+  private Page<Object> queryReviewableDiaryPage(Integer currentUserId, Integer periodId, Integer page, Integer size,
+      Sort sort) {
+    JSONObject searchKeys = new JSONObject();
+    searchKeys.put("verifyUserId", String.valueOf(currentUserId));
+    searchKeys.put("isAudit", Constant.AUDIT_STATUS.SUBMIT);
+    searchKeys.put("submit", Boolean.TRUE);
+    if (periodId != null)
+      searchKeys.put("periodId", periodId);
+    Map<String, String> regMap = new HashMap<>();
+    regMap.put("verifyUserId", Constant.FIND_IN);
+    return (Page<Object>) iCommonService.getSomeRecords(
+        "ViewVerifyMainDiaryMerge", searchKeys, regMap, sort, page, size);
+  }
+
+  private Map<Integer, MainDiaryPeriod> loadPeriodMap(Set<Integer> periodIds) {
+    if (periodIds.isEmpty())
+      return Collections.emptyMap();
+    Map<Integer, MainDiaryPeriod> result = new HashMap<>();
+    for (MainDiaryPeriod period : mainDiaryPeriodDao.findByIdInAndIsDeletedFalse(periodIds))
+      result.put(period.getId(), period);
+    return result;
+  }
+
+  @SuppressWarnings("unchecked")
+  private JSONObject buildReviewSummary(Integer internshipId, Integer periodId, Integer currentUserId,
+      long pendingReviewCount) {
+    List<JSONObject> rows = (List<JSONObject>) getPeriodStudents(internshipId, periodId, currentUserId);
+    long submittedCount = 0;
+    long notSubmittedCount = 0;
+    for (JSONObject row : rows) {
+      JSONObject diary = row.getJSONObject("diary");
+      if (diary != null && Boolean.TRUE.equals(diary.getBoolean("submit"))) {
+        submittedCount++;
+      } else {
+        notSubmittedCount++;
+      }
+    }
+
+    JSONObject summary = new JSONObject();
+    summary.put("submittedCount", submittedCount);
+    summary.put("notSubmittedCount", notSubmittedCount);
+    summary.put("pendingReviewCount", pendingReviewCount);
+    return summary;
+  }
 
   private Integer getInternshipIdFromRelation(Integer relationId, String tableName) {
     if ("RelStuInternshipPost".equals(tableName)) {
@@ -498,6 +676,39 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     for (ViewVerifyMainDiaryMerge m : merges)
       result.put(m.getRelationId(), m);
     return result;
+  }
+
+  private JSONObject buildDiaryJson(MainDiary diary, ViewVerifyMainDiaryMerge merge) {
+    if (merge != null)
+      return normalizeDiaryJson(FastJsonUtil.toJson(merge));
+    if (diary == null)
+      return null;
+    JSONObject stub = new JSONObject();
+    stub.put("id", diary.getId());
+    stub.put("diaryId", diary.getId());
+    stub.put("verifyProcessId", null);
+    stub.put("relationId", diary.getId());
+    stub.put("diaryRelationId", diary.getRelationId());
+    stub.put("diaryTableName", diary.getTableName());
+    stub.put("periodId", diary.getPeriodId());
+    stub.put("submit", diary.getSubmit());
+    stub.put("title", diary.getTitle());
+    stub.put("content", diary.getContent());
+    stub.put("verifyTypeId", diary.getVerifyTypeId());
+    stub.put("currentVerifyTypeId", diary.getCurrentVerifyTypeId());
+    stub.put("isAudit", null);
+    stub.put("isAllVerified", false);
+    return stub;
+  }
+
+  private JSONObject normalizeDiaryJson(JSONObject diary) {
+    if (diary == null)
+      return null;
+    Integer diaryId = diary.getInteger("relationId");
+    diary.put("diaryId", diaryId);
+    diary.put("verifyProcessId", diary.getInteger("id"));
+    diary.put("relationId", diaryId);
+    return diary;
   }
 
   // ==================== 期次生成 ====================
@@ -695,6 +906,12 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
 
   /** 为指定学生关联的所有期次幂等创建 submit=false 的日志桩 */
   private void createDiaryStubs(Integer relationId, String tableName, Integer internshipId) {
+    Integer schoolTeacherId = resolveSchoolTeacherId(relationId, tableName, false);
+    if (schoolTeacherId == null) {
+      logger.warn("日志占位创建跳过：relationId={}, tableName={} 尚未分配校内导师", relationId, tableName);
+      return;
+    }
+    Integer studentId = resolveStudentId(relationId, tableName);
     List<MainDiaryPeriod> periods = mainDiaryPeriodDao
         .findByInternshipIdAndIsDeletedFalseOrderByPeriodIndexAsc(internshipId);
     if (periods.isEmpty())
@@ -703,8 +920,14 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       Optional<MainDiary> existing = mainDiaryDao
           .findByRelationIdAndTableNameAndPeriodIdAndIsDeletedFalse(
               relationId, tableName, period.getId());
-      if (existing.isPresent())
+      if (existing.isPresent()) {
+        MainDiary diary = existing.get();
+        if (!Boolean.TRUE.equals(diary.getSubmit())) {
+          upsertDiaryVerifyProcess(diary.getId(), studentId, String.valueOf(schoolTeacherId),
+              Constant.AUDIT_STATUS.SAVE);
+        }
         continue;
+      }
       JSONObject diaryJson = new JSONObject();
       diaryJson.put("relationId", relationId);
       diaryJson.put("tableName", tableName);
@@ -713,7 +936,9 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
       diaryJson.put("submit", false);
       diaryJson.put("verifyTypeId", Constant.VERIFY_LEVEL.ONE_VERIFY);
       diaryJson.put("currentVerifyTypeId", Constant.VERIFY_LEVEL.NO_VERIFY);
-      iCommonService.saveOneRecord("MainDiary", diaryJson);
+      Object savedDiary = iCommonService.saveOneRecord("MainDiary", diaryJson);
+      Integer diaryId = FastJsonUtil.toJson(savedDiary).getInteger("id");
+      upsertDiaryVerifyProcess(diaryId, studentId, String.valueOf(schoolTeacherId), Constant.AUDIT_STATUS.SAVE);
     }
   }
 

@@ -174,6 +174,30 @@ public class DiaryController {
         return BaseResponse.ok(iDiaryService.getPeriodStudents(internshipId, periodId, userId));
     }
 
+    @Operation(summary = "当前校内导师可批阅日志的项目和期次",
+            description = "按当前登录用户过滤 MainDiary 待审核记录，返回可批阅的实习项目及期次。")
+    @PostMapping(value = "/review/options", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getReviewOptions(@RequestBody(required = false) JSONObject requestJson) {
+        LogUtil.loggerRecord("getReviewOptions", requestJson);
+        return BaseResponse.ok(iDiaryService.getReviewOptions(Base.getLoginUserId()));
+    }
+
+    @Operation(summary = "当前校内导师指定项目期次下的可批阅学生日志",
+            description = "按当前登录用户、internshipId、periodId 返回待审核学生日志列表。")
+    @PostMapping(value = "/review/students", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getReviewStudents(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getReviewStudents", requestJson);
+        JSONObject node = requestJson.getJSONObject("node");
+        if (node == null) throw BaseResponse.parameterInvalid.error("node 不能为空");
+        Integer internshipId = node.getInteger("internshipId");
+        Integer periodId = node.getInteger("periodId");
+        Integer page = node.getInteger("page");
+        Integer size = node.getInteger("size");
+        if (internshipId == null) throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
+        if (periodId == null) throw BaseResponse.parameterInvalid.error("periodId 不能为空");
+        return BaseResponse.ok(iDiaryService.getReviewStudents(internshipId, periodId, page, size, Base.getLoginUserId()));
+    }
+
     @Operation(summary = "AI 批改实习日志（Coze 工作流）",
             description = "对已提交日志的 pdf/docx 附件调用 Coze 工作流（入参 file，出参 score/output）。"
                     + "结果写入 aiReviewScore、aiReviewComment。")
