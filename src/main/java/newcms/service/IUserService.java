@@ -34,8 +34,8 @@ public interface IUserService {
 
     /**
      * 修改/重置/新增密码（请求体含 userId、oldPassword、password、reset）
-     * @param reset true 时按用户姓名自动生成重置密码，忽略 oldPassword 与 password，不做弱密码校验
-     * reset=false 且 oldPassword 为空时表示新增，不校验原密码与弱密码；password 为空时按姓名自动生成
+     * @param reset true 时按学工号自动生成重置密码（SLSDsx# + 学工号后四位），忽略 oldPassword 与 password，不做弱密码校验
+     * reset=false 且 oldPassword 为空时表示新增，不校验原密码与弱密码；password 为空时按学工号自动生成
      */
     void editPassword(String userId, String oldPassword, String password, boolean reset);
 

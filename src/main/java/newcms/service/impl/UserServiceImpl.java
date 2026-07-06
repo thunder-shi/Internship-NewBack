@@ -335,9 +335,9 @@ public Object getLoginUser(Date date, String userAgent) {
     }
     /**
      * 修改/重置/新增密码。调用方传 userId、oldPassword、password、reset。
-     * reset=true：按用户姓名自动生成新密码，忽略 oldPassword 与 password，不做弱密码校验；
+     * reset=true：按学工号自动生成新密码（SLSDsx# + 学工号后四位），忽略 oldPassword 与 password，不做弱密码校验；
      * reset=false 且 oldPassword 有值：修改密码，校验原密码与弱密码，且仅能改当前登录用户；
-     * reset=false 且 oldPassword 为空：新增密码，不校验原密码与弱密码；password 为空时按姓名自动生成（同重置逻辑）。
+     * reset=false 且 oldPassword 为空：新增密码，不校验原密码与弱密码；password 为空时按学工号自动生成（同重置逻辑）。
      */
     @Override
     public void editPassword(String userId, String oldPassword, String password, boolean reset) {
@@ -349,11 +349,11 @@ public Object getLoginUser(Date date, String userAgent) {
                 .orElseThrow(() -> BaseResponse.moreInfoError.error("用户不存在"));
         String newPassword;
         if (reset) {
-            newPassword = buildPasswordFromUserName(user);
+            newPassword = buildInitialPassword(user);
         } else {
             boolean isAppend = !StringUtils.hasText(oldPassword);
             if (isAppend && !StringUtils.hasText(password)) {
-                newPassword = buildPasswordFromUserName(user);
+                newPassword = buildInitialPassword(user);
             } else {
                 if (!StringUtils.hasText(password)) {
                     throw BaseResponse.moreInfoError.error("新密码不能为空");
@@ -378,9 +378,9 @@ public Object getLoginUser(Date date, String userAgent) {
         iCommonService.saveOneRecord("BaseUser", obj);
     }
 
-    private String buildPasswordFromUserName(BaseUser user) {
+    private String buildInitialPassword(BaseUser user) {
         try {
-            return EncodeUtil.buildResetPasswordFromName(user.getName());
+            return EncodeUtil.buildInitialPasswordFromWorkId(user.getWorkId());
         } catch (IllegalArgumentException e) {
             throw BaseResponse.moreInfoError.error(e.getMessage());
         }

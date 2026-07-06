@@ -151,13 +151,6 @@
             <version>5.8.35</version>
         </dependency>
 
-        <!-- 中文姓名转拼音首字母（Hutool Pinyin4jEngine） -->
-        <dependency>
-            <groupId>com.belerweb</groupId>
-            <artifactId>pinyin4j</artifactId>
-            <version>2.5.1</version>
-        </dependency>
-
         <!-- Bean Validation provider -->
         <dependency>
             <groupId>org.hibernate.validator</groupId>

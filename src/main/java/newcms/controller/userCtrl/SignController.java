@@ -65,7 +65,7 @@ public class SignController extends CommonController {
         return BaseResponse.ok(iUserService.editUserInfo(requestJson, userId));
     }
 
-    /** 固定接收 userId、oldPassword、password、reset；reset=true 按姓名重置；reset=false 且 oldPassword 为空时为新增，password 可省略并自动按姓名生成 */
+    /** 固定接收 userId、oldPassword、password、reset；reset=true 按学工号重置；reset=false 且 oldPassword 为空时为新增，password 可省略并自动按学工号生成 */
     @PostMapping(value = "editPassword", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object editPassword(@RequestBody JSONObject requestJson) {
         String userId = requestJson.getString("userId");

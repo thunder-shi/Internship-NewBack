@@ -501,7 +501,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号", "专业代码*", "入学年份", "毕业年份", "学制（年）", "角色*");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号*", "专业代码*", "入学年份", "毕业年份", "学制（年）", "角色*");
                 row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
                 dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
@@ -696,7 +696,11 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (account.isEmpty()) {
                     throw importRowError(i + 1, "账号不能为空");
                 }
+                if (workId.isEmpty()) {
+                    throw importRowError(i + 1, "工号不能为空");
+                }
                 String normalizedAccount = account.trim();
+                String normalizedWorkId = workId.trim();
                 if (importedAccounts.contains(normalizedAccount)) {
                     throw importRowError(i + 1, "账号 " + normalizedAccount + " 在导入文件中重复");
                 }
@@ -715,7 +719,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (!phone.isEmpty()) data.put("phone", phone);
                 if (!email.isEmpty()) data.put("email", email);
                 data.put("account", normalizedAccount);
-                // 密码在获取 userId 后按姓名自动生成（同重置密码逻辑）
+                // 密码在获取 userId 后按学工号自动生成（SLSDsx# + 学工号后四位）
                 if (!idCard.isEmpty()) data.put("idCard", idCard);
                 // 处理出生日期
                 if (!birthStr.isEmpty()) {
@@ -728,7 +732,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (!address.isEmpty()) data.put("address", address);
                 if (!postalCode.isEmpty()) data.put("postalCode", postalCode);
                 if (!nickName.isEmpty()) data.put("nickName", nickName);
-                if (!workId.isEmpty()) data.put("workId", workId);
+                data.put("workId", normalizedWorkId);
                 
                 // 通过部门编码查找部门ID（必填）
                 Integer departmentId = null;
@@ -821,7 +825,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 // 如果成功获取到userId，则加密密码并更新
                 if (userId != null) {
                     try {
-                        String rawPassword = EncodeUtil.buildResetPasswordFromName(name);
+                        String rawPassword = EncodeUtil.buildInitialPasswordFromWorkId(normalizedWorkId);
                         String encryptedPassword = EncodeUtil.pwdShiro(rawPassword, userId);
                         JSONObject updateData = new JSONObject();
                         updateData.put("id", userId);

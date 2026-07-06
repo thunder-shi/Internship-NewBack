@@ -1,18 +1,16 @@
 package newcms.utils;
 
-import cn.hutool.extra.pinyin.engine.pinyin4j.Pinyin4jEngine;
 import org.apache.shiro.crypto.hash.SimpleHash;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 
 /**
  * @author hongzhangming
  */
 public class EncodeUtil {
-    private static final String RESET_PASSWORD_SUFFIX = "@000000";
+    private static final String INITIAL_PASSWORD_PREFIX = "SLSDsx#";
     private static final int MIN_PASSWORD_LENGTH = 8;
-    private static final Pinyin4jEngine PINYIN_ENGINE = new Pinyin4jEngine();
+
     /**
      * shiro 加密方式
      * @param source password
@@ -54,27 +52,19 @@ public class EncodeUtil {
     }
 
     /**
-     * 根据用户姓名生成重置密码：中文取拼音首字母小写，英文取小写，拼接 @000000。
+     * 根据学工号生成初始/重置密码：SLSDsx# + 学工号后四位（不足四位左补 0）。
      */
-    public static String buildResetPasswordFromName(String name) {
-        if (name == null || name.trim().isEmpty()) {
-            throw new IllegalArgumentException("用户姓名为空，无法生成重置密码");
+    public static String buildInitialPasswordFromWorkId(String workId) {
+        if (workId == null || workId.trim().isEmpty()) {
+            throw new IllegalArgumentException("学工号为空，无法生成初始密码");
         }
-        StringBuilder prefix = new StringBuilder();
-        for (int i = 0; i < name.length(); i++) {
-            char c = name.charAt(i);
-            if (Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN) {
-                String letter = PINYIN_ENGINE.getFirstLetter(String.valueOf(c), "");
-                if (letter != null && !letter.isEmpty()) {
-                    prefix.append(letter.toLowerCase(Locale.ROOT));
-                }
-            } else if (Character.isLetter(c)) {
-                prefix.append(Character.toLowerCase(c));
-            }
+        String normalized = workId.trim();
+        String lastFour;
+        if (normalized.length() >= 4) {
+            lastFour = normalized.substring(normalized.length() - 4);
+        } else {
+            lastFour = String.format("%4s", normalized).replace(' ', '0');
         }
-        if (prefix.length() == 0) {
-            throw new IllegalArgumentException("用户姓名无法转换为有效密码前缀");
-        }
-        return prefix + RESET_PASSWORD_SUFFIX;
+        return INITIAL_PASSWORD_PREFIX + lastFour;
     }
 }
