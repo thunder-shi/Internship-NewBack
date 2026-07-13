@@ -14,7 +14,9 @@ import org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSource
 import org.apache.shiro.spring.web.ShiroFilterFactoryBean;
 import org.apache.shiro.subject.PrincipalCollection;
 import org.apache.shiro.web.filter.authc.FormAuthenticationFilter;
+import org.apache.shiro.web.mgt.CookieRememberMeManager;
 import org.apache.shiro.web.mgt.DefaultWebSecurityManager;
+import org.apache.shiro.web.servlet.SimpleCookie;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -44,19 +46,19 @@ public class ShiroConfig {
                 String userId = upToken.getUsername();
                 String password = new String(upToken.getPassword());
 
-                // 根据 userId 查询用户
+                // 根据 userId 查询用户（异常文案对外统一，避免枚举）
                 BaseUser user = baseUserDao.findById(Integer.parseInt(userId))
-                        .orElseThrow(() -> new UnknownAccountException("用户不存在"));
+                        .orElseThrow(() -> new UnknownAccountException("用户名或密码错误"));
 
                 // 检查用户是否被删除
                 if (user.getIsDeleted() != null && user.getIsDeleted()) {
-                    throw new DisabledAccountException("用户已被删除");
+                    throw new DisabledAccountException("用户已被禁用");
                 }
 
                 // 手动验证密码（因为我们的加密逻辑已经在 EncodeUtil 中处理）
                 String encryptedPassword = EncodeUtil.pwdShiro(password, userId);
                 if (!encryptedPassword.equals(user.getPassword())) {
-                    throw new IncorrectCredentialsException("密码错误");
+                    throw new IncorrectCredentialsException("用户名或密码错误");
                 }
 
                 // 返回认证信息
@@ -85,12 +87,27 @@ public class ShiroConfig {
     }
 
     /**
+     * RememberMe：改掉默认 cookie 名 rememberMe，消除 Shiro 指纹（rememberMe=deleteMe）
+     */
+    @Bean
+    public CookieRememberMeManager rememberMeManager() {
+        CookieRememberMeManager rememberMeManager = new CookieRememberMeManager();
+        SimpleCookie cookie = new SimpleCookie("cms_rm");
+        cookie.setHttpOnly(true);
+        cookie.setPath("/");
+        cookie.setMaxAge(7 * 24 * 60 * 60);
+        rememberMeManager.setCookie(cookie);
+        return rememberMeManager;
+    }
+
+    /**
      * SecurityManager
      */
     @Bean
     public DefaultWebSecurityManager securityManager() {
         DefaultWebSecurityManager securityManager = new DefaultWebSecurityManager();
         securityManager.setRealm(shiroRealm());
+        securityManager.setRememberMeManager(rememberMeManager());
         return securityManager;
     }
 

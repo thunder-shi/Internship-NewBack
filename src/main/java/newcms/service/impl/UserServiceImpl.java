@@ -324,10 +324,9 @@ public Object getLoginUser(Date date, String userAgent) {
                 }
             }
             SecurityUtils.getSubject().login(new UsernamePasswordToken(userInfo.get(0).getId().toString(), password, rememberMe));
-        } catch (UnknownAccountException e) {
-            throw BaseResponse.moreInfoError.error("用户不存在");
-        } catch (IncorrectCredentialsException e) {
-            throw BaseResponse.moreInfoError.error("密码错误！");
+        } catch (UnknownAccountException | IncorrectCredentialsException e) {
+            // 统一文案，避免用户名枚举（存在用户→密码错误 / 不存在→用户不存在）
+            throw BaseResponse.moreInfoError.error("用户名或密码错误");
         } catch (Exception e) {
             LogUtil.error(logger, e);
             throw BaseResponse.notCaptured.error();
