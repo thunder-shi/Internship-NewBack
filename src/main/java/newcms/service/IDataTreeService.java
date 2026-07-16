@@ -38,6 +38,14 @@ public interface IDataTreeService {
     List<Integer> getAllChildIndex(String tblName, Integer nodeId);
 
     /**
+     * 判断部门节点及其所有未删除后代部门下是否存在未删除用户。
+     *
+     * @param departmentId 部门节点 id
+     * @return { hasUsers, userCount, departmentCount }
+     */
+    Object hasUndeletedUsersInDepartmentSubtree(Integer departmentId);
+
+    /**
      * 树结构关联查询列表结构
      *
      * @param treeInfo   树结构表名

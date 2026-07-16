@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -617,6 +618,9 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         String treeTblName = FastJsonUtil.toJson(treeInfo).getString("treeKeyWords");
         int treeNodeId = FastJsonUtil.toJson(treeInfo).getInteger("treeNodeId");
         Object nodeInfo = iCommonService.getOneRecordById(treeTblName, treeNodeId);
+        if (nodeInfo == null) {
+            throw BaseResponse.parameterInvalid.error("节点不存在或已删除,请刷新浏览器重试");
+        }
         getChildren(FastJsonUtil.toJson(nodeInfo), treeTblName, treeNodeIds);
         return treeNodeIds;
     }
@@ -700,6 +704,40 @@ public class DataTreeServiceImpl extends Base implements IDataTreeService {
         List<Integer> nodeIds = new ArrayList<>();
         getAllChildIdsRecursive(nodeId, tblName, nodeIds);
         return nodeIds;
+    }
+
+    @Override
+    public Object hasUndeletedUsersInDepartmentSubtree(Integer departmentId) {
+        if (departmentId == null || departmentId <= 0) {
+            throw BaseResponse.parameterInvalid.error("departmentId 不能为空");
+        }
+        List<Integer> departmentIds = getAllChildIndex(Constant.DEPARTMENT_INFO, departmentId);
+        if (departmentIds.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("节点不存在或已删除");
+        }
+
+        JSONObject searchKeys = new JSONObject();
+        Map<String, String> regMap = new HashMap<>();
+        if (departmentIds.size() == 1) {
+            searchKeys.put("departmentId", departmentIds.get(0));
+        } else {
+            String idStr = departmentIds.stream()
+                    .map(String::valueOf)
+                    .collect(Collectors.joining(Constant.SPLIT_OPERATOR.COMMA));
+            searchKeys.put("departmentId", idStr);
+            regMap.put("departmentId", Constant.IN);
+        }
+
+        @SuppressWarnings("unchecked")
+        Page<Object> userPage = (Page<Object>) iCommonService.getSomeRecords(
+                Constant.USER_INFO, searchKeys, regMap, Sort.unsorted(), 1, 1);
+        long userCount = userPage == null ? 0L : userPage.getTotalElements();
+
+        JSONObject result = new JSONObject();
+        result.put("hasUsers", userCount > 0);
+        result.put("userCount", userCount);
+        result.put("departmentCount", departmentIds.size());
+        return result;
     }
 
 }
