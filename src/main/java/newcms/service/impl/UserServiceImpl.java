@@ -6,6 +6,7 @@ import newcms.base.Base;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.*;
+import newcms.repository.db.BaseJobPositionDao;
 import newcms.repository.db.BaseUserDao;
 import newcms.repository.db.RelUserRoleDao;
 import newcms.repository.db.BaseInternshipTypeDao;
@@ -58,6 +59,8 @@ public class UserServiceImpl extends Base implements IUserService {
     private RelIntershipUserDao relIntershipUserDao;
     @Resource
     private BaseInternshipTypeDao baseInternshipTypeDao;
+    @Resource
+    private BaseJobPositionDao baseJobPositionDao;
 
     private static Pattern pattern = Pattern.compile("-?[0-9]+(\\\\.[0-9]+)?");
 
@@ -720,21 +723,35 @@ public Object getLoginUser(Date date, String userAgent) {
             // 必须在本事务提交后再刷新：refreshPendingVerifyUsersByUser 使用 REQUIRES_NEW 新事务，
             // 若在提交前调用，新事务读不到当前事务未提交的 RelUserRole 记录，导致新角色不生效。
             Integer userIdInt = Integer.valueOf(userId);
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    try {
-                        iVerifyProcessService.refreshPendingVerifyUsersByUser(userIdInt);
-                    } catch (Exception e) {
-                        logger.warn("刷新待审核记录失败，不影响角色保存: {}", e.getMessage());
+            if (!(oldRoleIdSet.isEmpty() && isStudentIdentity(userIdInt))) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            iVerifyProcessService.refreshPendingVerifyUsersByUser(userIdInt);
+                        } catch (Exception e) {
+                            logger.warn("刷新待审核记录失败，不影响角色保存: {}", e.getMessage());
+                        }
                     }
-                }
-            });
+                });
+            }
 
             return res;
         } else {
             return null;
         }
+    }
+
+    private boolean isStudentIdentity(Integer userId) {
+        if (userId == null) {
+            return false;
+        }
+        BaseUser user = tblUserInfoDao.getByIdAndIsDeletedFalse(userId);
+        if (user == null || user.getJobId() == null) {
+            return false;
+        }
+        BaseJobPosition jobPosition = baseJobPositionDao.getByIdAndIsDeletedFalse(user.getJobId());
+        return jobPosition != null && Constant.USER_JOB_CODE.STUDENT.equals(jobPosition.getCode());
     }
 
 

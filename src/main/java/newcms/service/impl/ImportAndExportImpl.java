@@ -52,6 +52,8 @@ import java.util.*;
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class ImportAndExportImpl extends Base implements IImportAndExportService {
+    private static final String DEFAULT_THEME_COLOR = "#1890ff";
+
     @Resource
     private ApplicationContext applicationContext;
     @Resource
@@ -501,10 +503,10 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 break;
             case "BaseUser":
                 //表头
-                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号*", "专业代码*", "入学年份", "毕业年份", "学制（年）", "角色*");
-                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                row2 = CollUtil.newArrayList("姓名*", "性别", "联系电话", "邮箱", "账号*", "密码", "身份证号", "出生日期", "地址", "邮政编码", "昵称", "部门编码*", "身份类别*", "工号*", "专业代码*", "入学年份", "毕业年份", "学制（年）", "角色*", "主题颜色");
+                row3 = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 rowsData = CollUtil.newArrayList(row2, row3);
-                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+                dataRow = CollUtil.newArrayList("", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 break;
         }
         //给除表头外 50行单元格非必填项设置默认值（空字符串）
@@ -678,6 +680,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 String endYearStr = getCellStringValue(row.getCell(16));
                 String schoolLengthStr = getCellStringValue(row.getCell(17));
                 String rolesStr = getCellStringValue(row.getCell(18));
+                String themeColor = getCellStringValue(row.getCell(19));
                 
                 // 跳过空行（姓名为空则跳过）
                 if (name.isEmpty()) continue;
@@ -733,6 +736,7 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
                 if (!postalCode.isEmpty()) data.put("postalCode", postalCode);
                 if (!nickName.isEmpty()) data.put("nickName", nickName);
                 data.put("workId", normalizedWorkId);
+                data.put("themeColor", themeColor.isEmpty() ? DEFAULT_THEME_COLOR : themeColor);
                 
                 // 通过部门编码查找部门ID（必填）
                 Integer departmentId = null;
@@ -892,7 +896,6 @@ public class ImportAndExportImpl extends Base implements IImportAndExportService
         return ex;
     }
 }
-
 
 
 
