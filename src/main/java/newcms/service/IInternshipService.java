@@ -219,16 +219,18 @@ public interface IInternshipService {
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
 
     /**
-     * 指定校外实习项目：学生选岗情况（当前统计口径部门子树内已报名学生）。
+     * 指定校外实习项目：学生选岗情况（视图 view_external_internship_student_post_breakdown；部门权限仍在服务端过滤）。
      * <p>权限规则同 {@link #listExternalInternshipCollegeStats(Integer, Integer, Integer)}。</p>
      *
-     * @param status {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}
+     * @param status {@code all}、{@code notSelected}（未报名）、{@code selected}（已报名=有任意选岗记录）、
+     *               {@code selectedPendingAudit}、{@code postApproved}；{@code counts} 始终含上述细分与 {@code selected}
      */
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                      Integer departmentId);
 
     /**
-     * 校外实习：对未选岗学生随机分配审核通过且有空位的企业岗位（复用 {@code stuSelPost} 选岗逻辑）。
+     * 校外实习系统分配：将实习项目安排中尚未选岗的学生，随机报名到审核通过且有空位的企业岗位（复用 {@code stuSelPost}）。
+     * <p>学生口径与 {@link #getExternalInternshipStudentPostBreakdown} 的 {@code notSelected} 一致。</p>
      */
     Object randomAssignPostsForUnselectedStudents(Integer internshipId);
 }

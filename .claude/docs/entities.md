@@ -124,6 +124,7 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | ViewVerifyMainSign                         | view_verify_main_sign                             | 打卡审核（含 studentAccount）                                                       |
 | ViewVerifyMainSignMerge                    | view_verify_main_sign_merge                       | 打卡审核综合（最新记录，含 isAllVerified，含 studentAccount）                       |
 | ViewExternalInternshipCollegeStats         | view_external_internship_college_stats            | 校外实习学院汇总统计                                                                |
+| ViewExternalInternshipStudentPostBreakdown | view_external_internship_student_post_breakdown   | 校外实习入项学生选岗明细（一人一行，含 selectionStatus）                              |
 | ViewExternalInternshipCollegeStatsId       | view_external_internship_college_stats_id         | 校外实习学院统计辅助（ID列）                                                        |
 | ViewLeaveUniversalDetails                  | view_leave_universal_details                      | 请假业务全量视图（抹平校内/校外差异，含 studentAccount、internshipMode、relationTable） |
 | ViewLeaveAuditFlow                         | view_leave_audit_flow                             | 请假审核流向视图（MainVerifyProcess + BaseVerifyType 聚合，含 verifyTypeOrder、nextVerifyLevel） |

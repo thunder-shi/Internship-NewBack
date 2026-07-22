@@ -562,10 +562,13 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "校外实习项目-学生选岗情况",
-            description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
-                    + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
+            description = "internshipId 必填；status 可选：all（全部入项学生）、notSelected（未报名）、"
+                    + "selected（已报名=有任意选岗记录）、selectedPendingAudit、postApproved。"
+                    + "前端三类 Tab 建议：all / notSelected / selected；后两者保留兼容细粒度筛选。"
+                    + "all、selected 的 rows 每条带 selectionStatus（notSelected / selectedPendingAudit / postApproved）。"
+                    + "counts 始终含 notSelected、selected、selectedPendingAudit、postApproved。"
                     + "权限与 listExternalInternshipCollegeStats 一致：院系管理员固定本院子树；校级管理员不传 departmentId 为全校口径，传则下钻该节点子树。"
-                    + "rows/counts 仅含当前部门子树内已报名学生。已有选岗记录时 rows 含 verifyProcessId（MainVerifyProcess.id）。"
+                    + "数据来自视图 view_external_internship_student_post_breakdown；权限部门过滤仍在服务端。"
                     + "分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -590,9 +593,10 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "未选岗学生随机分配岗位",
-            description = "根据 internshipId 取未选岗学生（与 getExternalInternshipStudentPostBreakdown 的 notSelected 口径一致），"
-                    + "在 listApprovedExternalInternshipPosts 岗位池内随机分配，内部调用 stuSelPost(studentId,0,postId)。"
+            summary = "未选岗学生系统分配岗位",
+            description = "将实习项目安排中尚未选岗的学生（与 getExternalInternshipStudentPostBreakdown 的 notSelected 口径一致），"
+                    + "随机报名到 listApprovedExternalInternshipPosts 岗位池内审核通过且有空位的企业岗位；"
+                    + "内部调用 stuSelPost(studentId,0,postId)。返回 assignedCount / failedCount / unassignedCount / details。"
     )
     @PostMapping(value = "/randomAssignPostsForUnselectedStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object randomAssignPostsForUnselectedStudents(@RequestBody JSONObject requestJson) {

@@ -10,11 +10,13 @@ import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.RelTitleTeacher;
 import newcms.entity.db.ViewBaseUser;
+import newcms.entity.db.ViewExternalInternshipStudentPostBreakdown;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTitleStudentDao;
 import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
+import newcms.repository.db.ViewExternalInternshipStudentPostBreakdownDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.service.IDiaryService;
@@ -65,6 +67,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final String INTERNAL_INT_TYPE_NAME = "校内实习";
     private static final String STU_POST_STATUS_ALL = "all";
     private static final String STU_POST_STATUS_NOT_SELECTED = "notSelected";
+    /** 已报名：有任意选岗记录（合并 selectedPendingAudit + postApproved，按 userId 去重） */
+    private static final String STU_POST_STATUS_SELECTED = "selected";
     private static final String STU_POST_STATUS_SELECTED_PENDING = "selectedPendingAudit";
     private static final String STU_POST_STATUS_POST_APPROVED = "postApproved";
 
@@ -90,6 +94,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private ViewExternalInternshipCollegeStatsDao viewExternalInternshipCollegeStatsDao;
+
+    @Resource
+    private ViewExternalInternshipStudentPostBreakdownDao viewExternalInternshipStudentPostBreakdownDao;
 
     @Resource
     private IDataTreeService iDataTreeService;
@@ -1960,107 +1967,106 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         String st = normalizeStudentPostBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
-        Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
-        projectStudentUserIds.retainAll(deptStudentUserIds);
-        JSONObject stuSk = new JSONObject();
-        stuSk.put("internshipId", internshipId);
-        @SuppressWarnings("unchecked")
-        Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelStuInternshipPostMerge", stuSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> mergeList = mergePage.getContent() == null ? Collections.emptyList() : mergePage.getContent();
-
-        Set<Integer> anyStuPostUser = new HashSet<>();
-        Set<Integer> passUser = new HashSet<>();
-        Map<Integer, JSONObject> userRowSample = new HashMap<>();
-        for (Object o : mergeList) {
-            JSONObject j = FastJsonUtil.toJson(o);
-            Integer uid = parseStudentUserIdFromStuPostMerge(j);
-            if (uid == null || !deptStudentUserIds.contains(uid)) {
-                continue;
-            }
-            anyStuPostUser.add(uid);
-            Integer isAudit = j.getInteger("isAudit");
-            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
-                passUser.add(uid);
-            }
-            JSONObject prev = userRowSample.get(uid);
-            if (prev == null) {
-                userRowSample.put(uid, j);
-            } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
-                userRowSample.put(uid, j);
-            }
-        }
-
-        List<Integer> postApprovedList = passUser.stream().sorted().collect(Collectors.toList());
-        List<Integer> selectedPending = anyStuPostUser.stream()
-                .filter(u -> !passUser.contains(u))
-                .sorted()
-                .collect(Collectors.toList());
-        List<Integer> notSelected = projectStudentUserIds.stream()
-                .filter(u -> !anyStuPostUser.contains(u))
-                .sorted()
-                .collect(Collectors.toList());
 
         JSONObject counts = new JSONObject();
-        counts.put(STU_POST_STATUS_NOT_SELECTED, notSelected.size());
-        counts.put(STU_POST_STATUS_SELECTED_PENDING, selectedPending.size());
-        counts.put(STU_POST_STATUS_POST_APPROVED, postApprovedList.size());
+        counts.put(STU_POST_STATUS_NOT_SELECTED, 0);
+        counts.put(STU_POST_STATUS_SELECTED, 0);
+        counts.put(STU_POST_STATUS_SELECTED_PENDING, 0);
+        counts.put(STU_POST_STATUS_POST_APPROVED, 0);
 
-        Object invObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
-        JSONObject invJ = invObj != null ? FastJsonUtil.toJson(invObj) : new JSONObject();
+        if (deptStudentUserIds == null || deptStudentUserIds.isEmpty()) {
+            return buildStudentPostBreakdownResult(internshipId, null, scope.reportDepartmentId, st,
+                    pageNum, pageSize, 0, 0, counts, new JSONArray());
+        }
 
-        if (STU_POST_STATUS_ALL.equals(st)) {
-            List<Integer> allOrdered = projectStudentUserIds.stream().sorted().collect(Collectors.toList());
-            int total = allOrdered.size();
-            int totalPages = pageSize <= 0 ? 0 : (int) Math.ceil((double) total / (double) pageSize);
-            int from = Math.max(0, (pageNum - 1) * pageSize);
-            int to = Math.min(from + pageSize, total);
-            List<Integer> slice = from >= total ? Collections.emptyList() : allOrdered.subList(from, to);
-            JSONArray rows = new JSONArray();
-            for (Integer uid : slice) {
-                JSONObject row = buildOneStudentBriefRow(uid, userRowSample);
-                row.put("selectionStatus", resolveStudentSelectionStatus(uid, anyStuPostUser, passUser));
-                rows.add(row);
+        for (Object[] row : viewExternalInternshipStudentPostBreakdownDao
+                .countGroupBySelectionStatus(internshipId, deptStudentUserIds)) {
+            String sel = row[0] != null ? String.valueOf(row[0]) : null;
+            long cnt = row[1] instanceof Number ? ((Number) row[1]).longValue() : 0L;
+            if (STU_POST_STATUS_NOT_SELECTED.equals(sel)) {
+                counts.put(STU_POST_STATUS_NOT_SELECTED, (int) cnt);
+            } else if (STU_POST_STATUS_SELECTED_PENDING.equals(sel)) {
+                counts.put(STU_POST_STATUS_SELECTED_PENDING, (int) cnt);
+            } else if (STU_POST_STATUS_POST_APPROVED.equals(sel)) {
+                counts.put(STU_POST_STATUS_POST_APPROVED, (int) cnt);
             }
-            JSONObject result = new JSONObject();
-            result.put("internshipId", internshipId);
-            result.put("internshipName", invJ.getString("name"));
-            result.put("departmentId", scope.reportDepartmentId);
-            result.put("status", STU_POST_STATUS_ALL);
-            result.put("page", pageNum);
-            result.put("size", pageSize);
-            result.put("counts", counts);
-            result.put("totalElements", total);
-            result.put("totalPages", totalPages);
-            result.put("rows", rows);
-            return result;
         }
+        int selectedCount = counts.getIntValue(STU_POST_STATUS_SELECTED_PENDING)
+                + counts.getIntValue(STU_POST_STATUS_POST_APPROVED);
+        counts.put(STU_POST_STATUS_SELECTED, selectedCount);
 
-        List<Integer> targetList;
-        Map<Integer, JSONObject> mergeForRows;
-        if (STU_POST_STATUS_NOT_SELECTED.equals(st)) {
-            targetList = notSelected;
-            mergeForRows = null;
-        } else if (STU_POST_STATUS_SELECTED_PENDING.equals(st)) {
-            targetList = selectedPending;
-            mergeForRows = userRowSample;
+        PageRequest pageable = PageRequest.of(pageNum - 1, pageSize);
+        Page<ViewExternalInternshipStudentPostBreakdown> paged;
+        if (STU_POST_STATUS_ALL.equals(st)) {
+            paged = viewExternalInternshipStudentPostBreakdownDao
+                    .findAllByInternshipAndUsers(internshipId, deptStudentUserIds, pageable);
+        } else if (STU_POST_STATUS_SELECTED.equals(st)) {
+            paged = viewExternalInternshipStudentPostBreakdownDao.findByInternshipUsersAndStatusIn(
+                    internshipId, deptStudentUserIds,
+                    List.of(STU_POST_STATUS_SELECTED_PENDING, STU_POST_STATUS_POST_APPROVED),
+                    pageable);
         } else {
-            targetList = postApprovedList;
-            mergeForRows = userRowSample;
+            paged = viewExternalInternshipStudentPostBreakdownDao.findByInternshipUsersAndStatus(
+                    internshipId, deptStudentUserIds, st, pageable);
         }
 
-        JSONObject paged = buildPagedStudentCategory(targetList, mergeForRows, pageNum, pageSize);
+        String internshipName = null;
+        JSONArray rows = new JSONArray();
+        for (ViewExternalInternshipStudentPostBreakdown v : paged.getContent()) {
+            if (internshipName == null) {
+                internshipName = v.getInternshipName();
+            }
+            rows.add(toStudentPostBreakdownRow(v));
+        }
+        if (internshipName == null) {
+            Object invObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+            if (invObj != null) {
+                internshipName = FastJsonUtil.toJson(invObj).getString("name");
+            }
+        }
+
+        return buildStudentPostBreakdownResult(internshipId, internshipName, scope.reportDepartmentId, st,
+                pageNum, pageSize, (int) paged.getTotalElements(), paged.getTotalPages(), counts, rows);
+    }
+
+    private static JSONObject toStudentPostBreakdownRow(ViewExternalInternshipStudentPostBreakdown v) {
+        JSONObject row = new JSONObject();
+        row.put("userId", v.getUserId());
+        row.put("userName", v.getUserName());
+        row.put("account", v.getAccount());
+        row.put("departmentId", v.getDepartmentId());
+        row.put("departmentName", v.getDepartmentName());
+        row.put("selectionStatus", v.getSelectionStatus());
+        if (v.getVerifyProcessId() != null) {
+            row.put("verifyProcessId", v.getVerifyProcessId());
+        }
+        if (v.getIsAudit() != null) {
+            row.put("isAudit", v.getIsAudit());
+        }
+        if (v.getInternshipPostName() != null) {
+            row.put("internshipPostName", v.getInternshipPostName());
+        }
+        if (v.getCompanyName() != null) {
+            row.put("companyName", v.getCompanyName());
+        }
+        return row;
+    }
+
+    private static JSONObject buildStudentPostBreakdownResult(Integer internshipId, String internshipName,
+                                                             Integer reportDepartmentId, String status,
+                                                             int pageNum, int pageSize, int totalElements,
+                                                             int totalPages, JSONObject counts, JSONArray rows) {
         JSONObject result = new JSONObject();
         result.put("internshipId", internshipId);
-        result.put("internshipName", invJ.getString("name"));
-        result.put("departmentId", scope.reportDepartmentId);
-        result.put("status", st);
-        result.put("page", paged.getInteger("page"));
-        result.put("size", paged.getInteger("size"));
+        result.put("internshipName", internshipName);
+        result.put("departmentId", reportDepartmentId);
+        result.put("status", status);
+        result.put("page", pageNum);
+        result.put("size", pageSize);
         result.put("counts", counts);
-        result.put("totalElements", paged.getInteger("totalElements"));
-        result.put("totalPages", paged.getInteger("totalPages"));
-        result.put("rows", paged.get("rows"));
+        result.put("totalElements", totalElements);
+        result.put("totalPages", totalPages);
+        result.put("rows", rows);
         return result;
     }
 
@@ -2071,21 +2077,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         String s = status.trim();
         if (STU_POST_STATUS_ALL.equals(s)
                 || STU_POST_STATUS_NOT_SELECTED.equals(s)
+                || STU_POST_STATUS_SELECTED.equals(s)
                 || STU_POST_STATUS_SELECTED_PENDING.equals(s)
                 || STU_POST_STATUS_POST_APPROVED.equals(s)) {
             return s;
         }
-        throw BaseResponse.parameterInvalid.error("status 无效，可选：all、notSelected、selectedPendingAudit、postApproved");
-    }
-
-    private static String resolveStudentSelectionStatus(Integer uid, Set<Integer> anyStuPostUser, Set<Integer> passUser) {
-        if (passUser.contains(uid)) {
-            return STU_POST_STATUS_POST_APPROVED;
-        }
-        if (anyStuPostUser.contains(uid)) {
-            return STU_POST_STATUS_SELECTED_PENDING;
-        }
-        return STU_POST_STATUS_NOT_SELECTED;
+        throw BaseResponse.parameterInvalid.error(
+                "status 无效，可选：all、notSelected、selected、selectedPendingAudit、postApproved");
     }
 
     private void assertExternalInternship(Integer internshipId) {
