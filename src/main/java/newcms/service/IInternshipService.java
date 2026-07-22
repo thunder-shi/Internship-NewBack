@@ -112,7 +112,8 @@ public interface IInternshipService {
 
     /**
      * 根据实习项目和岗位编码获取可选用户列表（带分页）
-     * 从 ViewBaseUser 中筛选出 jobCode 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
+     * 从 ViewBaseUser 中筛选尚未在 RelIntershipUser 关联到该实习项目的用户。
+     * {@code jobCode=STUDENT} 时按学生过滤；{@code SCHOOL_TEACHER}/{@code COMPANY_TUTOR} 时查所有非学生（jobCode != STUDENT）。
      *
      * @param internshipId  实习项目ID
      * @param jobCode       岗位编码

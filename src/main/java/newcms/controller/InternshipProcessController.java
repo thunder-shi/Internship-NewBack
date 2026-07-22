@@ -190,7 +190,8 @@ public class InternshipProcessController {
 
      @Operation(
              summary = "获取实习项目可选用户列表",
-            description = "根据 internshipId、jobCode（可选 departmentId）查询 viewBaseUser 中尚未在 RelIntershipUser 中关联的用户"
+            description = "根据 internshipId、jobCode、departmentId 查询 ViewBaseUser 中尚未在 RelIntershipUser 关联的用户。"
+                    + "jobCode=STUDENT 时按学生过滤；jobCode=SCHOOL_TEACHER 或 COMPANY_TUTOR 时查所有非学生人员（jobCode != STUDENT）。"
      )
      @PostMapping(value = "/getAvailableUsersForInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
      public Object getAvailableUsersForInternship(@RequestBody JSONObject requestJson) {

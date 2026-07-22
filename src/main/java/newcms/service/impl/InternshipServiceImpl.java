@@ -730,13 +730,20 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .collect(Collectors.toSet());
 
         // 2. 组装 ViewBaseUser 的查询条件：
-        //    - jobCode = 前端传入 jobCode
+        //    - jobCode：STUDENT 仍按等值；SCHOOL_TEACHER / COMPANY_TUTOR 改为「非学生」（jobCode != STUDENT）
         //    - departmentId IN（expand=true：各节点及其子树并集；expand=false：仅传入列表，不判断父子）
         //    - id NOT IN (已关联且未删除的 userId 列表)
         JSONObject userSearchKeys = new JSONObject();
-        userSearchKeys.put("jobCode", jobCode);
-
         Map<String, String> repMap = new HashMap<>();
+        // userSearchKeys.put("jobCode", jobCode); // 原：严格按传入 jobCode 过滤
+        if (Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(jobCode)
+                || Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(jobCode)) {
+            userSearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
+            repMap.put("jobCode", Constant.NE);
+        } else {
+            userSearchKeys.put("jobCode", jobCode);
+        }
+
         Set<Integer> allowedDepartmentIds = new HashSet<>();
         for (Integer departmentId : departmentIds) {
             if (departmentId == null) {
