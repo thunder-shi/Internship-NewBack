@@ -47,6 +47,9 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class InternshipServiceImpl extends Base implements IInternshipService {
+    private static final String TABLE_MAIN_DIARY = "MainDiary";
+    private static final BigDecimal MIN_DIARY_SCORE = BigDecimal.ZERO;
+    private static final BigDecimal MAX_DIARY_SCORE = new BigDecimal("100");
     private static final String TEACHER_JOB_CODE = Constant.USER_JOB_CODE.SCHOOL_TEACHER;
     /** 师生审核综合视图：企业/校外导师（原 ViewVerifyProcessRelTeacherStudentMerge 拆分） */
     private static final String VIEW_VERIFY_REL_ASS_TEA_STU_MERGE = "ViewVerifyProcessRelEntTeacherStudentMerge";
@@ -3093,9 +3096,16 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             Integer isAudit, boolean clearSubmitOnBack) {
         JSONObject verifyJsonPre = FastJsonUtil.toJson(verifyObj);
         Integer bizIdPre = verifyJsonPre.getInteger("relationId");
+        BigDecimal diaryScore = null;
 
-        // 评分配置：PASS 前校验本级是否需要 score，命中即必填且范围校验
-        if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && bizIdPre != null) {
+        if (TABLE_MAIN_DIARY.equals(bizTableName) && isAudit != null
+                && isAudit == Constant.AUDIT_STATUS.PASS) {
+            diaryScore = requireDiaryTeacherScore(node);
+        }
+
+        // 非日志业务仍保留原评分配置校验；日志评分固定为教师一级总分，不再依赖 grade_config。
+        if (!TABLE_MAIN_DIARY.equals(bizTableName) && isAudit != null
+                && isAudit == Constant.AUDIT_STATUS.PASS && bizIdPre != null) {
             Integer internshipId = gradeConfigService.resolveInternshipIdForDiary(bizIdPre);
             if (internshipId != null) {
                 JSONObject bizJsonPre = FastJsonUtil.toJson(iCommonService.getOneRecordById(bizTableName, bizIdPre));
@@ -3136,6 +3146,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 JSONObject levelUpdate = new JSONObject();
                 levelUpdate.put("id", bizId);
                 levelUpdate.put("currentVerifyTypeId", nextLevel);
+                if (TABLE_MAIN_DIARY.equals(bizTableName) && diaryScore != null) {
+                    levelUpdate.put("totalScore", diaryScore);
+                    levelUpdate.put("scoreDetail", buildDiaryTeacherScoreDetail(diaryScore));
+                    levelUpdate.put("totalScoreLockTime", new Date());
+                }
                 iCommonService.saveOneRecord(bizTableName, levelUpdate);
                 if (nextLevel <= verifyTypeId) {
                     Integer nextRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(bizJson, nextLevel);
@@ -3153,8 +3168,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 } else {
                     // 最后一级 PASS 完成（nextLevel > verifyTypeId，即 currentVerifyTypeId > verifyTypeId，
                     // 符合 CLAUDE.md 中"审核完成判断用 currentVerifyTypeId > verifyTypeId"的约定）
-                    // 若 grade_config 有配置则触发总成绩计算与物化
-                    gradeConfigService.computeAndPersistTotalScore(bizId, bizTableName);
+                    if (!TABLE_MAIN_DIARY.equals(bizTableName)) {
+                        // 非日志业务若 grade_config 有配置则触发总成绩计算与物化。
+                        gradeConfigService.computeAndPersistTotalScore(bizId, bizTableName);
+                    }
                 }
             }
         } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && bizId != null) {
@@ -3169,12 +3186,35 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return saved;
     }
 
+    private BigDecimal requireDiaryTeacherScore(JSONObject node) {
+        BigDecimal score = node.getBigDecimal("score");
+        if (score == null) {
+            throw BaseResponse.parameterInvalid.error("日志审核通过必须填写 score");
+        }
+        if (score.compareTo(MIN_DIARY_SCORE) < 0 || score.compareTo(MAX_DIARY_SCORE) > 0) {
+            throw BaseResponse.parameterInvalid.error("score 超出范围 [0, 100]");
+        }
+        return score;
+    }
+
+    private String buildDiaryTeacherScoreDetail(BigDecimal score) {
+        JSONObject row = new JSONObject(true);
+        row.put("levelOrder", 1);
+        row.put("weight", MAX_DIARY_SCORE);
+        row.put("maxScore", MAX_DIARY_SCORE);
+        row.put("score", score);
+        row.put("verifyUserId", String.valueOf(Base.getLoginUserId()));
+        JSONArray detail = new JSONArray();
+        detail.add(row);
+        return detail.toJSONString();
+    }
+
     private void assertCanAuditMainDiary(Object verifyObj) {
         if (verifyObj == null) {
             throw BaseResponse.parameterInvalid.error("审核记录不存在");
         }
         JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
-        if (!"MainDiary".equals(verifyJson.getString("tableName"))) {
+        if (!TABLE_MAIN_DIARY.equals(verifyJson.getString("tableName"))) {
             return;
         }
         Integer isAudit = verifyJson.getInteger("isAudit");
@@ -3247,9 +3287,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             limitedTitleAutoApproved = true;
         }
         // 日志 / 打卡：业务表自带审核配置的多级流程（relationId = 业务主键）；打卡无 submit，退回只重置审核级别
-        if ("MainDiary".equals(tableName)) {
+        if (TABLE_MAIN_DIARY.equals(tableName)) {
             assertCanAuditMainDiary(verifyObj);
-            return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
+            return auditProcessMultiLevelRelationBiz(node, verifyObj, TABLE_MAIN_DIARY, isAudit, true);
         }
         if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved && !noVerifyTitleAutoApproved) {
             // 审核通过：推进到下一级
