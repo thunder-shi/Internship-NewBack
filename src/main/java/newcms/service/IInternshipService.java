@@ -136,17 +136,18 @@ public interface IInternshipService {
                                                   Integer currentVerifyTypeId);
 
     /**
-     * 按 Excel「学号」匹配用户工号(workId)批量安排学生进入实习项目：创建 RelIntershipUser + MainVerifyProcess(SAVE)。
-     * Excel 第 1 行为表头，需含「学号」列；已存在关联则跳过，工号不存在或非学生记入 failures。
+     * 按 Excel「学号/工号」匹配用户 workId 批量创建 RelIntershipUser + MainVerifyProcess(SAVE)。
+     * {@code role=student}：仅允许学生；{@code role=teacher}：不允许学生与企业导师。
      */
     Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
                                          Integer processId, Integer createUserId, Integer verifyRoleId,
-                                         Integer currentVerifyTypeId);
+                                         Integer currentVerifyTypeId, String role);
 
     /**
-     * 下载「学生实习项目安排」Excel 导入模板（表头：学号、姓名）。
+     * 下载实习用户安排 Excel 导入模板。
+     * {@code role=student} 表头「学号」「姓名」；{@code role=teacher} 表头「工号」「姓名」。
      */
-    void downloadRelIntershipUserImportTemplate();
+    void downloadRelIntershipUserImportTemplate(String role);
 
     /**
      * 查询当前实习项目下可参与分配的老师（入项审核通过），按部门过滤。
@@ -183,6 +184,19 @@ public interface IInternshipService {
      */
     Object manualAssignTeacherStudent(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                       Integer currentVerifyTypeId, Integer teacherId, List<Integer> studentIds);
+
+    /**
+     * Excel 导入师生分配：按学号/教师工号解析用户后，内部先算审核人再调用手动分配逻辑。
+     * 表头：学号、学生姓名、教师工号、老师姓名；姓名列仅展示，匹配用学号/教师工号→workId。
+     */
+    Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
+                                                   Integer createUserId, Integer verifyRoleId,
+                                                   Integer currentVerifyTypeId);
+
+    /**
+     * 下载师生手动分配 Excel 导入模板（表头：学号、学生姓名、教师工号、老师姓名）。
+     */
+    void downloadManualAssignTeacherStudentImportTemplate();
 
     // /**
     //  * 获取当前进行中的实习项目

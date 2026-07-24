@@ -887,24 +887,31 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return result;
     }
 
+    private static final String IMPORT_ROLE_STUDENT = "student";
+    private static final String IMPORT_ROLE_TEACHER = "teacher";
+
     @Override
     public Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
                                                 Integer processId, Integer createUserId, Integer verifyRoleId,
-                                                Integer currentVerifyTypeId) {
+                                                Integer currentVerifyTypeId, String role) {
         if (file == null || file.isEmpty()) {
             throw BaseResponse.parameterInvalid.error("请上传 Excel 文件");
         }
         if (internshipId == null || processId == null || createUserId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
         }
+        String normalizedRole = normalizeImportRole(role);
         int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
         if (verifyType <= 0) {
             throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
         }
 
+        boolean teacherMode = IMPORT_ROLE_TEACHER.equals(normalizedRole);
         List<ExcelStudentNoRow> excelRows = parseRelIntershipUserExcelStudentNos(file);
         if (excelRows.isEmpty()) {
-            throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号数据");
+            throw BaseResponse.parameterInvalid.error(teacherMode
+                    ? "Excel 中没有有效的工号数据"
+                    : "Excel 中没有有效的学号数据");
         }
 
         String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
@@ -916,35 +923,38 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         int createdVerifyProcessCount = 0;
         int skippedExistingCount = 0;
         JSONArray failures = new JSONArray();
-        Set<String> seenStudentNos = new HashSet<>();
+        Set<String> seenWorkIds = new HashSet<>();
+        String emptyLabel = teacherMode ? "工号为空" : "学号为空";
+        String dupLabel = teacherMode ? "Excel 内工号重复" : "Excel 内学号重复";
+        String notFoundLabel = teacherMode ? "未找到该工号对应用户" : "未找到该学号对应工号的用户";
 
         for (ExcelStudentNoRow excelRow : excelRows) {
-            String studentNo = excelRow.studentNo;
+            String workIdValue = excelRow.studentNo;
             int excelRowNum = excelRow.rowNum;
-            if (studentNo == null || studentNo.isBlank()) {
-                failures.add(buildImportFailure(excelRowNum, studentNo, "学号为空"));
+            if (workIdValue == null || workIdValue.isBlank()) {
+                failures.add(buildImportFailure(excelRowNum, workIdValue, emptyLabel));
                 continue;
             }
-            String normalizedStudentNo = studentNo.trim();
-            if (!seenStudentNos.add(normalizedStudentNo)) {
-                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "Excel 内学号重复"));
+            String normalizedWorkId = workIdValue.trim();
+            if (!seenWorkIds.add(normalizedWorkId)) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, dupLabel));
                 continue;
             }
 
-            JSONObject user = findStudentUserByWorkId(normalizedStudentNo);
+            JSONObject user = findUserByWorkId(normalizedWorkId);
             if (user == null) {
-                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "未找到该学号对应工号的用户"));
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, notFoundLabel));
                 continue;
             }
             String jobCode = user.getString("jobCode");
-            if (jobCode != null && !jobCode.isBlank()
-                    && !Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
-                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "该学号对应用户不是学生身份(jobCode=" + jobCode + ")"));
+            String identityError = validateImportUserIdentity(normalizedRole, jobCode);
+            if (identityError != null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, identityError));
                 continue;
             }
             Integer userId = user.getInteger("id");
             if (userId == null) {
-                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "用户 id 无效"));
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, "用户 id 无效"));
                 continue;
             }
 
@@ -965,7 +975,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             Object savedRelIntershipUser = iCommonService.saveOneRecord("RelIntershipUser", relIntershipUserJson);
             Integer relationId = FastJsonUtil.toJson(savedRelIntershipUser).getInteger("id");
             if (relationId == null) {
-                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "创建 RelIntershipUser 失败"));
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, "创建 RelIntershipUser 失败"));
                 continue;
             }
             createdRelIntershipUserCount++;
@@ -974,6 +984,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
 
         JSONObject result = new JSONObject();
+        result.put("role", normalizedRole);
         result.put("createdRelIntershipUserCount", createdRelIntershipUserCount);
         result.put("createdVerifyProcessCount", createdVerifyProcessCount);
         result.put("skippedExistingCount", skippedExistingCount);
@@ -984,13 +995,52 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return result;
     }
 
+    private String normalizeImportRole(String role) {
+        if (role == null || role.isBlank()) {
+            return IMPORT_ROLE_STUDENT;
+        }
+        String normalized = role.trim().toLowerCase(Locale.ROOT);
+        if (IMPORT_ROLE_STUDENT.equals(normalized) || IMPORT_ROLE_TEACHER.equals(normalized)) {
+            return normalized;
+        }
+        throw BaseResponse.parameterInvalid.error("role 仅支持 student 或 teacher");
+    }
+
+    /**
+     * @return 身份不符时的错误文案；通过返回 null
+     */
+    private String validateImportUserIdentity(String role, String jobCode) {
+        if (IMPORT_ROLE_STUDENT.equals(role)) {
+            if (jobCode != null && !jobCode.isBlank()
+                    && !Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+                return "该用户不是学生身份(jobCode=" + jobCode + ")";
+            }
+            return null;
+        }
+        // teacher：排除学生、企业导师
+        if (Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+            return "教师导入不允许学生身份";
+        }
+        if (Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(jobCode)) {
+            return "教师导入不允许企业导师身份";
+        }
+        return null;
+    }
+
     @Override
-    public void downloadRelIntershipUserImportTemplate() {
+    public void downloadRelIntershipUserImportTemplate(String role) {
+        String normalizedRole = normalizeImportRole(role);
+        boolean teacherMode = IMPORT_ROLE_TEACHER.equals(normalizedRole);
         ExcelWriter writer = null;
         try {
             List<List<Object>> rows = new ArrayList<>();
-            rows.add(Arrays.asList("学号", "姓名"));
-            rows.add(Arrays.asList("2401012307", "张三"));
+            if (teacherMode) {
+                rows.add(Arrays.asList("工号", "姓名"));
+                rows.add(Arrays.asList("T001", "李老师"));
+            } else {
+                rows.add(Arrays.asList("学号", "姓名"));
+                rows.add(Arrays.asList("2401012307", "张三"));
+            }
             writer = ExcelUtil.getWriter(true);
             writer.write(rows, false);
             writer.setColumnWidth(0, 20);
@@ -1002,7 +1052,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 throw BaseResponse.moreInfoError.error("无法获取响应对象");
             }
             HttpServletResponse response = attributes.getResponse();
-            String fileName = URLEncoder.encode("学生实习项目安排导入模板", StandardCharsets.UTF_8)
+            String rawName = teacherMode ? "教师实习项目安排导入模板" : "学生实习项目安排导入模板";
+            String fileName = URLEncoder.encode(rawName, StandardCharsets.UTF_8)
                     .replaceAll("\\+", "%20");
             response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
             response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
@@ -1148,7 +1199,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @SuppressWarnings("unchecked")
-    private JSONObject findStudentUserByWorkId(String workId) {
+    private JSONObject findUserByWorkId(String workId) {
         JSONObject sk = new JSONObject();
         sk.put("workId", workId);
         Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
@@ -1397,6 +1448,306 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         result.put("updatedRelTeacherStudentCount", updatedRelTeacherStudentCount);
         result.put("skippedSubmittedCount", skippedSubmittedCount);
         return result;
+    }
+
+    @Override
+    public Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
+                                                          Integer createUserId, Integer verifyRoleId,
+                                                          Integer currentVerifyTypeId) {
+        if (file == null || file.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("请上传 Excel 文件");
+        }
+        if (internshipId == null || processId == null || createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
+        }
+        int verifyType = (currentVerifyTypeId == null ? Constant.VERIFY_LEVEL.NO_VERIFY : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
+
+        List<ExcelAssignRow> excelRows = parseManualAssignExcelRows(file);
+        if (excelRows.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号/教师工号数据");
+        }
+
+        // 预加载本项目选岗已通过的学生，避免分配时报错中断整批
+        Set<Integer> selectableStudentIds = new HashSet<>();
+        try {
+            for (Object relStuObj : getStudentInternshipSelections(internshipId)) {
+                Integer sid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(relStuObj));
+                if (sid != null) {
+                    selectableStudentIds.add(sid);
+                }
+            }
+        } catch (RuntimeException e) {
+            // 无通过选岗记录时，后续逐行记失败
+            selectableStudentIds = Collections.emptySet();
+        }
+
+        JSONArray failures = new JSONArray();
+        // teacherId -> studentIds（按教师聚合后调用手动分配）
+        Map<Integer, List<Integer>> teacherToStudents = new LinkedHashMap<>();
+        Map<Integer, String> teacherWorkIdLabel = new HashMap<>();
+        Set<String> seenStudentNos = new HashSet<>();
+        int resolvedPairCount = 0;
+
+        for (ExcelAssignRow row : excelRows) {
+            int rowNum = row.rowNum;
+            String studentNo = row.studentNo;
+            String teacherWorkId = row.teacherWorkId;
+            if (studentNo == null || studentNo.isBlank()) {
+                failures.add(buildAssignImportFailure(rowNum, studentNo, teacherWorkId, "学号为空"));
+                continue;
+            }
+            if (teacherWorkId == null || teacherWorkId.isBlank()) {
+                failures.add(buildAssignImportFailure(rowNum, studentNo, teacherWorkId, "教师工号为空"));
+                continue;
+            }
+            String normalizedStudentNo = studentNo.trim();
+            String normalizedTeacherWorkId = teacherWorkId.trim();
+            if (!seenStudentNos.add(normalizedStudentNo)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "Excel 内学号重复"));
+                continue;
+            }
+
+            JSONObject studentUser = findUserByWorkId(normalizedStudentNo);
+            if (studentUser == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "未找到该学号对应工号的学生用户"));
+                continue;
+            }
+            String studentIdentityError = validateImportUserIdentity(IMPORT_ROLE_STUDENT, studentUser.getString("jobCode"));
+            if (studentIdentityError != null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, studentIdentityError));
+                continue;
+            }
+            Integer studentId = studentUser.getInteger("id");
+            if (studentId == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "学生用户 id 无效"));
+                continue;
+            }
+            if (!selectableStudentIds.contains(studentId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该学生无本项目选岗审核通过记录，无法分配导师"));
+                continue;
+            }
+
+            JSONObject teacherUser = findUserByWorkId(normalizedTeacherWorkId);
+            if (teacherUser == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "未找到该教师工号对应用户"));
+                continue;
+            }
+            String teacherIdentityError = validateImportUserIdentity(IMPORT_ROLE_TEACHER, teacherUser.getString("jobCode"));
+            if (teacherIdentityError != null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, teacherIdentityError));
+                continue;
+            }
+            Integer teacherId = teacherUser.getInteger("id");
+            if (teacherId == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "教师用户 id 无效"));
+                continue;
+            }
+
+            teacherToStudents.computeIfAbsent(teacherId, k -> new ArrayList<>()).add(studentId);
+            teacherWorkIdLabel.put(teacherId, normalizedTeacherWorkId);
+            resolvedPairCount++;
+        }
+
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+
+        int createdRelTeacherStudentCount = 0;
+        int createdVerifyProcessCount = 0;
+        int updatedRelTeacherStudentCount = 0;
+        int skippedSubmittedCount = 0;
+        int assignedTeacherGroupCount = 0;
+
+        for (Map.Entry<Integer, List<Integer>> entry : teacherToStudents.entrySet()) {
+            Integer teacherId = entry.getKey();
+            List<Integer> studentIds = entry.getValue();
+            if (studentIds == null || studentIds.isEmpty()) {
+                continue;
+            }
+            try {
+                Object assignResult = manualAssignTeacherStudent(
+                        internshipId, processId, createUserId, verifyUserId, verifyType, teacherId, studentIds);
+                JSONObject ar = FastJsonUtil.toJson(assignResult);
+                createdRelTeacherStudentCount += nullToZero(ar.getInteger("createdRelTeacherStudentCount"));
+                createdVerifyProcessCount += nullToZero(ar.getInteger("createdVerifyProcessCount"));
+                updatedRelTeacherStudentCount += nullToZero(ar.getInteger("updatedRelTeacherStudentCount"));
+                skippedSubmittedCount += nullToZero(ar.getInteger("skippedSubmittedCount"));
+                assignedTeacherGroupCount++;
+            } catch (BaseException e) {
+                String msg = e.getBaseResponse() != null ? e.getBaseResponse().getMessage() : e.toString();
+                failures.add(buildAssignImportFailure(null, null, teacherWorkIdLabel.get(teacherId),
+                        "教师工号=" + teacherWorkIdLabel.get(teacherId) + " 分配失败: " + msg));
+            } catch (RuntimeException e) {
+                failures.add(buildAssignImportFailure(null, null, teacherWorkIdLabel.get(teacherId),
+                        "教师工号=" + teacherWorkIdLabel.get(teacherId) + " 分配失败: " + e.getMessage()));
+            }
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("verifyUserId", verifyUserId);
+        result.put("resolvedPairCount", resolvedPairCount);
+        result.put("assignedTeacherGroupCount", assignedTeacherGroupCount);
+        result.put("createdRelTeacherStudentCount", createdRelTeacherStudentCount);
+        result.put("createdVerifyProcessCount", createdVerifyProcessCount);
+        result.put("updatedRelTeacherStudentCount", updatedRelTeacherStudentCount);
+        result.put("skippedSubmittedCount", skippedSubmittedCount);
+        result.put("failedCount", failures.size());
+        result.put("failures", failures);
+        result.put("totalExcelRowCount", excelRows.size());
+        return result;
+    }
+
+    @Override
+    public void downloadManualAssignTeacherStudentImportTemplate() {
+        ExcelWriter writer = null;
+        try {
+            List<List<Object>> rows = new ArrayList<>();
+            rows.add(Arrays.asList("学号", "学生姓名", "教师工号", "老师姓名"));
+            rows.add(Arrays.asList("2401012307", "张三", "T001", "李老师"));
+            writer = ExcelUtil.getWriter(true);
+            writer.write(rows, false);
+            writer.setColumnWidth(0, 20);
+            writer.setColumnWidth(1, 16);
+            writer.setColumnWidth(2, 20);
+            writer.setColumnWidth(3, 16);
+
+            ServletRequestAttributes attributes =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null || attributes.getResponse() == null) {
+                throw BaseResponse.moreInfoError.error("无法获取响应对象");
+            }
+            HttpServletResponse response = attributes.getResponse();
+            String fileName = URLEncoder.encode("师生手动分配导入模板", StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            OutputStream outputStream = response.getOutputStream();
+            writer.flush(outputStream, true);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("下载模板失败: " + e.getMessage());
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+        }
+    }
+
+    private static final class ExcelAssignRow {
+        private final int rowNum;
+        private final String studentNo;
+        private final String teacherWorkId;
+
+        private ExcelAssignRow(int rowNum, String studentNo, String teacherWorkId) {
+            this.rowNum = rowNum;
+            this.studentNo = studentNo;
+            this.teacherWorkId = teacherWorkId;
+        }
+    }
+
+    private JSONObject buildAssignImportFailure(Integer rowNum, String studentNo, String teacherWorkId, String reason) {
+        JSONObject f = new JSONObject();
+        if (rowNum != null) {
+            f.put("row", rowNum);
+        }
+        f.put("studentNo", studentNo);
+        f.put("teacherWorkId", teacherWorkId);
+        f.put("reason", reason);
+        return f;
+    }
+
+    private int nullToZero(Integer v) {
+        return v == null ? 0 : v;
+    }
+
+    private List<ExcelAssignRow> parseManualAssignExcelRows(MultipartFile file) {
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<Map<String, Object>> maps = reader.readAll();
+            List<ExcelAssignRow> out = new ArrayList<>();
+            if (maps != null && !maps.isEmpty()) {
+                int rowNum = 2;
+                for (Map<String, Object> map : maps) {
+                    if (map == null || map.isEmpty() || isExcelRowBlank(map)) {
+                        rowNum++;
+                        continue;
+                    }
+                    String studentNo = extractExcelColumn(map, "学号", "studentNo", "studentWorkId");
+                    String teacherWorkId = extractExcelColumn(map, "教师工号", "老师工号", "teacherWorkId", "tutorWorkId");
+                    // 若未识别「教师工号」，再尝试普通「工号」列（避免与学号冲突）
+                    if (teacherWorkId == null || teacherWorkId.isBlank()) {
+                        teacherWorkId = extractExcelColumn(map, "工号", "workId");
+                    }
+                    if ((studentNo == null || studentNo.isBlank()) && (teacherWorkId == null || teacherWorkId.isBlank())) {
+                        rowNum++;
+                        continue;
+                    }
+                    out.add(new ExcelAssignRow(rowNum, studentNo, teacherWorkId));
+                    rowNum++;
+                }
+                return out;
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+        // 无表头映射：第0列学号，第1列学生姓名(忽略)，第2列教师工号，第3列老师姓名(忽略)
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<List<Object>> rows = reader.read(0);
+            List<ExcelAssignRow> out = new ArrayList<>();
+            if (rows == null || rows.size() <= 1) {
+                return out;
+            }
+            for (int i = 1; i < rows.size(); i++) {
+                List<Object> row = rows.get(i);
+                if (row == null || row.isEmpty()) {
+                    continue;
+                }
+                String studentNo = normalizeExcelCellToStudentNo(row.get(0));
+                String teacherWorkId = row.size() > 2 ? normalizeExcelCellToStudentNo(row.get(2)) : null;
+                // 兼容旧两列模板：第1列即教师工号
+                if ((teacherWorkId == null || teacherWorkId.isBlank()) && row.size() == 2) {
+                    teacherWorkId = normalizeExcelCellToStudentNo(row.get(1));
+                }
+                if ((studentNo == null || studentNo.isBlank()) && (teacherWorkId == null || teacherWorkId.isBlank())) {
+                    continue;
+                }
+                out.add(new ExcelAssignRow(i + 1, studentNo, teacherWorkId));
+            }
+            return out;
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+    }
+
+    private String extractExcelColumn(Map<String, Object> map, String... aliases) {
+        if (map == null || aliases == null) {
+            return null;
+        }
+        for (Map.Entry<String, Object> e : map.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            String key = e.getKey().trim();
+            for (String alias : aliases) {
+                if (alias != null && alias.equalsIgnoreCase(key)) {
+                    return normalizeExcelCellToStudentNo(e.getValue());
+                }
+            }
+        }
+        return null;
     }
 
     /**

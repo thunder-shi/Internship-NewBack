@@ -284,12 +284,12 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "Excel 批量安排学生进入实习项目",
-            description = "上传 Excel，按「学号」匹配用户工号(workId)批量创建 RelIntershipUser 与 MainVerifyProcess（isAudit=SAVE），"
-                    + "等价于前端选学生后 editManyNodes(RelIntershipUser) + getVerifyUserIds + editManyNodes(MainVerifyProcess)。"
-                    + "Excel 第 1 行为表头，需含列「学号」；"
-                    + "已存在入项关联则跳过（若缺审核记录会补建）；学号对应工号不存在/非学生记入 failures。"
-                    + "multipart 字段：file、internshipId、processId、createUserId、verifyRoleId（可选）、currentVerifyTypeId（可选，默认 1）。"
+            summary = "Excel 批量安排用户进入实习项目",
+            description = "上传 Excel，按学号/工号匹配用户 workId，批量创建 RelIntershipUser 与 MainVerifyProcess（isAudit=SAVE）。"
+                    + "role=student（默认）：校验用户为学生；role=teacher：校验用户不是学生且不是企业导师。"
+                    + "Excel 第 1 行为表头，学生模板含「学号」，教师模板含「工号」（也兼容学号列）。"
+                    + "已存在入项关联则跳过（若缺审核记录会补建）；不存在/身份不符记入 failures。"
+                    + "multipart 字段：file、internshipId、processId、createUserId、role（可选）、verifyRoleId（可选）、currentVerifyTypeId（可选，默认 1）。"
     )
     @PostMapping(value = "/importRelIntershipUserByExcel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Object importRelIntershipUserByExcel(
@@ -298,27 +298,32 @@ public class InternshipProcessController {
             @RequestParam("processId") Integer processId,
             @RequestParam("createUserId") Integer createUserId,
             @RequestParam(value = "verifyRoleId", required = false) Integer verifyRoleId,
-            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId) {
+            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId,
+            @RequestParam(value = "role", required = false, defaultValue = "student") String role) {
         JSONObject log = new JSONObject();
         log.put("internshipId", internshipId);
         log.put("processId", processId);
         log.put("createUserId", createUserId);
         log.put("verifyRoleId", verifyRoleId);
         log.put("currentVerifyTypeId", currentVerifyTypeId);
+        log.put("role", role);
         log.put("fileName", file == null ? null : file.getOriginalFilename());
         LogUtil.loggerRecord("importRelIntershipUserByExcel", log);
         return BaseResponse.ok(iInternshipService.importRelIntershipUserByExcel(
-                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId));
+                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId, role));
     }
 
     @Operation(
-            summary = "下载学生实习项目安排 Excel 导入模板",
-            description = "下载 xlsx 模板，表头为「学号」「姓名」。导入时以「学号」匹配用户工号(workId)；姓名仅作填写参考。"
+            summary = "下载实习用户安排 Excel 导入模板",
+            description = "role=student（默认）：表头「学号」「姓名」；role=teacher：表头「工号」「姓名」。导入均按 workId 匹配。"
     )
     @PostMapping(value = "/downloadRelIntershipUserImportTemplate")
-    public void downloadRelIntershipUserImportTemplate() {
-        LogUtil.loggerRecord("downloadRelIntershipUserImportTemplate", new JSONObject());
-        iInternshipService.downloadRelIntershipUserImportTemplate();
+    public void downloadRelIntershipUserImportTemplate(
+            @RequestParam(value = "role", required = false, defaultValue = "student") String role) {
+        JSONObject log = new JSONObject();
+        log.put("role", role);
+        LogUtil.loggerRecord("downloadRelIntershipUserImportTemplate", log);
+        iInternshipService.downloadRelIntershipUserImportTemplate(role);
     }
 
     private List<Integer> parseDepartmentIds(JSONObject source, String fieldName) {
@@ -544,6 +549,44 @@ public class InternshipProcessController {
                 iInternshipService.manualAssignTeacherStudent(internshipId, processId, createUserId, verifyUserId,
                         currentVerifyTypeId, teacherId, studentIds)
         );
+    }
+
+    @Operation(
+            summary = "Excel 导入师生手动分配",
+            description = "等价于前端「确定」时先 getVerifyUserIds 再 manualAssignTeacherStudent。"
+                    + "Excel 表头：学号、学生姓名、教师工号、老师姓名；仅「学号」「教师工号」参与匹配（workId），姓名列仅展示不用。"
+                    + "学生须为 STUDENT；教师须非学生且非企业导师；学生须已有选岗审核通过记录。"
+                    + "multipart：file、internshipId、processId、createUserId、verifyRoleId（可选）、"
+                    + "currentVerifyTypeId（可选，默认 1=NO_VERIFY，有审核传 2=ONE_VERIFY）。"
+    )
+    @PostMapping(value = "/importManualAssignTeacherStudentByExcel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Object importManualAssignTeacherStudentByExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("internshipId") Integer internshipId,
+            @RequestParam("processId") Integer processId,
+            @RequestParam("createUserId") Integer createUserId,
+            @RequestParam(value = "verifyRoleId", required = false) Integer verifyRoleId,
+            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId) {
+        JSONObject log = new JSONObject();
+        log.put("internshipId", internshipId);
+        log.put("processId", processId);
+        log.put("createUserId", createUserId);
+        log.put("verifyRoleId", verifyRoleId);
+        log.put("currentVerifyTypeId", currentVerifyTypeId);
+        log.put("fileName", file == null ? null : file.getOriginalFilename());
+        LogUtil.loggerRecord("importManualAssignTeacherStudentByExcel", log);
+        return BaseResponse.ok(iInternshipService.importManualAssignTeacherStudentByExcel(
+                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId));
+    }
+
+    @Operation(
+            summary = "下载师生手动分配 Excel 导入模板",
+            description = "表头：学号、学生姓名、教师工号、老师姓名。导入仅用学号/教师工号匹配 workId，姓名列仅展示。"
+    )
+    @PostMapping(value = "/downloadManualAssignTeacherStudentImportTemplate")
+    public void downloadManualAssignTeacherStudentImportTemplate() {
+        LogUtil.loggerRecord("downloadManualAssignTeacherStudentImportTemplate", new JSONObject());
+        iInternshipService.downloadManualAssignTeacherStudentImportTemplate();
     }
 
     // @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")
