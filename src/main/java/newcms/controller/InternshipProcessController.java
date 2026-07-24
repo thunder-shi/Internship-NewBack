@@ -366,7 +366,8 @@ public class InternshipProcessController {
     @Operation(
             summary = "查询可分配老师列表",
             description = "根据 internshipId、departmentId、jobCode 查询当前实习项目下审核已通过的老师。"
-                    + "jobCode：SCHOOL_TEACHER（校内导师）或 COMPANY_TUTOR（企业导师）。"
+                    + "jobCode：SCHOOL_TEACHER 时取所有非学生（jobCode != STUDENT）；"
+                    + "COMPANY_TUTOR 时仅取企业导师。"
     )
     @PostMapping(value = "/listAssignableTeachers", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableTeachers(@RequestBody JSONObject requestJson) {
@@ -394,7 +395,8 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "查询可分配学生列表",
-            description = "根据 internshipId 和 departmentId 查询当前实习项目下岗位审核通过且选岗审核通过的学生，口径与系统自动分配一致。"
+            description = "根据 internshipId 和 departmentId 查询选岗审核已通过的学生。"
+                    + "校内导师占位已写入 teacherId 的不返回；仅有空老师占位（或尚无占位）的仍返回。"
     )
     @PostMapping(value = "/listAssignableStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableStudents(@RequestBody JSONObject requestJson) {
@@ -415,7 +417,8 @@ public class InternshipProcessController {
             summary = "根据实习项目初始化校内导师分配",
             description = "查询 ViewVerifyProcessRelIntTeacherStudentMerge（processTypeCode=EXTERNAL_ASSIGN_INTERNAL_TUTOR）中该实习项目下"
                     + "待提交（isAudit=SAVE）的师生记录（含已暂存 teacherId 的草稿）；已提交的记录不在查询范围内、不会被改写。"
-                    + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、jobCode=SCHOOL_TEACHER、审核通过（PASS）的教师 userId；"
+                    + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、审核通过（PASS）、"
+                    + "jobCode 非 STUDENT/COMPANY_TUTOR 的用户 userId（学校教师、管理员等均可）；"
                     + "查 ViewVerifyProcessRelIntTeacherStudentMerge 时不使用 jobCode 条件。"
                     + "在剥离本批 SAVE 行旧分配后的负载上按均衡策略写入 teacherId（再次点击可因新增导师而重算）；"
                     + "若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
@@ -468,7 +471,10 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "手动分配老师与学生",
-            description = "按传入 teacherId 和 studentIds，批量创建 RelTeacherStudent 和 MainVerifyProcess。"
+            description = "按传入 teacherId 和 studentIds 分配。"
+                    + "若该选岗在指定 processId 下已有 SAVE 师生占位，则更新 teacherId（及审核 createUserId/verifyUserId）；"
+                    + "若无占位则新建 RelTeacherStudent + MainVerifyProcess；"
+                    + "若已提交（非 SAVE）则跳过并计入 skippedSubmittedCount。"
     )
     @PostMapping(value = "/manualAssignTeacherStudent", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object manualAssignTeacherStudent(@RequestBody JSONObject requestJson) {

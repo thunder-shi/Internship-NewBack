@@ -136,12 +136,14 @@ public interface IInternshipService {
     /**
      * 查询当前实习项目下可参与分配的老师（入项审核通过），按部门过滤。
      *
-     * @param jobCode {@link newcms.base.Constant.USER_JOB_CODE#SCHOOL_TEACHER} 或 {@link newcms.base.Constant.USER_JOB_CODE#COMPANY_TUTOR}
+     * @param jobCode {@link newcms.base.Constant.USER_JOB_CODE#SCHOOL_TEACHER}（查所有非学生）
+     *                或 {@link newcms.base.Constant.USER_JOB_CODE#COMPANY_TUTOR}（仅企业导师）
      */
     Object listAssignableTeachers(Integer internshipId, Integer departmentId, String jobCode);
 
     /**
-     * 查询当前实习项目下可参与系统分配的学生（岗位审核通过且选岗审核通过），按部门树过滤。
+     * 查询当前实习项目下可参与校内导师分配的学生（岗位审核通过且选岗审核通过），按部门精确过滤。
+     * 校内导师已指定 teacherId 的不返回；空老师占位仍返回。
      */
     Object listAssignableStudents(Integer internshipId, Integer departmentId);
 
@@ -162,7 +164,7 @@ public interface IInternshipService {
                                            Integer currentVerifyTypeId);
 
     /**
-     * 手动指定单个老师和多个学生，批量创建 RelTeacherStudent 及其审核记录。
+     * 手动指定老师与学生：优先更新指定 processId 下已有 SAVE 占位的 teacherId；无占位则新建；已提交则跳过。
      */
     Object manualAssignTeacherStudent(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                       Integer currentVerifyTypeId, Integer teacherId, List<Integer> studentIds);
