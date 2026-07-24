@@ -1,9 +1,14 @@
 package newcms.service.impl;
 
+import cn.hutool.poi.excel.ExcelReader;
+import cn.hutool.poi.excel.ExcelUtil;
+import cn.hutool.poi.excel.ExcelWriter;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletResponse;
 import newcms.base.Base;
+import newcms.base.BaseException;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.MainInternshipPost;
@@ -37,8 +42,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -874,6 +885,317 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         result.put("totalCandidateCount", candidateUserIds.size());
         result.put("verifyUserId", verifyUserId);
         return result;
+    }
+
+    @Override
+    public Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
+                                                Integer processId, Integer createUserId, Integer verifyRoleId,
+                                                Integer currentVerifyTypeId) {
+        if (file == null || file.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("请上传 Excel 文件");
+        }
+        if (internshipId == null || processId == null || createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
+        }
+        int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
+
+        List<ExcelStudentNoRow> excelRows = parseRelIntershipUserExcelStudentNos(file);
+        if (excelRows.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号数据");
+        }
+
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+
+        int createdRelIntershipUserCount = 0;
+        int createdVerifyProcessCount = 0;
+        int skippedExistingCount = 0;
+        JSONArray failures = new JSONArray();
+        Set<String> seenStudentNos = new HashSet<>();
+
+        for (ExcelStudentNoRow excelRow : excelRows) {
+            String studentNo = excelRow.studentNo;
+            int excelRowNum = excelRow.rowNum;
+            if (studentNo == null || studentNo.isBlank()) {
+                failures.add(buildImportFailure(excelRowNum, studentNo, "学号为空"));
+                continue;
+            }
+            String normalizedStudentNo = studentNo.trim();
+            if (!seenStudentNos.add(normalizedStudentNo)) {
+                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "Excel 内学号重复"));
+                continue;
+            }
+
+            JSONObject user = findStudentUserByWorkId(normalizedStudentNo);
+            if (user == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "未找到该学号对应工号的用户"));
+                continue;
+            }
+            String jobCode = user.getString("jobCode");
+            if (jobCode != null && !jobCode.isBlank()
+                    && !Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "该学号对应用户不是学生身份(jobCode=" + jobCode + ")"));
+                continue;
+            }
+            Integer userId = user.getInteger("id");
+            if (userId == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "用户 id 无效"));
+                continue;
+            }
+
+            Integer existingRelId = findExistingRelIntershipUserId(internshipId, userId);
+            if (existingRelId != null) {
+                if (!hasRelIntershipUserVerifyProcess(existingRelId, processId)) {
+                    createRelIntershipUserVerifyProcess(existingRelId, processId, createUserId, verifyUserId);
+                    createdVerifyProcessCount++;
+                }
+                skippedExistingCount++;
+                continue;
+            }
+
+            JSONObject relIntershipUserJson = new JSONObject();
+            relIntershipUserJson.put("internshipId", internshipId);
+            relIntershipUserJson.put("userId", userId);
+            relIntershipUserJson.put("currentVerifyTypeId", verifyType);
+            Object savedRelIntershipUser = iCommonService.saveOneRecord("RelIntershipUser", relIntershipUserJson);
+            Integer relationId = FastJsonUtil.toJson(savedRelIntershipUser).getInteger("id");
+            if (relationId == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedStudentNo, "创建 RelIntershipUser 失败"));
+                continue;
+            }
+            createdRelIntershipUserCount++;
+            createRelIntershipUserVerifyProcess(relationId, processId, createUserId, verifyUserId);
+            createdVerifyProcessCount++;
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("createdRelIntershipUserCount", createdRelIntershipUserCount);
+        result.put("createdVerifyProcessCount", createdVerifyProcessCount);
+        result.put("skippedExistingCount", skippedExistingCount);
+        result.put("failedCount", failures.size());
+        result.put("failures", failures);
+        result.put("totalExcelRowCount", excelRows.size());
+        result.put("verifyUserId", verifyUserId);
+        return result;
+    }
+
+    @Override
+    public void downloadRelIntershipUserImportTemplate() {
+        ExcelWriter writer = null;
+        try {
+            List<List<Object>> rows = new ArrayList<>();
+            rows.add(Arrays.asList("学号", "姓名"));
+            rows.add(Arrays.asList("2401012307", "张三"));
+            writer = ExcelUtil.getWriter(true);
+            writer.write(rows, false);
+            writer.setColumnWidth(0, 20);
+            writer.setColumnWidth(1, 16);
+
+            ServletRequestAttributes attributes =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null || attributes.getResponse() == null) {
+                throw BaseResponse.moreInfoError.error("无法获取响应对象");
+            }
+            HttpServletResponse response = attributes.getResponse();
+            String fileName = URLEncoder.encode("学生实习项目安排导入模板", StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            OutputStream outputStream = response.getOutputStream();
+            writer.flush(outputStream, true);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("下载模板失败: " + e.getMessage());
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+        }
+    }
+
+    private static final class ExcelStudentNoRow {
+        private final int rowNum;
+        private final String studentNo;
+
+        private ExcelStudentNoRow(int rowNum, String studentNo) {
+            this.rowNum = rowNum;
+            this.studentNo = studentNo;
+        }
+    }
+
+    private JSONObject buildImportFailure(int rowNum, String studentNo, String reason) {
+        JSONObject f = new JSONObject();
+        f.put("row", rowNum);
+        f.put("studentNo", studentNo);
+        f.put("reason", reason);
+        return f;
+    }
+
+    private List<ExcelStudentNoRow> parseRelIntershipUserExcelStudentNos(MultipartFile file) {
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<Map<String, Object>> maps = reader.readAll();
+            List<ExcelStudentNoRow> out = new ArrayList<>();
+            if (maps != null && !maps.isEmpty()) {
+                int rowNum = 2; // 第 1 行表头，数据从第 2 行起
+                for (Map<String, Object> map : maps) {
+                    if (map == null || map.isEmpty()) {
+                        rowNum++;
+                        continue;
+                    }
+                    String studentNo = extractStudentNoFromExcelRow(map);
+                    if (studentNo != null && !studentNo.isBlank()) {
+                        out.add(new ExcelStudentNoRow(rowNum, studentNo.trim()));
+                    } else if (!isExcelRowBlank(map)) {
+                        out.add(new ExcelStudentNoRow(rowNum, null));
+                    }
+                    rowNum++;
+                }
+                return out;
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+        // 无表头映射时退回按列读取：第 0 列=学号
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<List<Object>> rows = reader.read(0);
+            List<ExcelStudentNoRow> out = new ArrayList<>();
+            if (rows == null || rows.size() <= 1) {
+                return out;
+            }
+            for (int i = 1; i < rows.size(); i++) {
+                List<Object> row = rows.get(i);
+                if (row == null || row.isEmpty()) {
+                    continue;
+                }
+                Object cell0 = row.get(0);
+                String studentNo = normalizeExcelCellToStudentNo(cell0);
+                if (studentNo != null && !studentNo.isEmpty()) {
+                    out.add(new ExcelStudentNoRow(i + 1, studentNo));
+                }
+            }
+            return out;
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+    }
+
+    private String extractStudentNoFromExcelRow(Map<String, Object> map) {
+        for (Map.Entry<String, Object> e : map.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            String key = e.getKey().trim();
+            if ("学号".equals(key) || "工号".equals(key) || "workId".equalsIgnoreCase(key)
+                    || "studentNo".equalsIgnoreCase(key)) {
+                return normalizeExcelCellToStudentNo(e.getValue());
+            }
+        }
+        // 未识别表头时取第一列
+        for (Object v : map.values()) {
+            String s = normalizeExcelCellToStudentNo(v);
+            if (s != null && !s.isEmpty()) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** Excel 数字学号常被读成 2401.0 / 科学计数，统一转成纯字符串 */
+    private String normalizeExcelCellToStudentNo(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number) {
+            return new BigDecimal(v.toString()).stripTrailingZeros().toPlainString();
+        }
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) {
+            return null;
+        }
+        if (s.matches("^-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?$")) {
+            try {
+                return new BigDecimal(s).stripTrailingZeros().toPlainString();
+            } catch (NumberFormatException ignored) {
+                return s;
+            }
+        }
+        return s;
+    }
+
+    private boolean isExcelRowBlank(Map<String, Object> map) {
+        for (Object v : map.values()) {
+            if (v == null) {
+                continue;
+            }
+            String s = String.valueOf(v).trim();
+            if (!s.isEmpty() && !"null".equalsIgnoreCase(s)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private JSONObject findStudentUserByWorkId(String workId) {
+        JSONObject sk = new JSONObject();
+        sk.put("workId", workId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewBaseUser", sk, null, Sort.unsorted(), 1, 10);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        return FastJsonUtil.toJson(content.get(0));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Integer findExistingRelIntershipUserId(Integer internshipId, Integer userId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("userId", userId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "RelIntershipUser", sk, null, Sort.unsorted(), 1, 1);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        return FastJsonUtil.toJson(content.get(0)).getInteger("id");
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean hasRelIntershipUserVerifyProcess(Integer relationId, Integer processId) {
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("processId", processId);
+        sk.put("tableName", "RelIntershipUser");
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 1);
+        return page.getContent() != null && !page.getContent().isEmpty();
+    }
+
+    private void createRelIntershipUserVerifyProcess(Integer relationId, Integer processId,
+                                                     Integer createUserId, String verifyUserId) {
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", processId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("verifyUserId", verifyUserId == null ? "" : verifyUserId);
+        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", "RelIntershipUser");
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
     }
 
     @Override

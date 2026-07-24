@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+import org.springframework.web.multipart.MultipartFile;
+
 @Service
 public interface IInternshipService {
 
@@ -132,6 +134,19 @@ public interface IInternshipService {
     Object batchInitRelIntershipUserFromAvailable(Integer internshipId, String jobCode, List<Integer> departmentIds,
                                                   Integer processId, Integer createUserId, Integer verifyRoleId,
                                                   Integer currentVerifyTypeId);
+
+    /**
+     * 按 Excel「学号」匹配用户工号(workId)批量安排学生进入实习项目：创建 RelIntershipUser + MainVerifyProcess(SAVE)。
+     * Excel 第 1 行为表头，需含「学号」列；已存在关联则跳过，工号不存在或非学生记入 failures。
+     */
+    Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
+                                         Integer processId, Integer createUserId, Integer verifyRoleId,
+                                         Integer currentVerifyTypeId);
+
+    /**
+     * 下载「学生实习项目安排」Excel 导入模板（表头：学号、姓名）。
+     */
+    void downloadRelIntershipUserImportTemplate();
 
     /**
      * 查询当前实习项目下可参与分配的老师（入项审核通过），按部门过滤。

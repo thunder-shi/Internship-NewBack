@@ -18,6 +18,8 @@ import newcms.utils.LogUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.data.domain.Sort;
 
 import java.util.Arrays;
@@ -279,6 +281,44 @@ public class InternshipProcessController {
         return BaseResponse.ok(iInternshipService.batchInitRelIntershipUserFromAvailable(
                 internshipId, jobCode, departmentIds, processId, createUserId, verifyRoleId, currentVerifyTypeId
         ));
+    }
+
+    @Operation(
+            summary = "Excel 批量安排学生进入实习项目",
+            description = "上传 Excel，按「学号」匹配用户工号(workId)批量创建 RelIntershipUser 与 MainVerifyProcess（isAudit=SAVE），"
+                    + "等价于前端选学生后 editManyNodes(RelIntershipUser) + getVerifyUserIds + editManyNodes(MainVerifyProcess)。"
+                    + "Excel 第 1 行为表头，需含列「学号」；"
+                    + "已存在入项关联则跳过（若缺审核记录会补建）；学号对应工号不存在/非学生记入 failures。"
+                    + "multipart 字段：file、internshipId、processId、createUserId、verifyRoleId（可选）、currentVerifyTypeId（可选，默认 1）。"
+    )
+    @PostMapping(value = "/importRelIntershipUserByExcel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Object importRelIntershipUserByExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("internshipId") Integer internshipId,
+            @RequestParam("processId") Integer processId,
+            @RequestParam("createUserId") Integer createUserId,
+            @RequestParam(value = "verifyRoleId", required = false) Integer verifyRoleId,
+            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId) {
+        JSONObject log = new JSONObject();
+        log.put("internshipId", internshipId);
+        log.put("processId", processId);
+        log.put("createUserId", createUserId);
+        log.put("verifyRoleId", verifyRoleId);
+        log.put("currentVerifyTypeId", currentVerifyTypeId);
+        log.put("fileName", file == null ? null : file.getOriginalFilename());
+        LogUtil.loggerRecord("importRelIntershipUserByExcel", log);
+        return BaseResponse.ok(iInternshipService.importRelIntershipUserByExcel(
+                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId));
+    }
+
+    @Operation(
+            summary = "下载学生实习项目安排 Excel 导入模板",
+            description = "下载 xlsx 模板，表头为「学号」「姓名」。导入时以「学号」匹配用户工号(workId)；姓名仅作填写参考。"
+    )
+    @PostMapping(value = "/downloadRelIntershipUserImportTemplate")
+    public void downloadRelIntershipUserImportTemplate() {
+        LogUtil.loggerRecord("downloadRelIntershipUserImportTemplate", new JSONObject());
+        iInternshipService.downloadRelIntershipUserImportTemplate();
     }
 
     private List<Integer> parseDepartmentIds(JSONObject source, String fieldName) {
