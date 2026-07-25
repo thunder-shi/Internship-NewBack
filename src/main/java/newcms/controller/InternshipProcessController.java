@@ -441,7 +441,7 @@ public class InternshipProcessController {
     @Operation(
             summary = "查询可分配学生列表",
             description = "根据 internshipId 和 departmentId 查询选岗审核已通过的学生。"
-                    + "校内导师占位已写入 teacherId 的不返回；仅有空老师占位（或尚无占位）的仍返回。"
+                    + "校内导师已指定且非待提交(SAVE)的不返回；待提交草稿（含已写 teacherId）仍返回以便改派。"
     )
     @PostMapping(value = "/listAssignableStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableStudents(@RequestBody JSONObject requestJson) {
@@ -555,7 +555,7 @@ public class InternshipProcessController {
             summary = "Excel 导入师生手动分配",
             description = "等价于前端「确定」时先 getVerifyUserIds 再 manualAssignTeacherStudent。"
                     + "Excel 表头：学号、学生姓名、教师工号、老师姓名；仅「学号」「教师工号」参与匹配（workId），姓名列仅展示不用。"
-                    + "学生须为 STUDENT；教师须非学生且非企业导师；学生须已有选岗审核通过记录。"
+                    + "学生、教师均须本项目入项审核通过；学生另须选岗审核通过；教师须非学生且非企业导师。"
                     + "multipart：file、internshipId、processId、createUserId、verifyRoleId（可选）、"
                     + "currentVerifyTypeId（可选，默认 1=NO_VERIFY，有审核传 2=ONE_VERIFY）。"
     )

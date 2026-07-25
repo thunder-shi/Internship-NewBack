@@ -159,7 +159,7 @@ public interface IInternshipService {
 
     /**
      * 查询当前实习项目下可参与校内导师分配的学生（岗位审核通过且选岗审核通过），按部门精确过滤。
-     * 校内导师已指定 teacherId 的不返回；空老师占位仍返回。
+     * 校内导师已指定且非待提交(SAVE)的不返回；待提交草稿（含已写 teacherId）仍返回。
      */
     Object listAssignableStudents(Integer internshipId, Integer departmentId);
 
@@ -187,7 +187,8 @@ public interface IInternshipService {
 
     /**
      * Excel 导入师生分配：按学号/教师工号解析用户后，内部先算审核人再调用手动分配逻辑。
-     * 表头：学号、学生姓名、教师工号、老师姓名；姓名列仅展示，匹配用学号/教师工号→workId。
+     * 表头：学号、学生姓名、教师工号、老师姓名；姓名列仅展示。
+     * 学生/教师均须本项目入项审核通过；学生另须选岗通过。
      */
     Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
                                                    Integer createUserId, Integer verifyRoleId,

@@ -1321,7 +1321,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             emptyResult.put("total", 0);
             return emptyResult;
         }
-        // 校内导师已写入 teacherId 的选岗不再出现；仅有空老师占位（或尚无占位）仍可分配
+        // 校内导师已指定且已非待提交(SAVE)的选岗不再出现；待提交草稿（含已写 teacherId）仍可查出以便改派
         Set<Integer> internalTutorAssignedRelIds = loadRelInternshipIdsWithInternalTutorAssigned(internshipId);
         Map<Integer, JSONObject> mergeSample = new LinkedHashMap<>();
         List<Integer> studentIds = new ArrayList<>();
@@ -1470,7 +1470,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号/教师工号数据");
         }
 
-        // 预加载本项目选岗已通过的学生，避免分配时报错中断整批
+        // 预加载本项目入项审核通过的用户、以及选岗已通过的学生
+        Set<Integer> internshipPassUserIds = loadInternshipPassUserIds(internshipId);
         Set<Integer> selectableStudentIds = new HashSet<>();
         try {
             for (Object relStuObj : getStudentInternshipSelections(internshipId)) {
@@ -1526,6 +1527,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "学生用户 id 无效"));
                 continue;
             }
+            if (!internshipPassUserIds.contains(studentId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该学生未通过本项目入项审核，无法分配导师"));
+                continue;
+            }
             if (!selectableStudentIds.contains(studentId)) {
                 failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
                         "该学生无本项目选岗审核通过记录，无法分配导师"));
@@ -1546,6 +1552,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             Integer teacherId = teacherUser.getInteger("id");
             if (teacherId == null) {
                 failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "教师用户 id 无效"));
+                continue;
+            }
+            if (!internshipPassUserIds.contains(teacherId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该教师未通过本项目入项审核，无法参与分配"));
                 continue;
             }
 
@@ -1732,6 +1743,33 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private Set<Integer> loadInternshipPassUserIds(Integer internshipId) {
+        Set<Integer> out = new HashSet<>();
+        if (internshipId == null) {
+            return out;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelIntershipUserMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return out;
+        }
+        for (Object obj : content) {
+            if (obj == null) {
+                continue;
+            }
+            Integer userId = FastJsonUtil.toJson(obj).getInteger("userId");
+            if (userId != null) {
+                out.add(userId);
+            }
+        }
+        return out;
+    }
+
     private String extractExcelColumn(Map<String, Object> map, String... aliases) {
         if (map == null || aliases == null) {
             return null;
@@ -1751,8 +1789,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
-     * 收集校内导师合并视图中，该实习下已写入 teacherId 的选岗 id（{@code rel_internship_id}）。
-     * 企业导师占位不参与本列表排除。
+     * 收集校内导师合并视图中，该实习下「已指定 teacherId 且审核状态非待提交(SAVE)」的选岗 id。
+     * 待提交草稿即使已有 teacherId 也不排除，便于列表中改派。
      */
     @SuppressWarnings("unchecked")
     private Set<Integer> loadRelInternshipIdsWithInternalTutorAssigned(Integer internshipId) {
@@ -1772,7 +1810,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             }
             JSONObject j = FastJsonUtil.toJson(row);
             Integer rid = j.getInteger("relInternshipId");
-            if (rid != null && j.getInteger("teacherId") != null) {
+            Integer teacherId = j.getInteger("teacherId");
+            Integer isAudit = j.getInteger("isAudit");
+            // 仅排除已提交/已通过等非 SAVE，且已有老师的记录
+            if (rid != null && teacherId != null
+                    && (isAudit == null || isAudit != Constant.AUDIT_STATUS.SAVE)) {
                 assigned.add(rid);
             }
         }
