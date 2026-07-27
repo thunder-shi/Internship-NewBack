@@ -31,6 +31,15 @@ import newcms.service.IInternshipPostService;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
+import newcms.service.support.ImportManualAssignAsyncRunner;
+import newcms.service.support.ImportManualAssignTask;
+import newcms.service.support.ImportManualAssignTaskStore;
+import newcms.service.support.InitTutorAssignAsyncRunner;
+import newcms.service.support.InitTutorAssignTask;
+import newcms.service.support.InitTutorAssignTaskStore;
+import newcms.service.support.RandomAssignPostAsyncRunner;
+import newcms.service.support.RandomAssignPostTask;
+import newcms.service.support.RandomAssignPostTaskStore;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.GeneralUtil;
 import org.springframework.context.annotation.Lazy;
@@ -135,6 +144,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IDiaryService iDiaryService;
+
+    @Resource
+    private RandomAssignPostTaskStore randomAssignPostTaskStore;
+
+    @Resource
+    private RandomAssignPostAsyncRunner randomAssignPostAsyncRunner;
+
+    @Resource
+    private InitTutorAssignTaskStore initTutorAssignTaskStore;
+
+    @Resource
+    private InitTutorAssignAsyncRunner initTutorAssignAsyncRunner;
+
+    @Resource
+    private ImportManualAssignTaskStore importManualAssignTaskStore;
+
+    @Resource
+    private ImportManualAssignAsyncRunner importManualAssignAsyncRunner;
 
     /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
     @Resource
@@ -1452,8 +1479,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     /**
-     * 导入编排不启事务：避免「内部捕获业务异常 → 事务已被标 rollback-only → 提交失败」。
-     * 真正写库走 {@link #manualAssignTeacherStudent} 的独立事务（经 selfProxy）。
+     * 导入编排：同步解析校验 Excel 后异步按教师组分配。
+     * 写库走 {@link #manualAssignTeacherStudent} 独立事务（经 selfProxy）；中途停服已提交组保留。
      */
     @Override
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -1476,12 +1503,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号/教师工号数据");
         }
 
-        // 预加载本项目入项审核通过的用户、以及选岗已通过的学生（不抛业务异常，避免污染事务）
         Set<Integer> internshipPassUserIds = loadInternshipPassUserIds(internshipId);
         Set<Integer> selectableStudentIds = loadSelectableStudentUserIdsQuietly(internshipId);
 
         JSONArray failures = new JSONArray();
-        // teacherId -> studentIds（按教师聚合后调用手动分配）
         Map<Integer, List<Integer>> teacherToStudents = new LinkedHashMap<>();
         Map<Integer, String> teacherWorkIdLabel = new HashMap<>();
         Set<String> seenStudentNos = new HashSet<>();
@@ -1565,50 +1590,111 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             verifyUserId = "";
         }
 
-        int createdRelTeacherStudentCount = 0;
-        int createdVerifyProcessCount = 0;
-        int updatedRelTeacherStudentCount = 0;
-        int skippedSubmittedCount = 0;
-        int assignedTeacherGroupCount = 0;
-
+        List<ImportManualAssignTask.TeacherGroup> groups = new ArrayList<>();
         for (Map.Entry<Integer, List<Integer>> entry : teacherToStudents.entrySet()) {
-            Integer teacherId = entry.getKey();
-            List<Integer> studentIds = entry.getValue();
-            if (studentIds == null || studentIds.isEmpty()) {
+            if (entry.getValue() == null || entry.getValue().isEmpty()) {
                 continue;
             }
-            try {
-                // 经代理调用，使用 manualAssign 自身的独立事务；单组失败不影响其他组
-                Object assignResult = selfProxy.manualAssignTeacherStudent(
-                        internshipId, processId, createUserId, verifyUserId, verifyType, teacherId, studentIds);
-                JSONObject ar = FastJsonUtil.toJson(assignResult);
-                createdRelTeacherStudentCount += nullToZero(ar.getInteger("createdRelTeacherStudentCount"));
-                createdVerifyProcessCount += nullToZero(ar.getInteger("createdVerifyProcessCount"));
-                updatedRelTeacherStudentCount += nullToZero(ar.getInteger("updatedRelTeacherStudentCount"));
-                skippedSubmittedCount += nullToZero(ar.getInteger("skippedSubmittedCount"));
-                assignedTeacherGroupCount++;
-            } catch (BaseException e) {
-                String msg = e.getBaseResponse() != null ? e.getBaseResponse().getMessage() : e.toString();
-                failures.add(buildAssignImportFailure(null, null, teacherWorkIdLabel.get(teacherId),
-                        "教师工号=" + teacherWorkIdLabel.get(teacherId) + " 分配失败: " + msg));
-            } catch (RuntimeException e) {
-                failures.add(buildAssignImportFailure(null, null, teacherWorkIdLabel.get(teacherId),
-                        "教师工号=" + teacherWorkIdLabel.get(teacherId) + " 分配失败: " + e.getMessage()));
+            groups.add(new ImportManualAssignTask.TeacherGroup(
+                    entry.getKey(), teacherWorkIdLabel.get(entry.getKey()), entry.getValue()));
+        }
+
+        ImportManualAssignTask task = importManualAssignTaskStore.create(
+                internshipId, processId, createUserId, verifyUserId, verifyType,
+                excelRows.size(), resolvedPairCount, groups, failures);
+
+        String occupied = importManualAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            ImportManualAssignTask existing = importManualAssignTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有导入分配任务进行中，taskId=" + occupied);
+            }
+            importManualAssignTaskStore.clearRunning(internshipId, occupied);
+            occupied = importManualAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有导入分配任务进行中，taskId=" + occupied);
             }
         }
 
-        JSONObject result = new JSONObject();
-        result.put("verifyUserId", verifyUserId);
-        result.put("resolvedPairCount", resolvedPairCount);
-        result.put("assignedTeacherGroupCount", assignedTeacherGroupCount);
-        result.put("createdRelTeacherStudentCount", createdRelTeacherStudentCount);
-        result.put("createdVerifyProcessCount", createdVerifyProcessCount);
-        result.put("updatedRelTeacherStudentCount", updatedRelTeacherStudentCount);
-        result.put("skippedSubmittedCount", skippedSubmittedCount);
-        result.put("failedCount", failures.size());
-        result.put("failures", failures);
-        result.put("totalExcelRowCount", excelRows.size());
-        return result;
+        if (groups.isEmpty()) {
+            task.setStatus(ImportManualAssignTask.STATUS_SUCCESS);
+            task.setMessage(failures.isEmpty() ? "没有可分配的有效数据" : "校验未通过，无可分配数据");
+            task.markFinished();
+            importManualAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
+        }
+
+        task.setStatus(ImportManualAssignTask.STATUS_PENDING);
+        importManualAssignAsyncRunner.run(task.getTaskId());
+        return task.toJson(false);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getImportManualAssignTeacherStudentTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        ImportManualAssignTask task = importManualAssignTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeImportManualAssignTeacherStudentByExcel(String taskId) {
+        ImportManualAssignTask task = importManualAssignTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        Integer internshipId = task.getInternshipId();
+        task.setStatus(ImportManualAssignTask.STATUS_RUNNING);
+        try {
+            List<ImportManualAssignTask.TeacherGroup> groups = task.getTeacherGroups();
+            task.setTotal(groups.size());
+            for (ImportManualAssignTask.TeacherGroup group : groups) {
+                if (group == null || group.studentIds == null || group.studentIds.isEmpty()) {
+                    task.incrementProcessed();
+                    continue;
+                }
+                try {
+                    Object assignResult = selfProxy.manualAssignTeacherStudent(
+                            internshipId, task.getProcessId(), task.getCreateUserId(), task.getVerifyUserId(),
+                            task.getCurrentVerifyTypeId(), group.teacherId, group.studentIds);
+                    JSONObject ar = FastJsonUtil.toJson(assignResult);
+                    task.addCreatedRel(nullToZero(ar.getInteger("createdRelTeacherStudentCount")));
+                    task.addCreatedVerify(nullToZero(ar.getInteger("createdVerifyProcessCount")));
+                    task.addUpdatedRel(nullToZero(ar.getInteger("updatedRelTeacherStudentCount")));
+                    task.addSkippedSubmitted(nullToZero(ar.getInteger("skippedSubmittedCount")));
+                    task.incrementAssignedGroup();
+                    task.incrementProcessed();
+                } catch (BaseException e) {
+                    String msg = e.getBaseResponse() != null ? e.getBaseResponse().getMessage() : e.toString();
+                    task.addFailure(buildAssignImportFailure(null, null, group.teacherWorkId,
+                            "教师工号=" + group.teacherWorkId + " 分配失败: " + msg));
+                    task.incrementProcessed();
+                } catch (RuntimeException e) {
+                    task.addFailure(buildAssignImportFailure(null, null, group.teacherWorkId,
+                            "教师工号=" + group.teacherWorkId + " 分配失败: " + e.getMessage()));
+                    task.incrementProcessed();
+                    logger.warn("导入分配失败 internshipId={} teacherId={}: {}",
+                            internshipId, group.teacherId, e.getMessage());
+                }
+            }
+            task.setStatus(ImportManualAssignTask.STATUS_SUCCESS);
+            task.setMessage("导入分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(ImportManualAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("导入分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            importManualAssignTaskStore.clearRunning(internshipId, taskId);
+        }
     }
 
     /** 静默加载选岗已通过的学生 userId；无数据时返回空集，不抛业务异常。 */
@@ -2575,76 +2661,162 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object startRandomAssignPostsForUnselectedStudents(Integer internshipId) {
         assertExternalInternship(internshipId);
-        List<Integer> studentIds = collectNotSelectedStudentUserIds(internshipId);
-        List<Integer> postIds = collectApprovedAssignablePostIds(internshipId);
 
-        JSONObject result = new JSONObject();
-        result.put("internshipId", internshipId);
-        result.put("candidateStudentCount", studentIds.size());
-        result.put("candidatePostCount", postIds.size());
+        RandomAssignPostTask task = randomAssignPostTaskStore.create(internshipId);
+        String occupied = randomAssignPostTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            RandomAssignPostTask existing = randomAssignPostTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有随机分配任务进行中，taskId=" + occupied);
+            }
+            // 残留占用：清掉后重占
+            randomAssignPostTaskStore.clearRunning(internshipId, occupied);
+            occupied = randomAssignPostTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有随机分配任务进行中，taskId=" + occupied);
+            }
+        }
+
+        List<Integer> studentIds;
+        List<Integer> postIds;
+        try {
+            studentIds = collectNotSelectedStudentUserIds(internshipId);
+            postIds = collectApprovedAssignablePostIds(internshipId);
+        } catch (RuntimeException e) {
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage(e.getMessage());
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw e;
+        }
+
+        task.setTotal(studentIds.size());
+        task.setCandidatePostCount(postIds.size());
 
         if (postIds.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw BaseResponse.moreInfoError.error(task.getMessage());
         }
+
         if (studentIds.isEmpty()) {
-            result.put("assignedCount", 0);
-            result.put("failedCount", 0);
-            result.put("unassignedCount", 0);
-            result.put("details", new JSONArray());
-            return result;
+            task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+            task.setMessage("没有未选岗学生需要分配");
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
         }
 
-        List<Integer> shuffled = new ArrayList<>(studentIds);
-        Collections.shuffle(shuffled);
+        task.setStatus(RandomAssignPostTask.STATUS_PENDING);
+        randomAssignPostAsyncRunner.run(task.getTaskId(), internshipId);
+        return task.toJson(false);
+    }
 
-        int assignedCount = 0;
-        int failedCount = 0;
-        int unassignedCount = 0;
-        JSONArray details = new JSONArray();
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getRandomAssignPostsTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        RandomAssignPostTask task = randomAssignPostTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
 
-        for (Integer studentId : shuffled) {
-            List<Integer> eligiblePostIds = filterPostIdsWithRemainingCapacity(postIds);
-            if (eligiblePostIds.isEmpty()) {
-                unassignedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("success", false);
-                item.put("message", "所有岗位已满，无法继续分配");
-                details.add(item);
-                continue;
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeRandomAssignPostsForUnselectedStudents(String taskId, Integer internshipId) {
+        RandomAssignPostTask task = randomAssignPostTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        task.setStatus(RandomAssignPostTask.STATUS_RUNNING);
+        try {
+            List<Integer> studentIds = collectNotSelectedStudentUserIds(internshipId);
+            List<Integer> postIds = collectApprovedAssignablePostIds(internshipId);
+            task.setTotal(studentIds.size());
+            task.setCandidatePostCount(postIds.size());
+
+            if (postIds.isEmpty()) {
+                task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+                task.setMessage("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+                return;
             }
-            int postId = eligiblePostIds.get(ThreadLocalRandom.current().nextInt(eligiblePostIds.size()));
-            try {
-                Object selResult = iInternshipPostService.stuSelPost(studentId, 0, postId);
-                assignedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("internshipPostId", postId);
-                item.put("success", true);
-                if (selResult instanceof JSONObject) {
-                    item.put("selection", selResult);
+            if (studentIds.isEmpty()) {
+                task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+                task.setMessage("没有未选岗学生需要分配");
+                return;
+            }
+
+            List<Integer> shuffled = new ArrayList<>(studentIds);
+            Collections.shuffle(shuffled);
+
+            for (Integer studentId : shuffled) {
+                List<Integer> eligiblePostIds = filterPostIdsWithRemainingCapacity(postIds);
+                if (eligiblePostIds.isEmpty()) {
+                    task.incrementUnassigned();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("success", false);
+                    item.put("message", "所有岗位已满，无法继续分配");
+                    task.addDetail(item);
+                    continue;
                 }
-                details.add(item);
-            } catch (RuntimeException ex) {
-                failedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("internshipPostId", postId);
-                item.put("success", false);
-                item.put("message", ex.getMessage());
-                details.add(item);
-                logger.warn("随机分配岗位失败 internshipId={} studentId={} postId={}: {}",
-                        internshipId, studentId, postId, ex.getMessage());
+                int postId = eligiblePostIds.get(ThreadLocalRandom.current().nextInt(eligiblePostIds.size()));
+                try {
+                    Object selResult = iInternshipPostService.stuSelPost(studentId, 0, postId);
+                    task.incrementAssigned();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("internshipPostId", postId);
+                    item.put("success", true);
+                    if (selResult instanceof JSONObject) {
+                        item.put("selection", selResult);
+                    }
+                    task.addDetail(item);
+                } catch (RuntimeException ex) {
+                    task.incrementFailed();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("internshipPostId", postId);
+                    item.put("success", false);
+                    item.put("message", ex.getMessage());
+                    task.addDetail(item);
+                    logger.warn("随机分配岗位失败 internshipId={} studentId={} postId={}: {}",
+                            internshipId, studentId, postId, ex.getMessage());
+                }
             }
+            task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+            task.setMessage("分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("随机分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, taskId);
         }
+    }
 
-        result.put("assignedCount", assignedCount);
-        result.put("failedCount", failedCount);
-        result.put("unassignedCount", unassignedCount);
-        result.put("details", details);
-        return result;
+    /**
+     * @deprecated 请使用 {@link #startRandomAssignPostsForUnselectedStudents(Integer)}
+     */
+    @Override
+    @Deprecated
+    public Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+        return startRandomAssignPostsForUnselectedStudents(internshipId);
     }
 
     /**
@@ -3464,6 +3636,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                                     Integer currentVerifyTypeId) {
         validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
@@ -3472,32 +3645,194 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
         }
 
-        List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
+        InitTutorAssignTask task = initTutorAssignTaskStore.create(
+                internshipId, processId, createUserId, verifyUserId, verifyType);
+        String occupied = initTutorAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            InitTutorAssignTask existing = initTutorAssignTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有系统分配任务进行中，taskId=" + occupied);
+            }
+            initTutorAssignTaskStore.clearRunning(internshipId, occupied);
+            occupied = initTutorAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有系统分配任务进行中，taskId=" + occupied);
+            }
+        }
 
-        List<Object> saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+        List<Object> saveMergeRows;
+        try {
+            // 预检：无可用教师时直接失败，避免空跑任务
+            getTeacherIdsForAssignment(internshipId);
+            saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+        } catch (RuntimeException e) {
+            task.setStatus(InitTutorAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage());
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw e;
+        }
+
+        task.setTotal(saveMergeRows.size());
         if (saveMergeRows.isEmpty()) {
-            return buildInitTeacherStudentResult(0, 0);
+            task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+            task.setMessage("没有待提交的校内导师分配记录");
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
         }
 
-        Set<Integer> reassignRelIds = new HashSet<>();
-        for (Object row : saveMergeRows) {
-            if (row == null) {
-                continue;
-            }
-            JSONObject j = FastJsonUtil.toJson(row);
-            Integer rtsId = j.getInteger("relationId");
-            if (rtsId == null) {
-                rtsId = j.getInteger("relTeaStuId");
-            }
-            if (rtsId != null) {
-                reassignRelIds.add(rtsId);
-            }
-        }
+        task.setStatus(InitTutorAssignTask.STATUS_PENDING);
+        initTutorAssignAsyncRunner.run(task.getTaskId());
+        return task.toJson(false);
+    }
 
-        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapExcluding(internshipId, teacherIds, reassignRelIds);
-        int[] counts = assignInternalTeacherForExistingMergeRows(
-                internshipId, processId, createUserId, verifyUserId, saveMergeRows, teacherLoadMap, verifyType);
-        return buildInitTeacherStudentResult(counts[0], counts[1]);
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getInitTeacherStudentTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        InitTutorAssignTask task = initTutorAssignTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeInitTeacherStudentByInternshipId(String taskId) {
+        InitTutorAssignTask task = initTutorAssignTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        Integer internshipId = task.getInternshipId();
+        task.setStatus(InitTutorAssignTask.STATUS_RUNNING);
+        try {
+            List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
+            List<Object> saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+            task.setTotal(saveMergeRows.size());
+            if (saveMergeRows.isEmpty()) {
+                task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+                task.setMessage("没有待提交的校内导师分配记录");
+                return;
+            }
+
+            Set<Integer> reassignRelIds = new HashSet<>();
+            for (Object row : saveMergeRows) {
+                if (row == null) {
+                    continue;
+                }
+                JSONObject j = FastJsonUtil.toJson(row);
+                Integer rtsId = j.getInteger("relationId");
+                if (rtsId == null) {
+                    rtsId = j.getInteger("relTeaStuId");
+                }
+                if (rtsId != null) {
+                    reassignRelIds.add(rtsId);
+                }
+            }
+            Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapExcluding(internshipId, teacherIds, reassignRelIds);
+            Set<Integer> stillSaveRtsIds = snapshotStillSaveRtsIds(internshipId);
+
+            for (Object row : saveMergeRows) {
+                JSONObject j = FastJsonUtil.toJson(row);
+                Integer rtsId = j.getInteger("relationId");
+                if (rtsId == null) {
+                    rtsId = j.getInteger("relTeaStuId");
+                }
+                if (rtsId == null) {
+                    task.incrementSkipped();
+                    task.incrementProcessed();
+                    continue;
+                }
+                if (!stillSaveRtsIds.contains(rtsId)) {
+                    task.incrementSkipped();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("success", false);
+                    item.put("skipped", true);
+                    item.put("message", "已非待提交（SAVE）");
+                    task.addDetail(item);
+                    continue;
+                }
+                Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+                try {
+                    int verifyN = selfProxy.assignOneInternalTutorRowInNewTx(
+                            internshipId, task.getProcessId(), task.getCreateUserId(), task.getVerifyUserId(),
+                            rtsId, j.getInteger("relInternshipId"), selectedTeacherId, task.getCurrentVerifyTypeId());
+                    if (verifyN < 0) {
+                        task.incrementSkipped();
+                        task.incrementProcessed();
+                        JSONObject item = new JSONObject();
+                        item.put("relationId", rtsId);
+                        item.put("success", false);
+                        item.put("skipped", true);
+                        item.put("message", "记录不存在或已非 SAVE");
+                        task.addDetail(item);
+                        continue;
+                    }
+                    teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
+                    task.incrementAssigned();
+                    task.addVerifyUpdated(verifyN);
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("teacherId", selectedTeacherId);
+                    item.put("success", true);
+                    item.put("verifyUpdatedCount", verifyN);
+                    task.addDetail(item);
+                } catch (RuntimeException ex) {
+                    task.incrementFailed();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("teacherId", selectedTeacherId);
+                    item.put("success", false);
+                    item.put("message", ex.getMessage());
+                    task.addDetail(item);
+                    logger.warn("系统分配校内导师失败 internshipId={} rtsId={}: {}",
+                            internshipId, rtsId, ex.getMessage());
+                }
+            }
+            task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+            task.setMessage("分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(InitTutorAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("系统分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, taskId);
+        }
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public int assignOneInternalTutorRowInNewTx(Integer internshipId, Integer processId, Integer createUserId,
+                                                String verifyUserId, Integer rtsId, Integer relInternshipId,
+                                                Integer teacherId, int currentVerifyTypeId) {
+        if (rtsId == null || teacherId == null) {
+            return -1;
+        }
+        if (!isInternalTutorAssignMergeRowStillSave(internshipId, rtsId)) {
+            return -1;
+        }
+        Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
+        if (rtsObj == null) {
+            return -1;
+        }
+        JSONObject upd = new JSONObject();
+        upd.put("id", rtsId);
+        upd.put("teacherId", teacherId);
+        upd.put("currentVerifyTypeId", currentVerifyTypeId);
+        iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
+        ensureDiaryEntriesForAssignedStuPost(relInternshipId);
+        return updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
     }
 
     @Override
@@ -3612,12 +3947,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
      * 若已存在对应 processId 下的审核记录，则将其 createUserId、verifyUserId 更新为本次传入值。
      *
      * @return int[0]=已更新 teacherId 的 RelTeacherStudent 条数，int[1]=已更新的 MainVerifyProcess 行数（可能大于条数，因一对多）
+     * @deprecated 已由异步逐条 {@link #assignOneInternalTutorRowInNewTx} 替代
      */
+    @Deprecated
     private int[] assignInternalTeacherForExistingMergeRows(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
             List<Object> mergeRows, Map<Integer, Integer> teacherLoadMap, int currentVerifyTypeId) {
         int assignedCount = 0;
         int verifyUpdatedCount = 0;
-        // 一次性快照本实习当前仍为 SAVE 的 rtsId 集合，避免在循环里对每条行做 2 次回查（原 2N 次缩到 1 次）。
         Set<Integer> stillSaveRtsIds = snapshotStillSaveRtsIds(internshipId);
         for (Object row : mergeRows) {
             JSONObject j = FastJsonUtil.toJson(row);
@@ -3629,24 +3965,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 continue;
             }
             if (!stillSaveRtsIds.contains(rtsId)) {
-                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 已非待提交（SAVE）", rtsId);
-                continue;
-            }
-            Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
-            if (rtsObj == null) {
-                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 不存在", rtsId);
                 continue;
             }
             Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+            int verifyN = assignOneInternalTutorRowInNewTx(
+                    internshipId, processId, createUserId, verifyUserId,
+                    rtsId, j.getInteger("relInternshipId"), selectedTeacherId, currentVerifyTypeId);
+            if (verifyN < 0) {
+                continue;
+            }
             teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
-            JSONObject upd = new JSONObject();
-            upd.put("id", rtsId);
-            upd.put("teacherId", selectedTeacherId);
-            upd.put("currentVerifyTypeId", currentVerifyTypeId);
-            iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
-            ensureDiaryEntriesForAssignedStuPost(j.getInteger("relInternshipId"));
             assignedCount++;
-            verifyUpdatedCount += updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
+            verifyUpdatedCount += verifyN;
         }
         return new int[]{assignedCount, verifyUpdatedCount};
     }

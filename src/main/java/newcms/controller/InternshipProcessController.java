@@ -459,15 +459,11 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "根据实习项目初始化校内导师分配",
+            summary = "根据实习项目初始化校内导师分配（异步）",
             description = "查询 ViewVerifyProcessRelIntTeacherStudentMerge（processTypeCode=EXTERNAL_ASSIGN_INTERNAL_TUTOR）中该实习项目下"
-                    + "待提交（isAudit=SAVE）的师生记录（含已暂存 teacherId 的草稿）；已提交的记录不在查询范围内、不会被改写。"
-                    + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、审核通过（PASS）、"
-                    + "jobCode 非 STUDENT/COMPANY_TUTOR 的用户 userId（学校教师、管理员等均可）；"
-                    + "查 ViewVerifyProcessRelIntTeacherStudentMerge 时不使用 jobCode 条件。"
-                    + "在剥离本批 SAVE 行旧分配后的负载上按均衡策略写入 teacherId（再次点击可因新增导师而重算）；"
-                    + "若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
-                    + "则更新其 createUserId、verifyUserId 为请求传入值。createdVerifyProcessCount 为实际更新的审核行数。"
+                    + "待提交（isAudit=SAVE）的师生记录；立即返回 taskId，后台按条独立短事务均衡写入 teacherId。"
+                    + "用 getInitTeacherStudentTaskStatus 轮询；同项目同时只允许一个进行中任务。"
+                    + "中途停服时已提交的分配会保留。"
     )
     @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object initTeacherStudentByInternshipId(@RequestBody JSONObject requestJson) {
@@ -488,6 +484,22 @@ public class InternshipProcessController {
                 iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
                         currentVerifyTypeId)
         );
+    }
+
+    @Operation(
+            summary = "查询系统分配校内导师任务进度",
+            description = "taskId 来自 initTeacherStudentByInternshipId。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；percent 0~100；完成后含 details。"
+    )
+    @PostMapping(value = "/getInitTeacherStudentTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getInitTeacherStudentTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getInitTeacherStudentTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getInitTeacherStudentTaskStatus(taskId));
     }
 
     @Operation(
@@ -552,10 +564,10 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "Excel 导入师生手动分配",
-            description = "等价于前端「确定」时先 getVerifyUserIds 再 manualAssignTeacherStudent。"
-                    + "Excel 表头：学号、学生姓名、教师工号、老师姓名；仅「学号」「教师工号」参与匹配（workId），姓名列仅展示不用。"
-                    + "学生、教师均须本项目入项审核通过；学生另须选岗审核通过；教师须非学生且非企业导师。"
+            summary = "Excel 导入师生手动分配（异步）",
+            description = "同步解析/校验 Excel 后立即返回 taskId，后台按教师组短事务调用 manualAssignTeacherStudent。"
+                    + "用 getImportManualAssignTeacherStudentTaskStatus 轮询；同项目同时只允许一个导入分配任务。"
+                    + "中途停服时已提交的教师组分配会保留。"
                     + "multipart：file、internshipId、processId、createUserId、verifyRoleId（可选）、"
                     + "currentVerifyTypeId（可选，默认 1=NO_VERIFY，有审核传 2=ONE_VERIFY）。"
     )
@@ -577,6 +589,22 @@ public class InternshipProcessController {
         LogUtil.loggerRecord("importManualAssignTeacherStudentByExcel", log);
         return BaseResponse.ok(iInternshipService.importManualAssignTeacherStudentByExcel(
                 file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId));
+    }
+
+    @Operation(
+            summary = "查询 Excel 导入分配任务进度",
+            description = "taskId 来自 importManualAssignTeacherStudentByExcel。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；完成后含 failures。"
+    )
+    @PostMapping(value = "/getImportManualAssignTeacherStudentTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getImportManualAssignTeacherStudentTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getImportManualAssignTeacherStudentTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getImportManualAssignTeacherStudentTaskStatus(taskId));
     }
 
     @Operation(
@@ -683,10 +711,11 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "未选岗学生系统分配岗位",
-            description = "将实习项目安排中尚未选岗的学生（与 getExternalInternshipStudentPostBreakdown 的 notSelected 口径一致），"
-                    + "随机报名到 listApprovedExternalInternshipPosts 岗位池内审核通过且有空位的企业岗位；"
-                    + "内部调用 stuSelPost(studentId,0,postId)。返回 assignedCount / failedCount / unassignedCount / details。"
+            summary = "未选岗学生系统分配岗位（异步）",
+            description = "将实习项目安排中尚未选岗的学生随机报名到审核通过且有空位的企业岗位；"
+                    + "立即返回 taskId，后台串行调用 stuSelPost。"
+                    + "用 getRandomAssignPostsTaskStatus 轮询 status/percent/assignedCount。"
+                    + "同项目同时只允许一个进行中的任务。"
     )
     @PostMapping(value = "/randomAssignPostsForUnselectedStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object randomAssignPostsForUnselectedStudents(@RequestBody JSONObject requestJson) {
@@ -699,7 +728,23 @@ public class InternshipProcessController {
         if (internshipId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
         }
-        return BaseResponse.ok(iInternshipService.randomAssignPostsForUnselectedStudents(internshipId));
+        return BaseResponse.ok(iInternshipService.startRandomAssignPostsForUnselectedStudents(internshipId));
+    }
+
+    @Operation(
+            summary = "查询随机分配岗位任务进度",
+            description = "taskId 来自 randomAssignPostsForUnselectedStudents。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；percent 0~100；完成后含 details。"
+    )
+    @PostMapping(value = "/getRandomAssignPostsTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getRandomAssignPostsTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getRandomAssignPostsTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getRandomAssignPostsTaskStatus(taskId));
     }
 
     @Operation(

@@ -193,6 +193,12 @@ public class Base extends Constant {
                         // 支持逗号和管道符两种分隔符：如果包含 | 就用 | 分割，否则用 , 分割
                         String delimiter = valueStr.contains("|") ? "\\|" : ",";
                         list.add(criteriaBuilder.not(root.get(field.getName()).in(Arrays.stream(valueStr.split(delimiter)).toArray())));
+                    }
+                    // IS_NULL / IS_NOT_NULL：不依赖 searchKeys 值（空值也不会被 ObjectUtils.isEmpty 跳过）
+                    else if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.IS_NULL)) {
+                        list.add(criteriaBuilder.isNull(root.get(field.getName())));
+                    } else if (regMap.containsKey(field.getName()) && regMap.get(field.getName()).equals(Constant.IS_NOT_NULL)) {
+                        list.add(criteriaBuilder.isNotNull(root.get(field.getName())));
                     } else {
                         switch (field.getType().getName()) {
                             case "java.lang.String":

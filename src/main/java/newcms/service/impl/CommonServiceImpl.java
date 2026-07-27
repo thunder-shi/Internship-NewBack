@@ -2,6 +2,7 @@ package newcms.service.impl;
 
 import newcms.base.Base;
 import newcms.base.BaseResponse;
+import newcms.base.Constant;
 import newcms.service.ICommonService;
 import newcms.utils.DaoClassUtil;
 import newcms.utils.DateUtil;
@@ -181,6 +182,10 @@ public class CommonServiceImpl extends Base implements ICommonService {
             searchKey.putAll(searchKeys);
             for (Map.Entry<String, Object> entry : searchKey.entrySet()) {
                 if (ObjectUtils.isEmpty(entry.getValue())) {
+                    // IS_NULL / IS_NOT_NULL 依赖 searchKeys 保留键名，空值占位不可删
+                    if (isNullabilityOperator(repMap, entry.getKey())) {
+                        continue;
+                    }
                     if (repMap != null) {
                         repMap.remove(entry.getKey());
                     }
@@ -415,6 +420,9 @@ public class CommonServiceImpl extends Base implements ICommonService {
             searchKey.putAll(searchKeys);
             for (Map.Entry<String, Object> entry : searchKey.entrySet()) {
                 if (ObjectUtils.isEmpty(entry.getValue())) {
+                    if (isNullabilityOperator(repMap, entry.getKey())) {
+                        continue;
+                    }
                     if (repMap != null) {
                         repMap.remove(entry.getKey());
                     }
@@ -483,5 +491,14 @@ public class CommonServiceImpl extends Base implements ICommonService {
             
             throw BaseResponse.moreInfoError.error("删除出错[" + tblName + "]: " + errorType + " - " + (errorMsg != null ? errorMsg : "未知错误"));
         }
+    }
+
+    /** IS_NULL / IS_NOT_NULL 时 searchKeys 常传空串占位，不能当「空条件」清掉。 */
+    private static boolean isNullabilityOperator(Map<String, String> repMap, String field) {
+        if (repMap == null || field == null) {
+            return false;
+        }
+        String op = repMap.get(field);
+        return Constant.IS_NULL.equals(op) || Constant.IS_NOT_NULL.equals(op);
     }
 }

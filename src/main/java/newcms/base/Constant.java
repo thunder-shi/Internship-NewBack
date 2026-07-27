@@ -22,6 +22,10 @@ public class Constant {
     public static final String NOT_IN = "!()";
     public static final String FIND_IN = "fi()";
     public static final String RANGE = "<=>";
+    /** 字段 IS NULL；searchKeys 需带该字段键，值可任意（通常传空串） */
+    public static final String IS_NULL = "null";
+    /** 字段 IS NOT NULL；searchKeys 需带该字段键，值可任意（通常传空串） */
+    public static final String IS_NOT_NULL = "!null";
     /**
      * APPLICATION_NAME 项目名
      * FILE_SEPARATOR 自定义统一文本分隔符
