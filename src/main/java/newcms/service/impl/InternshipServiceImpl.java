@@ -39,6 +39,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -1450,7 +1451,12 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return result;
     }
 
+    /**
+     * 导入编排不启事务：避免「内部捕获业务异常 → 事务已被标 rollback-only → 提交失败」。
+     * 真正写库走 {@link #manualAssignTeacherStudent} 的独立事务（经 selfProxy）。
+     */
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
                                                           Integer createUserId, Integer verifyRoleId,
                                                           Integer currentVerifyTypeId) {
@@ -1470,20 +1476,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号/教师工号数据");
         }
 
-        // 预加载本项目入项审核通过的用户、以及选岗已通过的学生
+        // 预加载本项目入项审核通过的用户、以及选岗已通过的学生（不抛业务异常，避免污染事务）
         Set<Integer> internshipPassUserIds = loadInternshipPassUserIds(internshipId);
-        Set<Integer> selectableStudentIds = new HashSet<>();
-        try {
-            for (Object relStuObj : getStudentInternshipSelections(internshipId)) {
-                Integer sid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(relStuObj));
-                if (sid != null) {
-                    selectableStudentIds.add(sid);
-                }
-            }
-        } catch (RuntimeException e) {
-            // 无通过选岗记录时，后续逐行记失败
-            selectableStudentIds = Collections.emptySet();
-        }
+        Set<Integer> selectableStudentIds = loadSelectableStudentUserIdsQuietly(internshipId);
 
         JSONArray failures = new JSONArray();
         // teacherId -> studentIds（按教师聚合后调用手动分配）
@@ -1583,7 +1578,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 continue;
             }
             try {
-                Object assignResult = manualAssignTeacherStudent(
+                // 经代理调用，使用 manualAssign 自身的独立事务；单组失败不影响其他组
+                Object assignResult = selfProxy.manualAssignTeacherStudent(
                         internshipId, processId, createUserId, verifyUserId, verifyType, teacherId, studentIds);
                 JSONObject ar = FastJsonUtil.toJson(assignResult);
                 createdRelTeacherStudentCount += nullToZero(ar.getInteger("createdRelTeacherStudentCount"));
@@ -1613,6 +1609,22 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         result.put("failures", failures);
         result.put("totalExcelRowCount", excelRows.size());
         return result;
+    }
+
+    /** 静默加载选岗已通过的学生 userId；无数据时返回空集，不抛业务异常。 */
+    private Set<Integer> loadSelectableStudentUserIdsQuietly(Integer internshipId) {
+        Set<Integer> out = new HashSet<>();
+        try {
+            for (Object relStuObj : getStudentInternshipSelections(internshipId)) {
+                Integer sid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(relStuObj));
+                if (sid != null) {
+                    out.add(sid);
+                }
+            }
+        } catch (RuntimeException ignored) {
+            return Collections.emptySet();
+        }
+        return out;
     }
 
     @Override
