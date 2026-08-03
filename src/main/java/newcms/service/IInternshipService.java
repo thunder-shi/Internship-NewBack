@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+import org.springframework.web.multipart.MultipartFile;
+
 @Service
 public interface IInternshipService {
 
@@ -112,7 +114,8 @@ public interface IInternshipService {
 
     /**
      * 根据实习项目和岗位编码获取可选用户列表（带分页）
-     * 从 ViewBaseUser 中筛选出 jobCode 匹配且尚未在 RelIntershipUser 中关联到该实习项目的用户
+     * 从 ViewBaseUser 中筛选尚未在 RelIntershipUser 关联到该实习项目的用户。
+     * {@code jobCode=STUDENT} 时按学生过滤；{@code SCHOOL_TEACHER}/{@code COMPANY_TUTOR} 时查所有非学生（jobCode != STUDENT）。
      *
      * @param internshipId  实习项目ID
      * @param jobCode       岗位编码
@@ -133,26 +136,61 @@ public interface IInternshipService {
                                                   Integer currentVerifyTypeId);
 
     /**
+     * 按 Excel「学号/工号」匹配用户 workId 批量创建 RelIntershipUser + MainVerifyProcess(SAVE)。
+     * {@code role=student}：仅允许学生；{@code role=teacher}：不允许学生与企业导师。
+     */
+    Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
+                                         Integer processId, Integer createUserId, Integer verifyRoleId,
+                                         Integer currentVerifyTypeId, String role);
+
+    /**
+     * 下载实习用户安排 Excel 导入模板。
+     * {@code role=student} 表头「学号」「姓名」；{@code role=teacher} 表头「工号」「姓名」。
+     */
+    void downloadRelIntershipUserImportTemplate(String role);
+
+    /**
      * 查询当前实习项目下可参与分配的老师（入项审核通过），按部门过滤。
      *
-     * @param jobCode {@link newcms.base.Constant.USER_JOB_CODE#SCHOOL_TEACHER} 或 {@link newcms.base.Constant.USER_JOB_CODE#COMPANY_TUTOR}
+     * @param jobCode {@link newcms.base.Constant.USER_JOB_CODE#SCHOOL_TEACHER}（查所有非学生）
+     *                或 {@link newcms.base.Constant.USER_JOB_CODE#COMPANY_TUTOR}（仅企业导师）
      */
     Object listAssignableTeachers(Integer internshipId, Integer departmentId, String jobCode);
 
     /**
-     * 查询当前实习项目下可参与系统分配的学生（岗位审核通过且选岗审核通过），按部门树过滤。
+     * 查询当前实习项目下可参与校内导师分配的学生（岗位审核通过且选岗审核通过），按部门精确过滤。
+     * 校内导师已指定且非待提交(SAVE)的不返回；待提交草稿（含已写 teacherId）仍返回。
      */
     Object listAssignableStudents(Integer internshipId, Integer departmentId);
 
     /**
      * 根据实习项目为「校外分配校内导师」流程下仍处于待提交（SAVE）的师生记录均衡分配或重算 teacherId；不新建 MainVerifyProcess。
-     * 已提交（非 SAVE）的记录不会进入分配范围。对已存在的 {@code MainVerifyProcess}（同 relationId、processId、RelTeacherStudent）
-     * 写入本次传入的 {@code createUserId}、{@code verifyUserId}。
+     * <p>异步启动：立即返回 {@code taskId}；后台按条独立短事务提交（中途停服已成功条保留）。
+     * 用 {@link #getInitTeacherStudentTaskStatus} 轮询进度。</p>
      *
      * @param currentVerifyTypeId 写入 RelTeacherStudent 的 currentVerifyTypeId；不传默认 1
      */
     Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                             Integer currentVerifyTypeId);
+
+    /**
+     * 查询 {@link #initTeacherStudentByInternshipId} 异步任务进度。
+     */
+    Object getInitTeacherStudentTaskStatus(String taskId);
+
+    /**
+     * 后台执行系统分配（由异步 Runner 调用）。
+     */
+    void executeInitTeacherStudentByInternshipId(String taskId);
+
+    /**
+     * 单条校内导师分配（独立事务，供异步循环调用）。
+     *
+     * @return 更新的 MainVerifyProcess 行数；跳过返回 -1
+     */
+    int assignOneInternalTutorRowInNewTx(Integer internshipId, Integer processId, Integer createUserId,
+                                         String verifyUserId, Integer rtsId, Integer relInternshipId,
+                                         Integer teacherId, int currentVerifyTypeId);
 
     /**
      * 与 {@link #initTeacherStudentByInternshipId} 相同。
@@ -161,10 +199,33 @@ public interface IInternshipService {
                                            Integer currentVerifyTypeId);
 
     /**
-     * 手动指定单个老师和多个学生，批量创建 RelTeacherStudent 及其审核记录。
+     * 手动指定老师与学生：优先更新指定 processId 下已有 SAVE 占位的 teacherId；无占位则新建；已提交则跳过。
      */
     Object manualAssignTeacherStudent(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                       Integer currentVerifyTypeId, Integer teacherId, List<Integer> studentIds);
+
+    /**
+     * Excel 导入师生分配（异步）：同步解析/校验 Excel，立即返回 taskId；后台按教师组短事务分配。
+     * 用 {@link #getImportManualAssignTeacherStudentTaskStatus} 轮询。
+     */
+    Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
+                                                   Integer createUserId, Integer verifyRoleId,
+                                                   Integer currentVerifyTypeId);
+
+    /**
+     * 查询 Excel 导入分配任务进度。
+     */
+    Object getImportManualAssignTeacherStudentTaskStatus(String taskId);
+
+    /**
+     * 后台执行导入分配（由异步 Runner 调用）。
+     */
+    void executeImportManualAssignTeacherStudentByExcel(String taskId);
+
+    /**
+     * 下载师生手动分配 Excel 导入模板（表头：学号、学生姓名、教师工号、老师姓名）。
+     */
+    void downloadManualAssignTeacherStudentImportTemplate();
 
     // /**
     //  * 获取当前进行中的实习项目
@@ -219,16 +280,37 @@ public interface IInternshipService {
     Object listInternalInternshipTeachersNotSubmittedTopic(Integer internshipId, Integer departmentId, Integer page, Integer size);
 
     /**
-     * 指定校外实习项目：学生选岗情况（当前统计口径部门子树内已报名学生）。
+     * 指定校外实习项目：学生选岗情况（视图 view_external_internship_student_post_breakdown；部门权限仍在服务端过滤）。
      * <p>权限规则同 {@link #listExternalInternshipCollegeStats(Integer, Integer, Integer)}。</p>
      *
-     * @param status {@code all}、{@code notSelected}、{@code selectedPendingAudit}、{@code postApproved}
+     * @param status {@code all}、{@code notSelected}（未报名）、{@code selected}（已报名=有任意选岗记录）、
+     *               {@code selectedPendingAudit}、{@code postApproved}；{@code counts} 始终含上述细分与 {@code selected}
      */
     Object getExternalInternshipStudentPostBreakdown(Integer internshipId, Integer page, Integer size, String status,
                                                      Integer departmentId);
 
     /**
-     * 校外实习：对未选岗学生随机分配审核通过且有空位的企业岗位（复用 {@code stuSelPost} 选岗逻辑）。
+     * 校外实习系统分配：将实习项目安排中尚未选岗的学生，随机报名到审核通过且有空位的企业岗位（复用 {@code stuSelPost}）。
+     * <p>学生口径与 {@link #getExternalInternshipStudentPostBreakdown} 的 {@code notSelected} 一致。</p>
+     * <p>异步启动：立即返回 {@code taskId} 与初始进度，实际分配在后台执行；用 {@link #getRandomAssignPostsTaskStatus} 轮询。</p>
      */
-    Object randomAssignPostsForUnselectedStudents(Integer internshipId);
+    Object startRandomAssignPostsForUnselectedStudents(Integer internshipId);
+
+    /**
+     * 查询 {@link #startRandomAssignPostsForUnselectedStudents} 异步任务进度。
+     */
+    Object getRandomAssignPostsTaskStatus(String taskId);
+
+    /**
+     * 后台执行随机分配（由异步 Runner 调用，勿直接对外暴露）。
+     */
+    void executeRandomAssignPostsForUnselectedStudents(String taskId, Integer internshipId);
+
+    /**
+     * @deprecated 请使用 {@link #startRandomAssignPostsForUnselectedStudents(Integer)} 异步接口
+     */
+    @Deprecated
+    default Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+        return startRandomAssignPostsForUnselectedStudents(internshipId);
+    }
 }

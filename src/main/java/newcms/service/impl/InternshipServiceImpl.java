@@ -1,20 +1,27 @@
 package newcms.service.impl;
 
+import cn.hutool.poi.excel.ExcelReader;
+import cn.hutool.poi.excel.ExcelUtil;
+import cn.hutool.poi.excel.ExcelWriter;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletResponse;
 import newcms.base.Base;
+import newcms.base.BaseException;
 import newcms.base.BaseResponse;
 import newcms.base.Constant;
 import newcms.entity.db.MainInternshipPost;
 import newcms.entity.db.RelTitleStudent;
 import newcms.entity.db.RelTitleTeacher;
 import newcms.entity.db.ViewBaseUser;
+import newcms.entity.db.ViewExternalInternshipStudentPostBreakdown;
 import newcms.repository.db.MainInternshipPostDao;
 import newcms.repository.db.RelStuInternshipPostDao;
 import newcms.repository.db.RelTitleStudentDao;
 import newcms.repository.db.RelTitleTeacherDao;
 import newcms.repository.db.ViewExternalInternshipCollegeStatsDao;
+import newcms.repository.db.ViewExternalInternshipStudentPostBreakdownDao;
 import newcms.service.ICommonService;
 import newcms.service.IDataTreeService;
 import newcms.service.IDiaryService;
@@ -24,6 +31,15 @@ import newcms.service.IInternshipPostService;
 import newcms.service.IInternshipService;
 import newcms.service.IInternshipTerminationService;
 import newcms.service.IVerifyProcessService;
+import newcms.service.support.ImportManualAssignAsyncRunner;
+import newcms.service.support.ImportManualAssignTask;
+import newcms.service.support.ImportManualAssignTaskStore;
+import newcms.service.support.InitTutorAssignAsyncRunner;
+import newcms.service.support.InitTutorAssignTask;
+import newcms.service.support.InitTutorAssignTaskStore;
+import newcms.service.support.RandomAssignPostAsyncRunner;
+import newcms.service.support.RandomAssignPostTask;
+import newcms.service.support.RandomAssignPostTaskStore;
 import newcms.utils.FastJsonUtil;
 import newcms.utils.GeneralUtil;
 import org.springframework.context.annotation.Lazy;
@@ -32,11 +48,18 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -45,7 +68,9 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(rollbackFor = Exception.class)
 public class InternshipServiceImpl extends Base implements IInternshipService {
-    private static final String TEACHER_JOB_CODE = Constant.USER_JOB_CODE.SCHOOL_TEACHER;
+    private static final String TABLE_MAIN_DIARY = "MainDiary";
+    private static final BigDecimal MIN_DIARY_SCORE = BigDecimal.ZERO;
+    private static final BigDecimal MAX_DIARY_SCORE = new BigDecimal("100");
     /** 师生审核综合视图：企业/校外导师（原 ViewVerifyProcessRelTeacherStudentMerge 拆分） */
     private static final String VIEW_VERIFY_REL_ASS_TEA_STU_MERGE = "ViewVerifyProcessRelEntTeacherStudentMerge";
     /** 师生审核综合视图：校内导师 */
@@ -65,6 +90,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private static final String INTERNAL_INT_TYPE_NAME = "校内实习";
     private static final String STU_POST_STATUS_ALL = "all";
     private static final String STU_POST_STATUS_NOT_SELECTED = "notSelected";
+    /** 已报名：有任意选岗记录（合并 selectedPendingAudit + postApproved，按 userId 去重） */
+    private static final String STU_POST_STATUS_SELECTED = "selected";
     private static final String STU_POST_STATUS_SELECTED_PENDING = "selectedPendingAudit";
     private static final String STU_POST_STATUS_POST_APPROVED = "postApproved";
 
@@ -92,6 +119,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     private ViewExternalInternshipCollegeStatsDao viewExternalInternshipCollegeStatsDao;
 
     @Resource
+    private ViewExternalInternshipStudentPostBreakdownDao viewExternalInternshipStudentPostBreakdownDao;
+
+    @Resource
     private IDataTreeService iDataTreeService;
 
     @Resource
@@ -114,6 +144,24 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
 
     @Resource
     private IDiaryService iDiaryService;
+
+    @Resource
+    private RandomAssignPostTaskStore randomAssignPostTaskStore;
+
+    @Resource
+    private RandomAssignPostAsyncRunner randomAssignPostAsyncRunner;
+
+    @Resource
+    private InitTutorAssignTaskStore initTutorAssignTaskStore;
+
+    @Resource
+    private InitTutorAssignAsyncRunner initTutorAssignAsyncRunner;
+
+    @Resource
+    private ImportManualAssignTaskStore importManualAssignTaskStore;
+
+    @Resource
+    private ImportManualAssignAsyncRunner importManualAssignAsyncRunner;
 
     /** 自注入代理：用于在主事务 afterCommit 后以独立事务调用本类方法（绕开 this. 的 AOP 失效问题）。 */
     @Resource
@@ -723,13 +771,20 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .collect(Collectors.toSet());
 
         // 2. 组装 ViewBaseUser 的查询条件：
-        //    - jobCode = 前端传入 jobCode
+        //    - jobCode：STUDENT 仍按等值；SCHOOL_TEACHER / COMPANY_TUTOR 改为「非学生」（jobCode != STUDENT）
         //    - departmentId IN（expand=true：各节点及其子树并集；expand=false：仅传入列表，不判断父子）
         //    - id NOT IN (已关联且未删除的 userId 列表)
         JSONObject userSearchKeys = new JSONObject();
-        userSearchKeys.put("jobCode", jobCode);
-
         Map<String, String> repMap = new HashMap<>();
+        // userSearchKeys.put("jobCode", jobCode); // 原：严格按传入 jobCode 过滤
+        if (Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(jobCode)
+                || Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(jobCode)) {
+            userSearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
+            repMap.put("jobCode", Constant.NE);
+        } else {
+            userSearchKeys.put("jobCode", jobCode);
+        }
+
         Set<Integer> allowedDepartmentIds = new HashSet<>();
         for (Integer departmentId : departmentIds) {
             if (departmentId == null) {
@@ -860,6 +915,368 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return result;
     }
 
+    private static final String IMPORT_ROLE_STUDENT = "student";
+    private static final String IMPORT_ROLE_TEACHER = "teacher";
+
+    @Override
+    public Object importRelIntershipUserByExcel(MultipartFile file, Integer internshipId,
+                                                Integer processId, Integer createUserId, Integer verifyRoleId,
+                                                Integer currentVerifyTypeId, String role) {
+        if (file == null || file.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("请上传 Excel 文件");
+        }
+        if (internshipId == null || processId == null || createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
+        }
+        String normalizedRole = normalizeImportRole(role);
+        int verifyType = (currentVerifyTypeId == null ? 1 : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
+
+        boolean teacherMode = IMPORT_ROLE_TEACHER.equals(normalizedRole);
+        List<ExcelStudentNoRow> excelRows = parseRelIntershipUserExcelStudentNos(file);
+        if (excelRows.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error(teacherMode
+                    ? "Excel 中没有有效的工号数据"
+                    : "Excel 中没有有效的学号数据");
+        }
+
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+
+        int createdRelIntershipUserCount = 0;
+        int createdVerifyProcessCount = 0;
+        int skippedExistingCount = 0;
+        JSONArray failures = new JSONArray();
+        Set<String> seenWorkIds = new HashSet<>();
+        String emptyLabel = teacherMode ? "工号为空" : "学号为空";
+        String dupLabel = teacherMode ? "Excel 内工号重复" : "Excel 内学号重复";
+        String notFoundLabel = teacherMode ? "未找到该工号对应用户" : "未找到该学号对应工号的用户";
+
+        for (ExcelStudentNoRow excelRow : excelRows) {
+            String workIdValue = excelRow.studentNo;
+            int excelRowNum = excelRow.rowNum;
+            if (workIdValue == null || workIdValue.isBlank()) {
+                failures.add(buildImportFailure(excelRowNum, workIdValue, emptyLabel));
+                continue;
+            }
+            String normalizedWorkId = workIdValue.trim();
+            if (!seenWorkIds.add(normalizedWorkId)) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, dupLabel));
+                continue;
+            }
+
+            JSONObject user = findUserByWorkId(normalizedWorkId);
+            if (user == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, notFoundLabel));
+                continue;
+            }
+            String jobCode = user.getString("jobCode");
+            String identityError = validateImportUserIdentity(normalizedRole, jobCode);
+            if (identityError != null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, identityError));
+                continue;
+            }
+            Integer userId = user.getInteger("id");
+            if (userId == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, "用户 id 无效"));
+                continue;
+            }
+
+            Integer existingRelId = findExistingRelIntershipUserId(internshipId, userId);
+            if (existingRelId != null) {
+                if (!hasRelIntershipUserVerifyProcess(existingRelId, processId)) {
+                    createRelIntershipUserVerifyProcess(existingRelId, processId, createUserId, verifyUserId);
+                    createdVerifyProcessCount++;
+                }
+                skippedExistingCount++;
+                continue;
+            }
+
+            JSONObject relIntershipUserJson = new JSONObject();
+            relIntershipUserJson.put("internshipId", internshipId);
+            relIntershipUserJson.put("userId", userId);
+            relIntershipUserJson.put("currentVerifyTypeId", verifyType);
+            Object savedRelIntershipUser = iCommonService.saveOneRecord("RelIntershipUser", relIntershipUserJson);
+            Integer relationId = FastJsonUtil.toJson(savedRelIntershipUser).getInteger("id");
+            if (relationId == null) {
+                failures.add(buildImportFailure(excelRowNum, normalizedWorkId, "创建 RelIntershipUser 失败"));
+                continue;
+            }
+            createdRelIntershipUserCount++;
+            createRelIntershipUserVerifyProcess(relationId, processId, createUserId, verifyUserId);
+            createdVerifyProcessCount++;
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("role", normalizedRole);
+        result.put("createdRelIntershipUserCount", createdRelIntershipUserCount);
+        result.put("createdVerifyProcessCount", createdVerifyProcessCount);
+        result.put("skippedExistingCount", skippedExistingCount);
+        result.put("failedCount", failures.size());
+        result.put("failures", failures);
+        result.put("totalExcelRowCount", excelRows.size());
+        result.put("verifyUserId", verifyUserId);
+        return result;
+    }
+
+    private String normalizeImportRole(String role) {
+        if (role == null || role.isBlank()) {
+            return IMPORT_ROLE_STUDENT;
+        }
+        String normalized = role.trim().toLowerCase(Locale.ROOT);
+        if (IMPORT_ROLE_STUDENT.equals(normalized) || IMPORT_ROLE_TEACHER.equals(normalized)) {
+            return normalized;
+        }
+        throw BaseResponse.parameterInvalid.error("role 仅支持 student 或 teacher");
+    }
+
+    /**
+     * @return 身份不符时的错误文案；通过返回 null
+     */
+    private String validateImportUserIdentity(String role, String jobCode) {
+        if (IMPORT_ROLE_STUDENT.equals(role)) {
+            if (jobCode != null && !jobCode.isBlank()
+                    && !Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+                return "该用户不是学生身份(jobCode=" + jobCode + ")";
+            }
+            return null;
+        }
+        // teacher：排除学生、企业导师
+        if (Constant.USER_JOB_CODE.STUDENT.equals(jobCode)) {
+            return "教师导入不允许学生身份";
+        }
+        if (Constant.USER_JOB_CODE.COMPANY_TUTOR.equals(jobCode)) {
+            return "教师导入不允许企业导师身份";
+        }
+        return null;
+    }
+
+    @Override
+    public void downloadRelIntershipUserImportTemplate(String role) {
+        String normalizedRole = normalizeImportRole(role);
+        boolean teacherMode = IMPORT_ROLE_TEACHER.equals(normalizedRole);
+        ExcelWriter writer = null;
+        try {
+            List<List<Object>> rows = new ArrayList<>();
+            if (teacherMode) {
+                rows.add(Arrays.asList("工号", "姓名"));
+                rows.add(Arrays.asList("T001", "李老师"));
+            } else {
+                rows.add(Arrays.asList("学号", "姓名"));
+                rows.add(Arrays.asList("2401012307", "张三"));
+            }
+            writer = ExcelUtil.getWriter(true);
+            writer.write(rows, false);
+            writer.setColumnWidth(0, 20);
+            writer.setColumnWidth(1, 16);
+
+            ServletRequestAttributes attributes =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null || attributes.getResponse() == null) {
+                throw BaseResponse.moreInfoError.error("无法获取响应对象");
+            }
+            HttpServletResponse response = attributes.getResponse();
+            String rawName = teacherMode ? "教师实习项目安排导入模板" : "学生实习项目安排导入模板";
+            String fileName = URLEncoder.encode(rawName, StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            OutputStream outputStream = response.getOutputStream();
+            writer.flush(outputStream, true);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("下载模板失败: " + e.getMessage());
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+        }
+    }
+
+    private static final class ExcelStudentNoRow {
+        private final int rowNum;
+        private final String studentNo;
+
+        private ExcelStudentNoRow(int rowNum, String studentNo) {
+            this.rowNum = rowNum;
+            this.studentNo = studentNo;
+        }
+    }
+
+    private JSONObject buildImportFailure(int rowNum, String studentNo, String reason) {
+        JSONObject f = new JSONObject();
+        f.put("row", rowNum);
+        f.put("studentNo", studentNo);
+        f.put("reason", reason);
+        return f;
+    }
+
+    private List<ExcelStudentNoRow> parseRelIntershipUserExcelStudentNos(MultipartFile file) {
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<Map<String, Object>> maps = reader.readAll();
+            List<ExcelStudentNoRow> out = new ArrayList<>();
+            if (maps != null && !maps.isEmpty()) {
+                int rowNum = 2; // 第 1 行表头，数据从第 2 行起
+                for (Map<String, Object> map : maps) {
+                    if (map == null || map.isEmpty()) {
+                        rowNum++;
+                        continue;
+                    }
+                    String studentNo = extractStudentNoFromExcelRow(map);
+                    if (studentNo != null && !studentNo.isBlank()) {
+                        out.add(new ExcelStudentNoRow(rowNum, studentNo.trim()));
+                    } else if (!isExcelRowBlank(map)) {
+                        out.add(new ExcelStudentNoRow(rowNum, null));
+                    }
+                    rowNum++;
+                }
+                return out;
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+        // 无表头映射时退回按列读取：第 0 列=学号
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<List<Object>> rows = reader.read(0);
+            List<ExcelStudentNoRow> out = new ArrayList<>();
+            if (rows == null || rows.size() <= 1) {
+                return out;
+            }
+            for (int i = 1; i < rows.size(); i++) {
+                List<Object> row = rows.get(i);
+                if (row == null || row.isEmpty()) {
+                    continue;
+                }
+                Object cell0 = row.get(0);
+                String studentNo = normalizeExcelCellToStudentNo(cell0);
+                if (studentNo != null && !studentNo.isEmpty()) {
+                    out.add(new ExcelStudentNoRow(i + 1, studentNo));
+                }
+            }
+            return out;
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+    }
+
+    private String extractStudentNoFromExcelRow(Map<String, Object> map) {
+        for (Map.Entry<String, Object> e : map.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            String key = e.getKey().trim();
+            if ("学号".equals(key) || "工号".equals(key) || "workId".equalsIgnoreCase(key)
+                    || "studentNo".equalsIgnoreCase(key)) {
+                return normalizeExcelCellToStudentNo(e.getValue());
+            }
+        }
+        // 未识别表头时取第一列
+        for (Object v : map.values()) {
+            String s = normalizeExcelCellToStudentNo(v);
+            if (s != null && !s.isEmpty()) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** Excel 数字学号常被读成 2401.0 / 科学计数，统一转成纯字符串 */
+    private String normalizeExcelCellToStudentNo(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number) {
+            return new BigDecimal(v.toString()).stripTrailingZeros().toPlainString();
+        }
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) {
+            return null;
+        }
+        if (s.matches("^-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?$")) {
+            try {
+                return new BigDecimal(s).stripTrailingZeros().toPlainString();
+            } catch (NumberFormatException ignored) {
+                return s;
+            }
+        }
+        return s;
+    }
+
+    private boolean isExcelRowBlank(Map<String, Object> map) {
+        for (Object v : map.values()) {
+            if (v == null) {
+                continue;
+            }
+            String s = String.valueOf(v).trim();
+            if (!s.isEmpty() && !"null".equalsIgnoreCase(s)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private JSONObject findUserByWorkId(String workId) {
+        JSONObject sk = new JSONObject();
+        sk.put("workId", workId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewBaseUser", sk, null, Sort.unsorted(), 1, 10);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        return FastJsonUtil.toJson(content.get(0));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Integer findExistingRelIntershipUserId(Integer internshipId, Integer userId) {
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("userId", userId);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "RelIntershipUser", sk, null, Sort.unsorted(), 1, 1);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        return FastJsonUtil.toJson(content.get(0)).getInteger("id");
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean hasRelIntershipUserVerifyProcess(Integer relationId, Integer processId) {
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("processId", processId);
+        sk.put("tableName", "RelIntershipUser");
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 1);
+        return page.getContent() != null && !page.getContent().isEmpty();
+    }
+
+    private void createRelIntershipUserVerifyProcess(Integer relationId, Integer processId,
+                                                     Integer createUserId, String verifyUserId) {
+        JSONObject verifyJson = new JSONObject();
+        verifyJson.put("relationId", relationId);
+        verifyJson.put("processId", processId);
+        verifyJson.put("createUserId", createUserId);
+        verifyJson.put("verifyUserId", verifyUserId == null ? "" : verifyUserId);
+        verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
+        verifyJson.put("reason", "");
+        verifyJson.put("tableName", "RelIntershipUser");
+        iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+    }
+
     @Override
     public Object listAssignableTeachers(Integer internshipId, Integer departmentId, String jobCode) {
         if (jobCode == null || jobCode.trim().isEmpty()) {
@@ -872,11 +1289,19 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         }
         JSONObject teacherSearchKeys = new JSONObject();
         teacherSearchKeys.put("internshipId", internshipId);
-        teacherSearchKeys.put("jobCode", normalizedJobCode);
         teacherSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Map<String, String> regMap = null;
+        // SCHOOL_TEACHER：所有非学生；COMPANY_TUTOR：仍按企业导师等值过滤
+        if (Constant.USER_JOB_CODE.SCHOOL_TEACHER.equals(normalizedJobCode)) {
+            teacherSearchKeys.put("jobCode", Constant.USER_JOB_CODE.STUDENT);
+            regMap = new HashMap<>(1);
+            regMap.put("jobCode", Constant.NE);
+        } else {
+            teacherSearchKeys.put("jobCode", normalizedJobCode);
+        }
         @SuppressWarnings("unchecked")
         Page<Object> teacherPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, regMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
 
         JSONArray rows = new JSONArray();
         Set<Integer> seenUserIds = new HashSet<>();
@@ -924,7 +1349,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             emptyResult.put("total", 0);
             return emptyResult;
         }
-        Set<Integer> existingAssignedRelInternshipIds = loadTeacherStudentMergeRelInternshipIds(internshipId);
+        // 校内导师已指定且已非待提交(SAVE)的选岗不再出现；待提交草稿（含已写 teacherId）仍可查出以便改派
+        Set<Integer> internalTutorAssignedRelIds = loadRelInternshipIdsWithInternalTutorAssigned(internshipId);
         Map<Integer, JSONObject> mergeSample = new LinkedHashMap<>();
         List<Integer> studentIds = new ArrayList<>();
         for (Object obj : relStuList) {
@@ -938,7 +1364,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if (userId == null || mergeSample.containsKey(userId)) {
                 continue;
             }
-            if (relInternshipId != null && existingAssignedRelInternshipIds.contains(relInternshipId)) {
+            if (relInternshipId != null && internalTutorAssignedRelIds.contains(relInternshipId)) {
                 continue;
             }
             if (departmentId != null && !Objects.equals(rowDeptId, departmentId)) {
@@ -983,16 +1409,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             }
         }
 
-        Set<Integer> existingRelInternshipIds = getRelTeacherStudentRecords(internshipId).stream()
-                .filter(Objects::nonNull)
-                .map(FastJsonUtil::toJson)
-                .map(json -> json.getInteger("relInternshipId"))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
         int createdRelTeacherStudentCount = 0;
         int createdVerifyProcessCount = 0;
-        int skippedExistingCount = 0;
+        int updatedRelTeacherStudentCount = 0;
+        int skippedSubmittedCount = 0;
 
         for (Integer studentId : studentIds) {
             if (studentId == null) {
@@ -1003,9 +1423,25 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             if (relInternshipId == null) {
                 throw BaseResponse.moreInfoError.error("studentId=" + studentId + " 未找到对应的通过学生选岗记录");
             }
-            if (existingRelInternshipIds.contains(relInternshipId)) {
+
+            JSONObject existing = findTutorAssignmentByProcess(studentId, internshipId, relInternshipId, processId);
+            if (existing != null) {
+                Integer rtsId = existing.getInteger("relationId");
+                Integer isAudit = existing.getInteger("isAudit");
+                if (isAudit != null && isAudit != Constant.AUDIT_STATUS.SAVE) {
+                    skippedSubmittedCount++;
+                    logger.warn("手动分配跳过：studentId={} relInternshipId={} processId={} 已提交(isAudit={})",
+                            studentId, relInternshipId, processId, isAudit);
+                    continue;
+                }
+                JSONObject upd = new JSONObject();
+                upd.put("id", rtsId);
+                upd.put("teacherId", teacherId);
+                upd.put("currentVerifyTypeId", verifyType);
+                iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
+                updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
                 ensureDiaryEntriesForAssignedStuPost(relInternshipId);
-                skippedExistingCount++;
+                updatedRelTeacherStudentCount++;
                 continue;
             }
 
@@ -1015,14 +1451,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             relTeacherStudentJson.put("currentVerifyTypeId", verifyType);
             relTeacherStudentJson.put("relInternshipId", relInternshipId);
             relTeacherStudentJson.put("internshipId", internshipId);
-            Object savedRelTeacherStudent = iCommonService.saveOneRecord("RelTeacherStudent", relTeacherStudentJson);
+            Object savedRelTeacherStudent = iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, relTeacherStudentJson);
             JSONObject savedRelTeacherStudentJson = FastJsonUtil.toJson(savedRelTeacherStudent);
             Integer relationId = savedRelTeacherStudentJson.getInteger("id");
             if (relationId == null) {
                 continue;
             }
             createdRelTeacherStudentCount++;
-            existingRelInternshipIds.add(relInternshipId);
 
             JSONObject verifyJson = new JSONObject();
             verifyJson.put("relationId", relationId);
@@ -1031,48 +1466,503 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             verifyJson.put("verifyUserId", verifyUserId);
             verifyJson.put("isAudit", Constant.AUDIT_STATUS.SAVE);
             verifyJson.put("reason", "");
-            verifyJson.put("tableName", "RelTeacherStudent");
-            iCommonService.saveOneRecord("MainVerifyProcess", verifyJson);
+            verifyJson.put("tableName", TABLE_REL_TEACHER_STUDENT);
+            iCommonService.saveOneRecord(TABLE_MAIN_VERIFY_PROCESS, verifyJson);
             createdVerifyProcessCount++;
             ensureDiaryEntriesForAssignedStuPost(relInternshipId);
         }
 
         JSONObject result = buildInitTeacherStudentResult(createdRelTeacherStudentCount, createdVerifyProcessCount);
-        result.put("skippedExistingCount", skippedExistingCount);
+        result.put("updatedRelTeacherStudentCount", updatedRelTeacherStudentCount);
+        result.put("skippedSubmittedCount", skippedSubmittedCount);
         return result;
     }
 
-    @SuppressWarnings("unchecked")
-    private Set<Integer> loadTeacherStudentMergeRelInternshipIds(Integer internshipId) {
+    /**
+     * 导入编排：同步解析校验 Excel 后异步按教师组分配。
+     * 写库走 {@link #manualAssignTeacherStudent} 独立事务（经 selfProxy）；中途停服已提交组保留。
+     */
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object importManualAssignTeacherStudentByExcel(MultipartFile file, Integer internshipId, Integer processId,
+                                                          Integer createUserId, Integer verifyRoleId,
+                                                          Integer currentVerifyTypeId) {
+        if (file == null || file.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("请上传 Excel 文件");
+        }
+        if (internshipId == null || processId == null || createUserId == null) {
+            throw BaseResponse.parameterInvalid.error("internshipId、processId、createUserId 不能为空");
+        }
+        int verifyType = (currentVerifyTypeId == null ? Constant.VERIFY_LEVEL.NO_VERIFY : currentVerifyTypeId);
+        if (verifyType <= 0) {
+            throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
+        }
+
+        List<ExcelAssignRow> excelRows = parseManualAssignExcelRows(file);
+        if (excelRows.isEmpty()) {
+            throw BaseResponse.parameterInvalid.error("Excel 中没有有效的学号/教师工号数据");
+        }
+
+        Set<Integer> internshipPassUserIds = loadInternshipPassUserIds(internshipId);
+        Set<Integer> selectableStudentIds = loadSelectableStudentUserIdsQuietly(internshipId);
+
+        JSONArray failures = new JSONArray();
+        Map<Integer, List<Integer>> teacherToStudents = new LinkedHashMap<>();
+        Map<Integer, String> teacherWorkIdLabel = new HashMap<>();
+        Set<String> seenStudentNos = new HashSet<>();
+        int resolvedPairCount = 0;
+
+        for (ExcelAssignRow row : excelRows) {
+            int rowNum = row.rowNum;
+            String studentNo = row.studentNo;
+            String teacherWorkId = row.teacherWorkId;
+            if (studentNo == null || studentNo.isBlank()) {
+                failures.add(buildAssignImportFailure(rowNum, studentNo, teacherWorkId, "学号为空"));
+                continue;
+            }
+            if (teacherWorkId == null || teacherWorkId.isBlank()) {
+                failures.add(buildAssignImportFailure(rowNum, studentNo, teacherWorkId, "教师工号为空"));
+                continue;
+            }
+            String normalizedStudentNo = studentNo.trim();
+            String normalizedTeacherWorkId = teacherWorkId.trim();
+            if (!seenStudentNos.add(normalizedStudentNo)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "Excel 内学号重复"));
+                continue;
+            }
+
+            JSONObject studentUser = findUserByWorkId(normalizedStudentNo);
+            if (studentUser == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "未找到该学号对应工号的学生用户"));
+                continue;
+            }
+            String studentIdentityError = validateImportUserIdentity(IMPORT_ROLE_STUDENT, studentUser.getString("jobCode"));
+            if (studentIdentityError != null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, studentIdentityError));
+                continue;
+            }
+            Integer studentId = studentUser.getInteger("id");
+            if (studentId == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "学生用户 id 无效"));
+                continue;
+            }
+            if (!internshipPassUserIds.contains(studentId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该学生未通过本项目入项审核，无法分配导师"));
+                continue;
+            }
+            if (!selectableStudentIds.contains(studentId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该学生无本项目选岗审核通过记录，无法分配导师"));
+                continue;
+            }
+
+            JSONObject teacherUser = findUserByWorkId(normalizedTeacherWorkId);
+            if (teacherUser == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "未找到该教师工号对应用户"));
+                continue;
+            }
+            String teacherIdentityError = validateImportUserIdentity(IMPORT_ROLE_TEACHER, teacherUser.getString("jobCode"));
+            if (teacherIdentityError != null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, teacherIdentityError));
+                continue;
+            }
+            Integer teacherId = teacherUser.getInteger("id");
+            if (teacherId == null) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId, "教师用户 id 无效"));
+                continue;
+            }
+            if (!internshipPassUserIds.contains(teacherId)) {
+                failures.add(buildAssignImportFailure(rowNum, normalizedStudentNo, normalizedTeacherWorkId,
+                        "该教师未通过本项目入项审核，无法参与分配"));
+                continue;
+            }
+
+            teacherToStudents.computeIfAbsent(teacherId, k -> new ArrayList<>()).add(studentId);
+            teacherWorkIdLabel.put(teacherId, normalizedTeacherWorkId);
+            resolvedPairCount++;
+        }
+
+        String verifyUserId = iVerifyProcessService.GetVerifyUserId(verifyRoleId, createUserId, internshipId);
+        if (verifyUserId == null) {
+            verifyUserId = "";
+        }
+
+        List<ImportManualAssignTask.TeacherGroup> groups = new ArrayList<>();
+        for (Map.Entry<Integer, List<Integer>> entry : teacherToStudents.entrySet()) {
+            if (entry.getValue() == null || entry.getValue().isEmpty()) {
+                continue;
+            }
+            groups.add(new ImportManualAssignTask.TeacherGroup(
+                    entry.getKey(), teacherWorkIdLabel.get(entry.getKey()), entry.getValue()));
+        }
+
+        ImportManualAssignTask task = importManualAssignTaskStore.create(
+                internshipId, processId, createUserId, verifyUserId, verifyType,
+                excelRows.size(), resolvedPairCount, groups, failures);
+
+        String occupied = importManualAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            ImportManualAssignTask existing = importManualAssignTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有导入分配任务进行中，taskId=" + occupied);
+            }
+            importManualAssignTaskStore.clearRunning(internshipId, occupied);
+            occupied = importManualAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有导入分配任务进行中，taskId=" + occupied);
+            }
+        }
+
+        if (groups.isEmpty()) {
+            task.setStatus(ImportManualAssignTask.STATUS_SUCCESS);
+            task.setMessage(failures.isEmpty() ? "没有可分配的有效数据" : "校验未通过，无可分配数据");
+            task.markFinished();
+            importManualAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
+        }
+
+        task.setStatus(ImportManualAssignTask.STATUS_PENDING);
+        importManualAssignAsyncRunner.run(task.getTaskId());
+        return task.toJson(false);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getImportManualAssignTeacherStudentTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        ImportManualAssignTask task = importManualAssignTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeImportManualAssignTeacherStudentByExcel(String taskId) {
+        ImportManualAssignTask task = importManualAssignTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        Integer internshipId = task.getInternshipId();
+        task.setStatus(ImportManualAssignTask.STATUS_RUNNING);
+        try {
+            List<ImportManualAssignTask.TeacherGroup> groups = task.getTeacherGroups();
+            task.setTotal(groups.size());
+            for (ImportManualAssignTask.TeacherGroup group : groups) {
+                if (group == null || group.studentIds == null || group.studentIds.isEmpty()) {
+                    task.incrementProcessed();
+                    continue;
+                }
+                try {
+                    Object assignResult = selfProxy.manualAssignTeacherStudent(
+                            internshipId, task.getProcessId(), task.getCreateUserId(), task.getVerifyUserId(),
+                            task.getCurrentVerifyTypeId(), group.teacherId, group.studentIds);
+                    JSONObject ar = FastJsonUtil.toJson(assignResult);
+                    task.addCreatedRel(nullToZero(ar.getInteger("createdRelTeacherStudentCount")));
+                    task.addCreatedVerify(nullToZero(ar.getInteger("createdVerifyProcessCount")));
+                    task.addUpdatedRel(nullToZero(ar.getInteger("updatedRelTeacherStudentCount")));
+                    task.addSkippedSubmitted(nullToZero(ar.getInteger("skippedSubmittedCount")));
+                    task.incrementAssignedGroup();
+                    task.incrementProcessed();
+                } catch (BaseException e) {
+                    String msg = e.getBaseResponse() != null ? e.getBaseResponse().getMessage() : e.toString();
+                    task.addFailure(buildAssignImportFailure(null, null, group.teacherWorkId,
+                            "教师工号=" + group.teacherWorkId + " 分配失败: " + msg));
+                    task.incrementProcessed();
+                } catch (RuntimeException e) {
+                    task.addFailure(buildAssignImportFailure(null, null, group.teacherWorkId,
+                            "教师工号=" + group.teacherWorkId + " 分配失败: " + e.getMessage()));
+                    task.incrementProcessed();
+                    logger.warn("导入分配失败 internshipId={} teacherId={}: {}",
+                            internshipId, group.teacherId, e.getMessage());
+                }
+            }
+            task.setStatus(ImportManualAssignTask.STATUS_SUCCESS);
+            task.setMessage("导入分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(ImportManualAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("导入分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            importManualAssignTaskStore.clearRunning(internshipId, taskId);
+        }
+    }
+
+    /** 静默加载选岗已通过的学生 userId；无数据时返回空集，不抛业务异常。 */
+    private Set<Integer> loadSelectableStudentUserIdsQuietly(Integer internshipId) {
         Set<Integer> out = new HashSet<>();
-        collectRelInternshipIdsFromTeacherStudentMergeView(internshipId, VIEW_VERIFY_REL_ASS_TEA_STU_MERGE, out);
-        collectRelInternshipIdsFromTeacherStudentMergeView(internshipId, VIEW_VERIFY_REL_INT_TEA_STU_MERGE, out);
+        try {
+            for (Object relStuObj : getStudentInternshipSelections(internshipId)) {
+                Integer sid = parseStudentUserIdFromStuPostMerge(FastJsonUtil.toJson(relStuObj));
+                if (sid != null) {
+                    out.add(sid);
+                }
+            }
+        } catch (RuntimeException ignored) {
+            return Collections.emptySet();
+        }
         return out;
     }
 
+    @Override
+    public void downloadManualAssignTeacherStudentImportTemplate() {
+        ExcelWriter writer = null;
+        try {
+            List<List<Object>> rows = new ArrayList<>();
+            rows.add(Arrays.asList("学号", "学生姓名", "教师工号", "老师姓名"));
+            rows.add(Arrays.asList("2401012307", "张三", "T001", "李老师"));
+            writer = ExcelUtil.getWriter(true);
+            writer.write(rows, false);
+            writer.setColumnWidth(0, 20);
+            writer.setColumnWidth(1, 16);
+            writer.setColumnWidth(2, 20);
+            writer.setColumnWidth(3, 16);
+
+            ServletRequestAttributes attributes =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null || attributes.getResponse() == null) {
+                throw BaseResponse.moreInfoError.error("无法获取响应对象");
+            }
+            HttpServletResponse response = attributes.getResponse();
+            String fileName = URLEncoder.encode("师生手动分配导入模板", StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            OutputStream outputStream = response.getOutputStream();
+            writer.flush(outputStream, true);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("下载模板失败: " + e.getMessage());
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+        }
+    }
+
+    private static final class ExcelAssignRow {
+        private final int rowNum;
+        private final String studentNo;
+        private final String teacherWorkId;
+
+        private ExcelAssignRow(int rowNum, String studentNo, String teacherWorkId) {
+            this.rowNum = rowNum;
+            this.studentNo = studentNo;
+            this.teacherWorkId = teacherWorkId;
+        }
+    }
+
+    private JSONObject buildAssignImportFailure(Integer rowNum, String studentNo, String teacherWorkId, String reason) {
+        JSONObject f = new JSONObject();
+        if (rowNum != null) {
+            f.put("row", rowNum);
+        }
+        f.put("studentNo", studentNo);
+        f.put("teacherWorkId", teacherWorkId);
+        f.put("reason", reason);
+        return f;
+    }
+
+    private int nullToZero(Integer v) {
+        return v == null ? 0 : v;
+    }
+
+    private List<ExcelAssignRow> parseManualAssignExcelRows(MultipartFile file) {
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<Map<String, Object>> maps = reader.readAll();
+            List<ExcelAssignRow> out = new ArrayList<>();
+            if (maps != null && !maps.isEmpty()) {
+                int rowNum = 2;
+                for (Map<String, Object> map : maps) {
+                    if (map == null || map.isEmpty() || isExcelRowBlank(map)) {
+                        rowNum++;
+                        continue;
+                    }
+                    String studentNo = extractExcelColumn(map, "学号", "studentNo", "studentWorkId");
+                    String teacherWorkId = extractExcelColumn(map, "教师工号", "老师工号", "teacherWorkId", "tutorWorkId");
+                    // 若未识别「教师工号」，再尝试普通「工号」列（避免与学号冲突）
+                    if (teacherWorkId == null || teacherWorkId.isBlank()) {
+                        teacherWorkId = extractExcelColumn(map, "工号", "workId");
+                    }
+                    if ((studentNo == null || studentNo.isBlank()) && (teacherWorkId == null || teacherWorkId.isBlank())) {
+                        rowNum++;
+                        continue;
+                    }
+                    out.add(new ExcelAssignRow(rowNum, studentNo, teacherWorkId));
+                    rowNum++;
+                }
+                return out;
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+        // 无表头映射：第0列学号，第1列学生姓名(忽略)，第2列教师工号，第3列老师姓名(忽略)
+        try (java.io.InputStream in = file.getInputStream()) {
+            ExcelReader reader = ExcelUtil.getReader(in);
+            List<List<Object>> rows = reader.read(0);
+            List<ExcelAssignRow> out = new ArrayList<>();
+            if (rows == null || rows.size() <= 1) {
+                return out;
+            }
+            for (int i = 1; i < rows.size(); i++) {
+                List<Object> row = rows.get(i);
+                if (row == null || row.isEmpty()) {
+                    continue;
+                }
+                String studentNo = normalizeExcelCellToStudentNo(row.get(0));
+                String teacherWorkId = row.size() > 2 ? normalizeExcelCellToStudentNo(row.get(2)) : null;
+                // 兼容旧两列模板：第1列即教师工号
+                if ((teacherWorkId == null || teacherWorkId.isBlank()) && row.size() == 2) {
+                    teacherWorkId = normalizeExcelCellToStudentNo(row.get(1));
+                }
+                if ((studentNo == null || studentNo.isBlank()) && (teacherWorkId == null || teacherWorkId.isBlank())) {
+                    continue;
+                }
+                out.add(new ExcelAssignRow(i + 1, studentNo, teacherWorkId));
+            }
+            return out;
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw BaseResponse.moreInfoError.error("解析 Excel 失败: " + e.getMessage());
+        }
+    }
+
     @SuppressWarnings("unchecked")
-    private void collectRelInternshipIdsFromTeacherStudentMergeView(Integer internshipId, String mergeTblName,
-            Set<Integer> target) {
+    private Set<Integer> loadInternshipPassUserIds(Integer internshipId) {
+        Set<Integer> out = new HashSet<>();
+        if (internshipId == null) {
+            return out;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("internshipId", internshipId);
+        sk.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Page<Object> page = (Page<Object>) iCommonService.getSomeRecords(
+                "ViewVerifyProcessRelIntershipUserMerge", sk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> content = page.getContent();
+        if (content == null || content.isEmpty()) {
+            return out;
+        }
+        for (Object obj : content) {
+            if (obj == null) {
+                continue;
+            }
+            Integer userId = FastJsonUtil.toJson(obj).getInteger("userId");
+            if (userId != null) {
+                out.add(userId);
+            }
+        }
+        return out;
+    }
+
+    private String extractExcelColumn(Map<String, Object> map, String... aliases) {
+        if (map == null || aliases == null) {
+            return null;
+        }
+        for (Map.Entry<String, Object> e : map.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            String key = e.getKey().trim();
+            for (String alias : aliases) {
+                if (alias != null && alias.equalsIgnoreCase(key)) {
+                    return normalizeExcelCellToStudentNo(e.getValue());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 收集校内导师合并视图中，该实习下「已指定 teacherId 且审核状态非待提交(SAVE)」的选岗 id。
+     * 待提交草稿即使已有 teacherId 也不排除，便于列表中改派。
+     */
+    @SuppressWarnings("unchecked")
+    private Set<Integer> loadRelInternshipIdsWithInternalTutorAssigned(Integer internshipId) {
+        Set<Integer> assigned = new HashSet<>();
         JSONObject searchKeys = new JSONObject();
         searchKeys.put("internshipId", internshipId);
-        if (VIEW_VERIFY_REL_INT_TEA_STU_MERGE.equals(mergeTblName)) {
-            applyExternalAssignInternalTutorMergeFilter(searchKeys);
-        }
+        applyExternalAssignInternalTutorMergeFilter(searchKeys);
         Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
-                mergeTblName, searchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                VIEW_VERIFY_REL_INT_TEA_STU_MERGE, searchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Object> rows = mergePage.getContent();
         if (rows == null || rows.isEmpty()) {
-            return;
+            return assigned;
         }
         for (Object row : rows) {
             if (row == null) {
                 continue;
             }
-            Integer rid = FastJsonUtil.toJson(row).getInteger("relInternshipId");
-            if (rid != null) {
-                target.add(rid);
+            JSONObject j = FastJsonUtil.toJson(row);
+            Integer rid = j.getInteger("relInternshipId");
+            Integer teacherId = j.getInteger("teacherId");
+            Integer isAudit = j.getInteger("isAudit");
+            // 仅排除已提交/已通过等非 SAVE，且已有老师的记录
+            if (rid != null && teacherId != null
+                    && (isAudit == null || isAudit != Constant.AUDIT_STATUS.SAVE)) {
+                assigned.add(rid);
             }
         }
+        return assigned;
+    }
+
+    /**
+     * 按选岗 + 流程定位已有师生分配（同一选岗下校内/企业各一条 RelTeacherStudent，靠 processId 区分）。
+     *
+     * @return 含 relationId、isAudit；未找到返回 null
+     */
+    @SuppressWarnings("unchecked")
+    private JSONObject findTutorAssignmentByProcess(Integer stuId, Integer internshipId,
+            Integer relInternshipId, Integer processId) {
+        if (stuId == null || internshipId == null || relInternshipId == null || processId == null) {
+            return null;
+        }
+        JSONObject rtsSk = new JSONObject();
+        rtsSk.put("internshipId", internshipId);
+        rtsSk.put("relInternshipId", relInternshipId);
+        rtsSk.put("stuId", stuId);
+        Page<Object> rtsPage = (Page<Object>) iCommonService.getSomeRecords(
+                TABLE_REL_TEACHER_STUDENT, rtsSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+        List<Object> rtsList = rtsPage.getContent();
+        if (rtsList == null || rtsList.isEmpty()) {
+            return null;
+        }
+        for (Object rtsObj : rtsList) {
+            JSONObject rts = FastJsonUtil.toJson(rtsObj);
+            Integer rtsId = rts.getInteger("id");
+            if (rtsId == null) {
+                continue;
+            }
+            JSONObject vpSk = new JSONObject();
+            vpSk.put("relationId", rtsId);
+            vpSk.put("processId", processId);
+            vpSk.put("tableName", TABLE_REL_TEACHER_STUDENT);
+            Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                    TABLE_MAIN_VERIFY_PROCESS, vpSk, null, Sort.by(Sort.Direction.DESC, "id"), 1, 1);
+            List<Object> vpList = vpPage.getContent();
+            if (vpList == null || vpList.isEmpty()) {
+                continue;
+            }
+            JSONObject vp = FastJsonUtil.toJson(vpList.get(0));
+            JSONObject found = new JSONObject();
+            found.put("relationId", rtsId);
+            found.put("isAudit", vp.getInteger("isAudit"));
+            return found;
+        }
+        return null;
     }
 
     /**
@@ -1771,76 +2661,162 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
-    public Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object startRandomAssignPostsForUnselectedStudents(Integer internshipId) {
         assertExternalInternship(internshipId);
-        List<Integer> studentIds = collectNotSelectedStudentUserIds(internshipId);
-        List<Integer> postIds = collectApprovedAssignablePostIds(internshipId);
 
-        JSONObject result = new JSONObject();
-        result.put("internshipId", internshipId);
-        result.put("candidateStudentCount", studentIds.size());
-        result.put("candidatePostCount", postIds.size());
+        RandomAssignPostTask task = randomAssignPostTaskStore.create(internshipId);
+        String occupied = randomAssignPostTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            RandomAssignPostTask existing = randomAssignPostTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有随机分配任务进行中，taskId=" + occupied);
+            }
+            // 残留占用：清掉后重占
+            randomAssignPostTaskStore.clearRunning(internshipId, occupied);
+            occupied = randomAssignPostTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有随机分配任务进行中，taskId=" + occupied);
+            }
+        }
+
+        List<Integer> studentIds;
+        List<Integer> postIds;
+        try {
+            studentIds = collectNotSelectedStudentUserIds(internshipId);
+            postIds = collectApprovedAssignablePostIds(internshipId);
+        } catch (RuntimeException e) {
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage(e.getMessage());
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw e;
+        }
+
+        task.setTotal(studentIds.size());
+        task.setCandidatePostCount(postIds.size());
 
         if (postIds.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw BaseResponse.moreInfoError.error(task.getMessage());
         }
+
         if (studentIds.isEmpty()) {
-            result.put("assignedCount", 0);
-            result.put("failedCount", 0);
-            result.put("unassignedCount", 0);
-            result.put("details", new JSONArray());
-            return result;
+            task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+            task.setMessage("没有未选岗学生需要分配");
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
         }
 
-        List<Integer> shuffled = new ArrayList<>(studentIds);
-        Collections.shuffle(shuffled);
+        task.setStatus(RandomAssignPostTask.STATUS_PENDING);
+        randomAssignPostAsyncRunner.run(task.getTaskId(), internshipId);
+        return task.toJson(false);
+    }
 
-        int assignedCount = 0;
-        int failedCount = 0;
-        int unassignedCount = 0;
-        JSONArray details = new JSONArray();
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getRandomAssignPostsTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        RandomAssignPostTask task = randomAssignPostTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
 
-        for (Integer studentId : shuffled) {
-            List<Integer> eligiblePostIds = filterPostIdsWithRemainingCapacity(postIds);
-            if (eligiblePostIds.isEmpty()) {
-                unassignedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("success", false);
-                item.put("message", "所有岗位已满，无法继续分配");
-                details.add(item);
-                continue;
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeRandomAssignPostsForUnselectedStudents(String taskId, Integer internshipId) {
+        RandomAssignPostTask task = randomAssignPostTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        task.setStatus(RandomAssignPostTask.STATUS_RUNNING);
+        try {
+            List<Integer> studentIds = collectNotSelectedStudentUserIds(internshipId);
+            List<Integer> postIds = collectApprovedAssignablePostIds(internshipId);
+            task.setTotal(studentIds.size());
+            task.setCandidatePostCount(postIds.size());
+
+            if (postIds.isEmpty()) {
+                task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+                task.setMessage("未找到可分配的企业岗位（需岗位审核通过且未满员，不含自主实习岗位）");
+                return;
             }
-            int postId = eligiblePostIds.get(ThreadLocalRandom.current().nextInt(eligiblePostIds.size()));
-            try {
-                Object selResult = iInternshipPostService.stuSelPost(studentId, 0, postId);
-                assignedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("internshipPostId", postId);
-                item.put("success", true);
-                if (selResult instanceof JSONObject) {
-                    item.put("selection", selResult);
+            if (studentIds.isEmpty()) {
+                task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+                task.setMessage("没有未选岗学生需要分配");
+                return;
+            }
+
+            List<Integer> shuffled = new ArrayList<>(studentIds);
+            Collections.shuffle(shuffled);
+
+            for (Integer studentId : shuffled) {
+                List<Integer> eligiblePostIds = filterPostIdsWithRemainingCapacity(postIds);
+                if (eligiblePostIds.isEmpty()) {
+                    task.incrementUnassigned();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("success", false);
+                    item.put("message", "所有岗位已满，无法继续分配");
+                    task.addDetail(item);
+                    continue;
                 }
-                details.add(item);
-            } catch (RuntimeException ex) {
-                failedCount++;
-                JSONObject item = new JSONObject();
-                item.put("studentId", studentId);
-                item.put("internshipPostId", postId);
-                item.put("success", false);
-                item.put("message", ex.getMessage());
-                details.add(item);
-                logger.warn("随机分配岗位失败 internshipId={} studentId={} postId={}: {}",
-                        internshipId, studentId, postId, ex.getMessage());
+                int postId = eligiblePostIds.get(ThreadLocalRandom.current().nextInt(eligiblePostIds.size()));
+                try {
+                    Object selResult = iInternshipPostService.stuSelPost(studentId, 0, postId);
+                    task.incrementAssigned();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("internshipPostId", postId);
+                    item.put("success", true);
+                    if (selResult instanceof JSONObject) {
+                        item.put("selection", selResult);
+                    }
+                    task.addDetail(item);
+                } catch (RuntimeException ex) {
+                    task.incrementFailed();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("studentId", studentId);
+                    item.put("internshipPostId", postId);
+                    item.put("success", false);
+                    item.put("message", ex.getMessage());
+                    task.addDetail(item);
+                    logger.warn("随机分配岗位失败 internshipId={} studentId={} postId={}: {}",
+                            internshipId, studentId, postId, ex.getMessage());
+                }
             }
+            task.setStatus(RandomAssignPostTask.STATUS_SUCCESS);
+            task.setMessage("分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(RandomAssignPostTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("随机分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            randomAssignPostTaskStore.clearRunning(internshipId, taskId);
         }
+    }
 
-        result.put("assignedCount", assignedCount);
-        result.put("failedCount", failedCount);
-        result.put("unassignedCount", unassignedCount);
-        result.put("details", details);
-        return result;
+    /**
+     * @deprecated 请使用 {@link #startRandomAssignPostsForUnselectedStudents(Integer)}
+     */
+    @Override
+    @Deprecated
+    public Object randomAssignPostsForUnselectedStudents(Integer internshipId) {
+        return startRandomAssignPostsForUnselectedStudents(internshipId);
     }
 
     /**
@@ -1960,107 +2936,106 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         String st = normalizeStudentPostBreakdownStatus(status);
         int pageNum = (page == null || page < 1) ? Constant.DEFAULT_PAGE : page;
         int pageSize = (size == null || size < 1) ? Constant.DEFAULT_SIZE : size;
-        Set<Integer> projectStudentUserIds = loadInternshipProjectStudentUserIds(internshipId);
-        projectStudentUserIds.retainAll(deptStudentUserIds);
-        JSONObject stuSk = new JSONObject();
-        stuSk.put("internshipId", internshipId);
-        @SuppressWarnings("unchecked")
-        Page<Object> mergePage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelStuInternshipPostMerge", stuSk, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
-        List<Object> mergeList = mergePage.getContent() == null ? Collections.emptyList() : mergePage.getContent();
-
-        Set<Integer> anyStuPostUser = new HashSet<>();
-        Set<Integer> passUser = new HashSet<>();
-        Map<Integer, JSONObject> userRowSample = new HashMap<>();
-        for (Object o : mergeList) {
-            JSONObject j = FastJsonUtil.toJson(o);
-            Integer uid = parseStudentUserIdFromStuPostMerge(j);
-            if (uid == null || !deptStudentUserIds.contains(uid)) {
-                continue;
-            }
-            anyStuPostUser.add(uid);
-            Integer isAudit = j.getInteger("isAudit");
-            if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
-                passUser.add(uid);
-            }
-            JSONObject prev = userRowSample.get(uid);
-            if (prev == null) {
-                userRowSample.put(uid, j);
-            } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS) {
-                userRowSample.put(uid, j);
-            }
-        }
-
-        List<Integer> postApprovedList = passUser.stream().sorted().collect(Collectors.toList());
-        List<Integer> selectedPending = anyStuPostUser.stream()
-                .filter(u -> !passUser.contains(u))
-                .sorted()
-                .collect(Collectors.toList());
-        List<Integer> notSelected = projectStudentUserIds.stream()
-                .filter(u -> !anyStuPostUser.contains(u))
-                .sorted()
-                .collect(Collectors.toList());
 
         JSONObject counts = new JSONObject();
-        counts.put(STU_POST_STATUS_NOT_SELECTED, notSelected.size());
-        counts.put(STU_POST_STATUS_SELECTED_PENDING, selectedPending.size());
-        counts.put(STU_POST_STATUS_POST_APPROVED, postApprovedList.size());
+        counts.put(STU_POST_STATUS_NOT_SELECTED, 0);
+        counts.put(STU_POST_STATUS_SELECTED, 0);
+        counts.put(STU_POST_STATUS_SELECTED_PENDING, 0);
+        counts.put(STU_POST_STATUS_POST_APPROVED, 0);
 
-        Object invObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
-        JSONObject invJ = invObj != null ? FastJsonUtil.toJson(invObj) : new JSONObject();
+        if (deptStudentUserIds == null || deptStudentUserIds.isEmpty()) {
+            return buildStudentPostBreakdownResult(internshipId, null, scope.reportDepartmentId, st,
+                    pageNum, pageSize, 0, 0, counts, new JSONArray());
+        }
 
-        if (STU_POST_STATUS_ALL.equals(st)) {
-            List<Integer> allOrdered = projectStudentUserIds.stream().sorted().collect(Collectors.toList());
-            int total = allOrdered.size();
-            int totalPages = pageSize <= 0 ? 0 : (int) Math.ceil((double) total / (double) pageSize);
-            int from = Math.max(0, (pageNum - 1) * pageSize);
-            int to = Math.min(from + pageSize, total);
-            List<Integer> slice = from >= total ? Collections.emptyList() : allOrdered.subList(from, to);
-            JSONArray rows = new JSONArray();
-            for (Integer uid : slice) {
-                JSONObject row = buildOneStudentBriefRow(uid, userRowSample);
-                row.put("selectionStatus", resolveStudentSelectionStatus(uid, anyStuPostUser, passUser));
-                rows.add(row);
+        for (Object[] row : viewExternalInternshipStudentPostBreakdownDao
+                .countGroupBySelectionStatus(internshipId, deptStudentUserIds)) {
+            String sel = row[0] != null ? String.valueOf(row[0]) : null;
+            long cnt = row[1] instanceof Number ? ((Number) row[1]).longValue() : 0L;
+            if (STU_POST_STATUS_NOT_SELECTED.equals(sel)) {
+                counts.put(STU_POST_STATUS_NOT_SELECTED, (int) cnt);
+            } else if (STU_POST_STATUS_SELECTED_PENDING.equals(sel)) {
+                counts.put(STU_POST_STATUS_SELECTED_PENDING, (int) cnt);
+            } else if (STU_POST_STATUS_POST_APPROVED.equals(sel)) {
+                counts.put(STU_POST_STATUS_POST_APPROVED, (int) cnt);
             }
-            JSONObject result = new JSONObject();
-            result.put("internshipId", internshipId);
-            result.put("internshipName", invJ.getString("name"));
-            result.put("departmentId", scope.reportDepartmentId);
-            result.put("status", STU_POST_STATUS_ALL);
-            result.put("page", pageNum);
-            result.put("size", pageSize);
-            result.put("counts", counts);
-            result.put("totalElements", total);
-            result.put("totalPages", totalPages);
-            result.put("rows", rows);
-            return result;
         }
+        int selectedCount = counts.getIntValue(STU_POST_STATUS_SELECTED_PENDING)
+                + counts.getIntValue(STU_POST_STATUS_POST_APPROVED);
+        counts.put(STU_POST_STATUS_SELECTED, selectedCount);
 
-        List<Integer> targetList;
-        Map<Integer, JSONObject> mergeForRows;
-        if (STU_POST_STATUS_NOT_SELECTED.equals(st)) {
-            targetList = notSelected;
-            mergeForRows = null;
-        } else if (STU_POST_STATUS_SELECTED_PENDING.equals(st)) {
-            targetList = selectedPending;
-            mergeForRows = userRowSample;
+        PageRequest pageable = PageRequest.of(pageNum - 1, pageSize);
+        Page<ViewExternalInternshipStudentPostBreakdown> paged;
+        if (STU_POST_STATUS_ALL.equals(st)) {
+            paged = viewExternalInternshipStudentPostBreakdownDao
+                    .findAllByInternshipAndUsers(internshipId, deptStudentUserIds, pageable);
+        } else if (STU_POST_STATUS_SELECTED.equals(st)) {
+            paged = viewExternalInternshipStudentPostBreakdownDao.findByInternshipUsersAndStatusIn(
+                    internshipId, deptStudentUserIds,
+                    List.of(STU_POST_STATUS_SELECTED_PENDING, STU_POST_STATUS_POST_APPROVED),
+                    pageable);
         } else {
-            targetList = postApprovedList;
-            mergeForRows = userRowSample;
+            paged = viewExternalInternshipStudentPostBreakdownDao.findByInternshipUsersAndStatus(
+                    internshipId, deptStudentUserIds, st, pageable);
         }
 
-        JSONObject paged = buildPagedStudentCategory(targetList, mergeForRows, pageNum, pageSize);
+        String internshipName = null;
+        JSONArray rows = new JSONArray();
+        for (ViewExternalInternshipStudentPostBreakdown v : paged.getContent()) {
+            if (internshipName == null) {
+                internshipName = v.getInternshipName();
+            }
+            rows.add(toStudentPostBreakdownRow(v));
+        }
+        if (internshipName == null) {
+            Object invObj = iCommonService.getOneRecordById("ViewMainInternship", internshipId);
+            if (invObj != null) {
+                internshipName = FastJsonUtil.toJson(invObj).getString("name");
+            }
+        }
+
+        return buildStudentPostBreakdownResult(internshipId, internshipName, scope.reportDepartmentId, st,
+                pageNum, pageSize, (int) paged.getTotalElements(), paged.getTotalPages(), counts, rows);
+    }
+
+    private static JSONObject toStudentPostBreakdownRow(ViewExternalInternshipStudentPostBreakdown v) {
+        JSONObject row = new JSONObject();
+        row.put("userId", v.getUserId());
+        row.put("userName", v.getUserName());
+        row.put("account", v.getAccount());
+        row.put("departmentId", v.getDepartmentId());
+        row.put("departmentName", v.getDepartmentName());
+        row.put("selectionStatus", v.getSelectionStatus());
+        if (v.getVerifyProcessId() != null) {
+            row.put("verifyProcessId", v.getVerifyProcessId());
+        }
+        if (v.getIsAudit() != null) {
+            row.put("isAudit", v.getIsAudit());
+        }
+        if (v.getInternshipPostName() != null) {
+            row.put("internshipPostName", v.getInternshipPostName());
+        }
+        if (v.getCompanyName() != null) {
+            row.put("companyName", v.getCompanyName());
+        }
+        return row;
+    }
+
+    private static JSONObject buildStudentPostBreakdownResult(Integer internshipId, String internshipName,
+                                                             Integer reportDepartmentId, String status,
+                                                             int pageNum, int pageSize, int totalElements,
+                                                             int totalPages, JSONObject counts, JSONArray rows) {
         JSONObject result = new JSONObject();
         result.put("internshipId", internshipId);
-        result.put("internshipName", invJ.getString("name"));
-        result.put("departmentId", scope.reportDepartmentId);
-        result.put("status", st);
-        result.put("page", paged.getInteger("page"));
-        result.put("size", paged.getInteger("size"));
+        result.put("internshipName", internshipName);
+        result.put("departmentId", reportDepartmentId);
+        result.put("status", status);
+        result.put("page", pageNum);
+        result.put("size", pageSize);
         result.put("counts", counts);
-        result.put("totalElements", paged.getInteger("totalElements"));
-        result.put("totalPages", paged.getInteger("totalPages"));
-        result.put("rows", paged.get("rows"));
+        result.put("totalElements", totalElements);
+        result.put("totalPages", totalPages);
+        result.put("rows", rows);
         return result;
     }
 
@@ -2071,21 +3046,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         String s = status.trim();
         if (STU_POST_STATUS_ALL.equals(s)
                 || STU_POST_STATUS_NOT_SELECTED.equals(s)
+                || STU_POST_STATUS_SELECTED.equals(s)
                 || STU_POST_STATUS_SELECTED_PENDING.equals(s)
                 || STU_POST_STATUS_POST_APPROVED.equals(s)) {
             return s;
         }
-        throw BaseResponse.parameterInvalid.error("status 无效，可选：all、notSelected、selectedPendingAudit、postApproved");
-    }
-
-    private static String resolveStudentSelectionStatus(Integer uid, Set<Integer> anyStuPostUser, Set<Integer> passUser) {
-        if (passUser.contains(uid)) {
-            return STU_POST_STATUS_POST_APPROVED;
-        }
-        if (anyStuPostUser.contains(uid)) {
-            return STU_POST_STATUS_SELECTED_PENDING;
-        }
-        return STU_POST_STATUS_NOT_SELECTED;
+        throw BaseResponse.parameterInvalid.error(
+                "status 无效，可选：all、notSelected、selected、selectedPendingAudit、postApproved");
     }
 
     private void assertExternalInternship(Integer internshipId) {
@@ -2669,6 +3636,7 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Object initTeacherStudentByInternshipId(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
                                                     Integer currentVerifyTypeId) {
         validateInitTeacherStudentParams(internshipId, processId, createUserId, verifyUserId);
@@ -2677,32 +3645,194 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             throw BaseResponse.parameterInvalid.error("currentVerifyTypeId 无效，必须为正整数");
         }
 
-        List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
+        InitTutorAssignTask task = initTutorAssignTaskStore.create(
+                internshipId, processId, createUserId, verifyUserId, verifyType);
+        String occupied = initTutorAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+        if (occupied != null) {
+            InitTutorAssignTask existing = initTutorAssignTaskStore.get(occupied);
+            if (existing != null && !existing.isFinished()) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有系统分配任务进行中，taskId=" + occupied);
+            }
+            initTutorAssignTaskStore.clearRunning(internshipId, occupied);
+            occupied = initTutorAssignTaskStore.tryMarkRunning(internshipId, task.getTaskId());
+            if (occupied != null) {
+                throw BaseResponse.parameterInvalid.error(
+                        "该项目已有系统分配任务进行中，taskId=" + occupied);
+            }
+        }
 
-        List<Object> saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+        List<Object> saveMergeRows;
+        try {
+            // 预检：无可用教师时直接失败，避免空跑任务
+            getTeacherIdsForAssignment(internshipId);
+            saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+        } catch (RuntimeException e) {
+            task.setStatus(InitTutorAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage());
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            throw e;
+        }
+
+        task.setTotal(saveMergeRows.size());
         if (saveMergeRows.isEmpty()) {
-            return buildInitTeacherStudentResult(0, 0);
+            task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+            task.setMessage("没有待提交的校内导师分配记录");
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, task.getTaskId());
+            return task.toJson(true);
         }
 
-        Set<Integer> reassignRelIds = new HashSet<>();
-        for (Object row : saveMergeRows) {
-            if (row == null) {
-                continue;
-            }
-            JSONObject j = FastJsonUtil.toJson(row);
-            Integer rtsId = j.getInteger("relationId");
-            if (rtsId == null) {
-                rtsId = j.getInteger("relTeaStuId");
-            }
-            if (rtsId != null) {
-                reassignRelIds.add(rtsId);
-            }
-        }
+        task.setStatus(InitTutorAssignTask.STATUS_PENDING);
+        initTutorAssignAsyncRunner.run(task.getTaskId());
+        return task.toJson(false);
+    }
 
-        Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapExcluding(internshipId, teacherIds, reassignRelIds);
-        int[] counts = assignInternalTeacherForExistingMergeRows(
-                internshipId, processId, createUserId, verifyUserId, saveMergeRows, teacherLoadMap, verifyType);
-        return buildInitTeacherStudentResult(counts[0], counts[1]);
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Object getInitTeacherStudentTaskStatus(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("taskId 不能为空");
+        }
+        InitTutorAssignTask task = initTutorAssignTaskStore.get(taskId.trim());
+        if (task == null) {
+            throw BaseResponse.parameterInvalid.error("任务不存在或已过期: " + taskId);
+        }
+        return task.toJson(task.isFinished());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void executeInitTeacherStudentByInternshipId(String taskId) {
+        InitTutorAssignTask task = initTutorAssignTaskStore.get(taskId);
+        if (task == null) {
+            return;
+        }
+        Integer internshipId = task.getInternshipId();
+        task.setStatus(InitTutorAssignTask.STATUS_RUNNING);
+        try {
+            List<Integer> teacherIds = getTeacherIdsForAssignment(internshipId);
+            List<Object> saveMergeRows = listSaveInternalTutorMergeRowsForInitAssign(internshipId);
+            task.setTotal(saveMergeRows.size());
+            if (saveMergeRows.isEmpty()) {
+                task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+                task.setMessage("没有待提交的校内导师分配记录");
+                return;
+            }
+
+            Set<Integer> reassignRelIds = new HashSet<>();
+            for (Object row : saveMergeRows) {
+                if (row == null) {
+                    continue;
+                }
+                JSONObject j = FastJsonUtil.toJson(row);
+                Integer rtsId = j.getInteger("relationId");
+                if (rtsId == null) {
+                    rtsId = j.getInteger("relTeaStuId");
+                }
+                if (rtsId != null) {
+                    reassignRelIds.add(rtsId);
+                }
+            }
+            Map<Integer, Integer> teacherLoadMap = buildTeacherLoadMapExcluding(internshipId, teacherIds, reassignRelIds);
+            Set<Integer> stillSaveRtsIds = snapshotStillSaveRtsIds(internshipId);
+
+            for (Object row : saveMergeRows) {
+                JSONObject j = FastJsonUtil.toJson(row);
+                Integer rtsId = j.getInteger("relationId");
+                if (rtsId == null) {
+                    rtsId = j.getInteger("relTeaStuId");
+                }
+                if (rtsId == null) {
+                    task.incrementSkipped();
+                    task.incrementProcessed();
+                    continue;
+                }
+                if (!stillSaveRtsIds.contains(rtsId)) {
+                    task.incrementSkipped();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("success", false);
+                    item.put("skipped", true);
+                    item.put("message", "已非待提交（SAVE）");
+                    task.addDetail(item);
+                    continue;
+                }
+                Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+                try {
+                    int verifyN = selfProxy.assignOneInternalTutorRowInNewTx(
+                            internshipId, task.getProcessId(), task.getCreateUserId(), task.getVerifyUserId(),
+                            rtsId, j.getInteger("relInternshipId"), selectedTeacherId, task.getCurrentVerifyTypeId());
+                    if (verifyN < 0) {
+                        task.incrementSkipped();
+                        task.incrementProcessed();
+                        JSONObject item = new JSONObject();
+                        item.put("relationId", rtsId);
+                        item.put("success", false);
+                        item.put("skipped", true);
+                        item.put("message", "记录不存在或已非 SAVE");
+                        task.addDetail(item);
+                        continue;
+                    }
+                    teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
+                    task.incrementAssigned();
+                    task.addVerifyUpdated(verifyN);
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("teacherId", selectedTeacherId);
+                    item.put("success", true);
+                    item.put("verifyUpdatedCount", verifyN);
+                    task.addDetail(item);
+                } catch (RuntimeException ex) {
+                    task.incrementFailed();
+                    task.incrementProcessed();
+                    JSONObject item = new JSONObject();
+                    item.put("relationId", rtsId);
+                    item.put("teacherId", selectedTeacherId);
+                    item.put("success", false);
+                    item.put("message", ex.getMessage());
+                    task.addDetail(item);
+                    logger.warn("系统分配校内导师失败 internshipId={} rtsId={}: {}",
+                            internshipId, rtsId, ex.getMessage());
+                }
+            }
+            task.setStatus(InitTutorAssignTask.STATUS_SUCCESS);
+            task.setMessage("分配完成");
+        } catch (RuntimeException e) {
+            task.setStatus(InitTutorAssignTask.STATUS_FAILED);
+            task.setMessage(e.getMessage() != null ? e.getMessage() : e.toString());
+            logger.error("系统分配任务失败 taskId={} internshipId={}", taskId, internshipId, e);
+        } finally {
+            task.markFinished();
+            initTutorAssignTaskStore.clearRunning(internshipId, taskId);
+        }
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public int assignOneInternalTutorRowInNewTx(Integer internshipId, Integer processId, Integer createUserId,
+                                                String verifyUserId, Integer rtsId, Integer relInternshipId,
+                                                Integer teacherId, int currentVerifyTypeId) {
+        if (rtsId == null || teacherId == null) {
+            return -1;
+        }
+        if (!isInternalTutorAssignMergeRowStillSave(internshipId, rtsId)) {
+            return -1;
+        }
+        Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
+        if (rtsObj == null) {
+            return -1;
+        }
+        JSONObject upd = new JSONObject();
+        upd.put("id", rtsId);
+        upd.put("teacherId", teacherId);
+        upd.put("currentVerifyTypeId", currentVerifyTypeId);
+        iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
+        ensureDiaryEntriesForAssignedStuPost(relInternshipId);
+        return updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
     }
 
     @Override
@@ -2817,12 +3947,13 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
      * 若已存在对应 processId 下的审核记录，则将其 createUserId、verifyUserId 更新为本次传入值。
      *
      * @return int[0]=已更新 teacherId 的 RelTeacherStudent 条数，int[1]=已更新的 MainVerifyProcess 行数（可能大于条数，因一对多）
+     * @deprecated 已由异步逐条 {@link #assignOneInternalTutorRowInNewTx} 替代
      */
+    @Deprecated
     private int[] assignInternalTeacherForExistingMergeRows(Integer internshipId, Integer processId, Integer createUserId, String verifyUserId,
             List<Object> mergeRows, Map<Integer, Integer> teacherLoadMap, int currentVerifyTypeId) {
         int assignedCount = 0;
         int verifyUpdatedCount = 0;
-        // 一次性快照本实习当前仍为 SAVE 的 rtsId 集合，避免在循环里对每条行做 2 次回查（原 2N 次缩到 1 次）。
         Set<Integer> stillSaveRtsIds = snapshotStillSaveRtsIds(internshipId);
         for (Object row : mergeRows) {
             JSONObject j = FastJsonUtil.toJson(row);
@@ -2834,24 +3965,18 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 continue;
             }
             if (!stillSaveRtsIds.contains(rtsId)) {
-                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 已非待提交（SAVE）", rtsId);
-                continue;
-            }
-            Object rtsObj = iCommonService.getOneRecordById(TABLE_REL_TEACHER_STUDENT, rtsId);
-            if (rtsObj == null) {
-                logger.warn("校内导师分配跳过：RelTeacherStudent id={} 不存在", rtsId);
                 continue;
             }
             Integer selectedTeacherId = chooseBalancedTeacherId(teacherLoadMap);
+            int verifyN = assignOneInternalTutorRowInNewTx(
+                    internshipId, processId, createUserId, verifyUserId,
+                    rtsId, j.getInteger("relInternshipId"), selectedTeacherId, currentVerifyTypeId);
+            if (verifyN < 0) {
+                continue;
+            }
             teacherLoadMap.put(selectedTeacherId, teacherLoadMap.get(selectedTeacherId) + 1);
-            JSONObject upd = new JSONObject();
-            upd.put("id", rtsId);
-            upd.put("teacherId", selectedTeacherId);
-            upd.put("currentVerifyTypeId", currentVerifyTypeId);
-            iCommonService.saveOneRecord(TABLE_REL_TEACHER_STUDENT, upd);
-            ensureDiaryEntriesForAssignedStuPost(j.getInteger("relInternshipId"));
             assignedCount++;
-            verifyUpdatedCount += updateMainVerifyProcessCreatorAndVerifier(rtsId, processId, createUserId, verifyUserId);
+            verifyUpdatedCount += verifyN;
         }
         return new int[]{assignedCount, verifyUpdatedCount};
     }
@@ -2901,14 +4026,21 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return n;
     }
 
+    /**
+     * 取可参与校内导师均衡分配的用户：同实习项目、审核通过（PASS），
+     * jobCode 排除学生（STUDENT）与企业导师（COMPANY_TUTOR），其余身份均可。
+     */
     @SuppressWarnings("unchecked")
     private List<Integer> getTeacherIdsForAssignment(Integer internshipId) {
         JSONObject teacherSearchKeys = new JSONObject();
         teacherSearchKeys.put("internshipId", internshipId);
-        teacherSearchKeys.put("jobCode", TEACHER_JOB_CODE);
+        teacherSearchKeys.put("jobCode",
+                Constant.USER_JOB_CODE.STUDENT + "," + Constant.USER_JOB_CODE.COMPANY_TUTOR);
         teacherSearchKeys.put("isAudit", Constant.AUDIT_STATUS.PASS);
+        Map<String, String> regMap = new HashMap<>(1);
+        regMap.put("jobCode", Constant.NOT_IN);
         Page<Object> teacherPage = (Page<Object>) iCommonService.getSomeRecords(
-                "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, null, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
+                "ViewVerifyProcessRelIntershipUserMerge", teacherSearchKeys, regMap, Sort.unsorted(), 1, LARGE_PAGE_SIZE);
         List<Integer> teacherIds = teacherPage.getContent().stream()
                 .map(FastJsonUtil::toJson)
                 .map(teacherJson -> teacherJson.getInteger("userId"))
@@ -2916,7 +4048,8 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 .distinct()
                 .collect(Collectors.toList());
         if (teacherIds.isEmpty()) {
-            throw BaseResponse.moreInfoError.error("未找到审核通过的可分配校内导师（ViewVerifyProcessRelIntershipUserMerge.jobCode=SCHOOL_TEACHER, isAudit=PASS）");
+            throw BaseResponse.moreInfoError.error(
+                    "未找到审核通过的可分配导师（ViewVerifyProcessRelIntershipUserMerge.jobCode NOT IN STUDENT/COMPANY_TUTOR, isAudit=PASS）");
         }
         return teacherIds;
     }
@@ -3088,9 +4221,16 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             Integer isAudit, boolean clearSubmitOnBack) {
         JSONObject verifyJsonPre = FastJsonUtil.toJson(verifyObj);
         Integer bizIdPre = verifyJsonPre.getInteger("relationId");
+        BigDecimal diaryScore = null;
 
-        // 评分配置：PASS 前校验本级是否需要 score，命中即必填且范围校验
-        if (isAudit != null && isAudit == Constant.AUDIT_STATUS.PASS && bizIdPre != null) {
+        if (TABLE_MAIN_DIARY.equals(bizTableName) && isAudit != null
+                && isAudit == Constant.AUDIT_STATUS.PASS) {
+            diaryScore = requireDiaryTeacherScore(node);
+        }
+
+        // 非日志业务仍保留原评分配置校验；日志评分固定为教师一级总分，不再依赖 grade_config。
+        if (!TABLE_MAIN_DIARY.equals(bizTableName) && isAudit != null
+                && isAudit == Constant.AUDIT_STATUS.PASS && bizIdPre != null) {
             Integer internshipId = gradeConfigService.resolveInternshipIdForDiary(bizIdPre);
             if (internshipId != null) {
                 JSONObject bizJsonPre = FastJsonUtil.toJson(iCommonService.getOneRecordById(bizTableName, bizIdPre));
@@ -3131,6 +4271,11 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 JSONObject levelUpdate = new JSONObject();
                 levelUpdate.put("id", bizId);
                 levelUpdate.put("currentVerifyTypeId", nextLevel);
+                if (TABLE_MAIN_DIARY.equals(bizTableName) && diaryScore != null) {
+                    levelUpdate.put("totalScore", diaryScore);
+                    levelUpdate.put("scoreDetail", buildDiaryTeacherScoreDetail(diaryScore));
+                    levelUpdate.put("totalScoreLockTime", new Date());
+                }
                 iCommonService.saveOneRecord(bizTableName, levelUpdate);
                 if (nextLevel <= verifyTypeId) {
                     Integer nextRoleId = iVerifyProcessService.getVerifyRoleIdByLevel(bizJson, nextLevel);
@@ -3148,8 +4293,10 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
                 } else {
                     // 最后一级 PASS 完成（nextLevel > verifyTypeId，即 currentVerifyTypeId > verifyTypeId，
                     // 符合 CLAUDE.md 中"审核完成判断用 currentVerifyTypeId > verifyTypeId"的约定）
-                    // 若 grade_config 有配置则触发总成绩计算与物化
-                    gradeConfigService.computeAndPersistTotalScore(bizId, bizTableName);
+                    if (!TABLE_MAIN_DIARY.equals(bizTableName)) {
+                        // 非日志业务若 grade_config 有配置则触发总成绩计算与物化。
+                        gradeConfigService.computeAndPersistTotalScore(bizId, bizTableName);
+                    }
                 }
             }
         } else if (isAudit != null && isAudit == Constant.AUDIT_STATUS.BACK && bizId != null) {
@@ -3164,12 +4311,35 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
         return saved;
     }
 
+    private BigDecimal requireDiaryTeacherScore(JSONObject node) {
+        BigDecimal score = node.getBigDecimal("score");
+        if (score == null) {
+            throw BaseResponse.parameterInvalid.error("日志审核通过必须填写 score");
+        }
+        if (score.compareTo(MIN_DIARY_SCORE) < 0 || score.compareTo(MAX_DIARY_SCORE) > 0) {
+            throw BaseResponse.parameterInvalid.error("score 超出范围 [0, 100]");
+        }
+        return score;
+    }
+
+    private String buildDiaryTeacherScoreDetail(BigDecimal score) {
+        JSONObject row = new JSONObject(true);
+        row.put("levelOrder", 1);
+        row.put("weight", MAX_DIARY_SCORE);
+        row.put("maxScore", MAX_DIARY_SCORE);
+        row.put("score", score);
+        row.put("verifyUserId", String.valueOf(Base.getLoginUserId()));
+        JSONArray detail = new JSONArray();
+        detail.add(row);
+        return detail.toJSONString();
+    }
+
     private void assertCanAuditMainDiary(Object verifyObj) {
         if (verifyObj == null) {
             throw BaseResponse.parameterInvalid.error("审核记录不存在");
         }
         JSONObject verifyJson = FastJsonUtil.toJson(verifyObj);
-        if (!"MainDiary".equals(verifyJson.getString("tableName"))) {
+        if (!TABLE_MAIN_DIARY.equals(verifyJson.getString("tableName"))) {
             return;
         }
         Integer isAudit = verifyJson.getInteger("isAudit");
@@ -3242,9 +4412,9 @@ public class InternshipServiceImpl extends Base implements IInternshipService {
             limitedTitleAutoApproved = true;
         }
         // 日志 / 打卡：业务表自带审核配置的多级流程（relationId = 业务主键）；打卡无 submit，退回只重置审核级别
-        if ("MainDiary".equals(tableName)) {
+        if (TABLE_MAIN_DIARY.equals(tableName)) {
             assertCanAuditMainDiary(verifyObj);
-            return auditProcessMultiLevelRelationBiz(node, verifyObj, "MainDiary", isAudit, true);
+            return auditProcessMultiLevelRelationBiz(node, verifyObj, TABLE_MAIN_DIARY, isAudit, true);
         }
         if (isAudit != null && isAudit == 1 && Id != null && !limitedTitleAutoApproved && !noVerifyTitleAutoApproved) {
             // 审核通过：推进到下一级

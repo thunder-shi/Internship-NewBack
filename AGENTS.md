@@ -69,7 +69,7 @@ throw BaseResponse.moreInfoError.error("msg");    // 500
 通过表名动态操作任意表，无需为每个表写 Controller：
 
 ```java
-getSomeRecords(tblName, searchKeys, regMap, sort, page, size)  // 条件查询（EQ/GT/LT/LIKE/RANGE）
+getSomeRecords(tblName, searchKeys, regMap, sort, page, size)  // 条件查询（EQ/GT/LT/LIKE/RANGE/IN/IS_NULL/IS_NOT_NULL）
 saveOneRecord(tblName, json)       // 自动判断新增/更新（id 为空则 insert）
 deleteRecordByDelflag(tblName, id) // 软删除
 deleteSomeRecords(tblName, ids)    // 批量软删除

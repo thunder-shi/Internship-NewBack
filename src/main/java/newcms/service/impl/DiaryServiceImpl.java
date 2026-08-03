@@ -679,8 +679,11 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
   }
 
   private JSONObject buildDiaryJson(MainDiary diary, ViewVerifyMainDiaryMerge merge) {
-    if (merge != null)
-      return normalizeDiaryJson(FastJsonUtil.toJson(merge));
+    if (merge != null) {
+      JSONObject json = normalizeDiaryJson(FastJsonUtil.toJson(merge));
+      appendDiaryScoreFields(json, diary);
+      return json;
+    }
     if (diary == null)
       return null;
     JSONObject stub = new JSONObject();
@@ -698,7 +701,18 @@ public class DiaryServiceImpl extends Base implements IDiaryService {
     stub.put("currentVerifyTypeId", diary.getCurrentVerifyTypeId());
     stub.put("isAudit", null);
     stub.put("isAllVerified", false);
+    appendDiaryScoreFields(stub, diary);
     return stub;
+  }
+
+  private void appendDiaryScoreFields(JSONObject json, MainDiary diary) {
+    if (json == null || diary == null)
+      return;
+    json.put("totalScore", diary.getTotalScore());
+    json.put("scoreDetail", diary.getScoreDetail());
+    json.put("totalScoreLockTime", diary.getTotalScoreLockTime());
+    json.put("aiReviewScore", diary.getAiReviewScore());
+    json.put("aiReviewStatus", diary.getAiReviewStatus());
   }
 
   private JSONObject normalizeDiaryJson(JSONObject diary) {

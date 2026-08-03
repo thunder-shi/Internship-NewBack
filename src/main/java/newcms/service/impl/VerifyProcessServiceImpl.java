@@ -1100,7 +1100,9 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
     }
 
     /**
-     * 若某岗位审核通过后已招满，将该岗位剩余报名标记为系统自动作废（保留可见，附 NOTPASS 标记）。
+     * 若某岗位审核通过后已招满，将该岗位上仍处于待审/退回的报名标记为系统自动作废（保留可见，附 NOTPASS 标记）。
+     * <p><b>不会</b>作废已审核通过（isAudit=PASS）的报名——免审/系统分配场景下同岗多人依次 PASS 挤满时，
+     * 先前已通过的记录必须保留，否则会出现「满员后只剩最后 1 条 PASS、其余被误标 NOTPASS」。</p>
      */
     @Override
     public void cancelPendingApplicationsIfPostFull(Integer postId, Integer approvedRelStuPostId) {
@@ -1117,10 +1119,48 @@ public class VerifyProcessServiceImpl extends Base implements IVerifyProcessServ
                 continue; // 跳过刚通过的记录
             }
             Integer recordId = record.getId();
+            if (!isPendingStuPostApplication(recordId)) {
+                // 已 PASS、已作废/不通过，或不存在待审记录 → 不作废
+                continue;
+            }
             markRelationCancelled(recordId, "RelStuInternshipPost", record.getStudentId(), reason);
-            logger.info("岗位 {} 已满（{}/{}），标记报名记录 id={} 为作废（保留可见）",
+            logger.info("岗位 {} 已满（{}/{}），标记待审报名记录 id={} 为作废（保留可见）",
                     postId, post.getNowPersonNum(), post.getAllPersonNum(), recordId);
         }
+    }
+
+    /**
+     * 选岗报名是否仍处于可被「岗位满员」作废的状态：存在 SAVE/SUBMIT/BACK，且从未 PASS。
+     */
+    @SuppressWarnings("unchecked")
+    private boolean isPendingStuPostApplication(Integer relationId) {
+        if (relationId == null) {
+            return false;
+        }
+        JSONObject sk = new JSONObject();
+        sk.put("relationId", relationId);
+        sk.put("tableName", "RelStuInternshipPost");
+        Page<Object> vpPage = (Page<Object>) iCommonService.getSomeRecords(
+                "MainVerifyProcess", sk, null, Sort.unsorted(), 1, 100);
+        if (vpPage == null || vpPage.getContent() == null || vpPage.getContent().isEmpty()) {
+            return false;
+        }
+        boolean hasPending = false;
+        for (Object vp : vpPage.getContent()) {
+            Integer isAudit = FastJsonUtil.toJson(vp).getInteger("isAudit");
+            if (isAudit == null) {
+                continue;
+            }
+            if (isAudit == Constant.AUDIT_STATUS.PASS) {
+                return false;
+            }
+            if (isAudit == Constant.AUDIT_STATUS.SAVE
+                    || isAudit == Constant.AUDIT_STATUS.SUBMIT
+                    || isAudit == Constant.AUDIT_STATUS.BACK) {
+                hasPending = true;
+            }
+        }
+        return hasPending;
     }
 
 }

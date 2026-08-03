@@ -18,6 +18,8 @@ import newcms.utils.LogUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.data.domain.Sort;
 
 import java.util.Arrays;
@@ -190,7 +192,8 @@ public class InternshipProcessController {
 
      @Operation(
              summary = "获取实习项目可选用户列表",
-            description = "根据 internshipId、jobCode（可选 departmentId）查询 viewBaseUser 中尚未在 RelIntershipUser 中关联的用户"
+            description = "根据 internshipId、jobCode、departmentId 查询 ViewBaseUser 中尚未在 RelIntershipUser 关联的用户。"
+                    + "jobCode=STUDENT 时按学生过滤；jobCode=SCHOOL_TEACHER 或 COMPANY_TUTOR 时查所有非学生人员（jobCode != STUDENT）。"
      )
      @PostMapping(value = "/getAvailableUsersForInternship", consumes = MediaType.APPLICATION_JSON_VALUE)
      public Object getAvailableUsersForInternship(@RequestBody JSONObject requestJson) {
@@ -280,6 +283,49 @@ public class InternshipProcessController {
         ));
     }
 
+    @Operation(
+            summary = "Excel 批量安排用户进入实习项目",
+            description = "上传 Excel，按学号/工号匹配用户 workId，批量创建 RelIntershipUser 与 MainVerifyProcess（isAudit=SAVE）。"
+                    + "role=student（默认）：校验用户为学生；role=teacher：校验用户不是学生且不是企业导师。"
+                    + "Excel 第 1 行为表头，学生模板含「学号」，教师模板含「工号」（也兼容学号列）。"
+                    + "已存在入项关联则跳过（若缺审核记录会补建）；不存在/身份不符记入 failures。"
+                    + "multipart 字段：file、internshipId、processId、createUserId、role（可选）、verifyRoleId（可选）、currentVerifyTypeId（可选，默认 1）。"
+    )
+    @PostMapping(value = "/importRelIntershipUserByExcel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Object importRelIntershipUserByExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("internshipId") Integer internshipId,
+            @RequestParam("processId") Integer processId,
+            @RequestParam("createUserId") Integer createUserId,
+            @RequestParam(value = "verifyRoleId", required = false) Integer verifyRoleId,
+            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId,
+            @RequestParam(value = "role", required = false, defaultValue = "student") String role) {
+        JSONObject log = new JSONObject();
+        log.put("internshipId", internshipId);
+        log.put("processId", processId);
+        log.put("createUserId", createUserId);
+        log.put("verifyRoleId", verifyRoleId);
+        log.put("currentVerifyTypeId", currentVerifyTypeId);
+        log.put("role", role);
+        log.put("fileName", file == null ? null : file.getOriginalFilename());
+        LogUtil.loggerRecord("importRelIntershipUserByExcel", log);
+        return BaseResponse.ok(iInternshipService.importRelIntershipUserByExcel(
+                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId, role));
+    }
+
+    @Operation(
+            summary = "下载实习用户安排 Excel 导入模板",
+            description = "role=student（默认）：表头「学号」「姓名」；role=teacher：表头「工号」「姓名」。导入均按 workId 匹配。"
+    )
+    @PostMapping(value = "/downloadRelIntershipUserImportTemplate")
+    public void downloadRelIntershipUserImportTemplate(
+            @RequestParam(value = "role", required = false, defaultValue = "student") String role) {
+        JSONObject log = new JSONObject();
+        log.put("role", role);
+        LogUtil.loggerRecord("downloadRelIntershipUserImportTemplate", log);
+        iInternshipService.downloadRelIntershipUserImportTemplate(role);
+    }
+
     private List<Integer> parseDepartmentIds(JSONObject source, String fieldName) {
         if (source == null || fieldName == null || fieldName.trim().isEmpty()) {
             return java.util.Collections.emptyList();
@@ -365,7 +411,8 @@ public class InternshipProcessController {
     @Operation(
             summary = "查询可分配老师列表",
             description = "根据 internshipId、departmentId、jobCode 查询当前实习项目下审核已通过的老师。"
-                    + "jobCode：SCHOOL_TEACHER（校内导师）或 COMPANY_TUTOR（企业导师）。"
+                    + "jobCode：SCHOOL_TEACHER 时取所有非学生（jobCode != STUDENT）；"
+                    + "COMPANY_TUTOR 时仅取企业导师。"
     )
     @PostMapping(value = "/listAssignableTeachers", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableTeachers(@RequestBody JSONObject requestJson) {
@@ -393,7 +440,8 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "查询可分配学生列表",
-            description = "根据 internshipId 和 departmentId 查询当前实习项目下岗位审核通过且选岗审核通过的学生，口径与系统自动分配一致。"
+            description = "根据 internshipId 和 departmentId 查询选岗审核已通过的学生。"
+                    + "校内导师已指定且非待提交(SAVE)的不返回；待提交草稿（含已写 teacherId）仍返回以便改派。"
     )
     @PostMapping(value = "/listAssignableStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object listAssignableStudents(@RequestBody JSONObject requestJson) {
@@ -411,14 +459,11 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "根据实习项目初始化校内导师分配",
+            summary = "根据实习项目初始化校内导师分配（异步）",
             description = "查询 ViewVerifyProcessRelIntTeacherStudentMerge（processTypeCode=EXTERNAL_ASSIGN_INTERNAL_TUTOR）中该实习项目下"
-                    + "待提交（isAudit=SAVE）的师生记录（含已暂存 teacherId 的草稿）；已提交的记录不在查询范围内、不会被改写。"
-                    + "从 ViewVerifyProcessRelIntershipUserMerge 取同实习项目、jobCode=SCHOOL_TEACHER、审核通过（PASS）的教师 userId；"
-                    + "查 ViewVerifyProcessRelIntTeacherStudentMerge 时不使用 jobCode 条件。"
-                    + "在剥离本批 SAVE 行旧分配后的负载上按均衡策略写入 teacherId（再次点击可因新增导师而重算）；"
-                    + "若已有 MainVerifyProcess（relationId+processId+RelTeacherStudent），"
-                    + "则更新其 createUserId、verifyUserId 为请求传入值。createdVerifyProcessCount 为实际更新的审核行数。"
+                    + "待提交（isAudit=SAVE）的师生记录；立即返回 taskId，后台按条独立短事务均衡写入 teacherId。"
+                    + "用 getInitTeacherStudentTaskStatus 轮询；同项目同时只允许一个进行中任务。"
+                    + "中途停服时已提交的分配会保留。"
     )
     @PostMapping(value = "/initTeacherStudentByInternshipId", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object initTeacherStudentByInternshipId(@RequestBody JSONObject requestJson) {
@@ -439,6 +484,22 @@ public class InternshipProcessController {
                 iInternshipService.initTeacherStudentByInternshipId(internshipId, processId, createUserId, verifyUserId,
                         currentVerifyTypeId)
         );
+    }
+
+    @Operation(
+            summary = "查询系统分配校内导师任务进度",
+            description = "taskId 来自 initTeacherStudentByInternshipId。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；percent 0~100；完成后含 details。"
+    )
+    @PostMapping(value = "/getInitTeacherStudentTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getInitTeacherStudentTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getInitTeacherStudentTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getInitTeacherStudentTaskStatus(taskId));
     }
 
     @Operation(
@@ -467,7 +528,10 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "手动分配老师与学生",
-            description = "按传入 teacherId 和 studentIds，批量创建 RelTeacherStudent 和 MainVerifyProcess。"
+            description = "按传入 teacherId 和 studentIds 分配。"
+                    + "若该选岗在指定 processId 下已有 SAVE 师生占位，则更新 teacherId（及审核 createUserId/verifyUserId）；"
+                    + "若无占位则新建 RelTeacherStudent + MainVerifyProcess；"
+                    + "若已提交（非 SAVE）则跳过并计入 skippedSubmittedCount。"
     )
     @PostMapping(value = "/manualAssignTeacherStudent", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object manualAssignTeacherStudent(@RequestBody JSONObject requestJson) {
@@ -497,6 +561,60 @@ public class InternshipProcessController {
                 iInternshipService.manualAssignTeacherStudent(internshipId, processId, createUserId, verifyUserId,
                         currentVerifyTypeId, teacherId, studentIds)
         );
+    }
+
+    @Operation(
+            summary = "Excel 导入师生手动分配（异步）",
+            description = "同步解析/校验 Excel 后立即返回 taskId，后台按教师组短事务调用 manualAssignTeacherStudent。"
+                    + "用 getImportManualAssignTeacherStudentTaskStatus 轮询；同项目同时只允许一个导入分配任务。"
+                    + "中途停服时已提交的教师组分配会保留。"
+                    + "multipart：file、internshipId、processId、createUserId、verifyRoleId（可选）、"
+                    + "currentVerifyTypeId（可选，默认 1=NO_VERIFY，有审核传 2=ONE_VERIFY）。"
+    )
+    @PostMapping(value = "/importManualAssignTeacherStudentByExcel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Object importManualAssignTeacherStudentByExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("internshipId") Integer internshipId,
+            @RequestParam("processId") Integer processId,
+            @RequestParam("createUserId") Integer createUserId,
+            @RequestParam(value = "verifyRoleId", required = false) Integer verifyRoleId,
+            @RequestParam(value = "currentVerifyTypeId", required = false) Integer currentVerifyTypeId) {
+        JSONObject log = new JSONObject();
+        log.put("internshipId", internshipId);
+        log.put("processId", processId);
+        log.put("createUserId", createUserId);
+        log.put("verifyRoleId", verifyRoleId);
+        log.put("currentVerifyTypeId", currentVerifyTypeId);
+        log.put("fileName", file == null ? null : file.getOriginalFilename());
+        LogUtil.loggerRecord("importManualAssignTeacherStudentByExcel", log);
+        return BaseResponse.ok(iInternshipService.importManualAssignTeacherStudentByExcel(
+                file, internshipId, processId, createUserId, verifyRoleId, currentVerifyTypeId));
+    }
+
+    @Operation(
+            summary = "查询 Excel 导入分配任务进度",
+            description = "taskId 来自 importManualAssignTeacherStudentByExcel。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；完成后含 failures。"
+    )
+    @PostMapping(value = "/getImportManualAssignTeacherStudentTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getImportManualAssignTeacherStudentTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getImportManualAssignTeacherStudentTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getImportManualAssignTeacherStudentTaskStatus(taskId));
+    }
+
+    @Operation(
+            summary = "下载师生手动分配 Excel 导入模板",
+            description = "表头：学号、学生姓名、教师工号、老师姓名。导入仅用学号/教师工号匹配 workId，姓名列仅展示。"
+    )
+    @PostMapping(value = "/downloadManualAssignTeacherStudentImportTemplate")
+    public void downloadManualAssignTeacherStudentImportTemplate() {
+        LogUtil.loggerRecord("downloadManualAssignTeacherStudentImportTemplate", new JSONObject());
+        iInternshipService.downloadManualAssignTeacherStudentImportTemplate();
     }
 
     // @Operation(summary = "获取当前进行中的实习项目", description = "根据流程类型代码查询当前时间范围内的实习项目")
@@ -562,10 +680,13 @@ public class InternshipProcessController {
 
     @Operation(
             summary = "校外实习项目-学生选岗情况",
-            description = "internshipId 必填；status 可选：all（全部学生一条列表，每条带 selectionStatus）、"
-                    + "notSelected、selectedPendingAudit、postApproved（仅返回该状态分页 rows）。"
+            description = "internshipId 必填；status 可选：all（全部入项学生）、notSelected（未报名）、"
+                    + "selected（已报名=有任意选岗记录）、selectedPendingAudit、postApproved。"
+                    + "前端三类 Tab 建议：all / notSelected / selected；后两者保留兼容细粒度筛选。"
+                    + "all、selected 的 rows 每条带 selectionStatus（notSelected / selectedPendingAudit / postApproved）。"
+                    + "counts 始终含 notSelected、selected、selectedPendingAudit、postApproved。"
                     + "权限与 listExternalInternshipCollegeStats 一致：院系管理员固定本院子树；校级管理员不传 departmentId 为全校口径，传则下钻该节点子树。"
-                    + "rows/counts 仅含当前部门子树内已报名学生。已有选岗记录时 rows 含 verifyProcessId（MainVerifyProcess.id）。"
+                    + "数据来自视图 view_external_internship_student_post_breakdown；权限部门过滤仍在服务端。"
                     + "分页：pageInfo.page、pageInfo.size。"
     )
     @PostMapping(value = "/getExternalInternshipStudentPostBreakdown", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -590,9 +711,11 @@ public class InternshipProcessController {
     }
 
     @Operation(
-            summary = "未选岗学生随机分配岗位",
-            description = "根据 internshipId 取未选岗学生（与 getExternalInternshipStudentPostBreakdown 的 notSelected 口径一致），"
-                    + "在 listApprovedExternalInternshipPosts 岗位池内随机分配，内部调用 stuSelPost(studentId,0,postId)。"
+            summary = "未选岗学生系统分配岗位（异步）",
+            description = "将实习项目安排中尚未选岗的学生随机报名到审核通过且有空位的企业岗位；"
+                    + "立即返回 taskId，后台串行调用 stuSelPost。"
+                    + "用 getRandomAssignPostsTaskStatus 轮询 status/percent/assignedCount。"
+                    + "同项目同时只允许一个进行中的任务。"
     )
     @PostMapping(value = "/randomAssignPostsForUnselectedStudents", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object randomAssignPostsForUnselectedStudents(@RequestBody JSONObject requestJson) {
@@ -605,7 +728,23 @@ public class InternshipProcessController {
         if (internshipId == null) {
             throw BaseResponse.parameterInvalid.error("internshipId 不能为空");
         }
-        return BaseResponse.ok(iInternshipService.randomAssignPostsForUnselectedStudents(internshipId));
+        return BaseResponse.ok(iInternshipService.startRandomAssignPostsForUnselectedStudents(internshipId));
+    }
+
+    @Operation(
+            summary = "查询随机分配岗位任务进度",
+            description = "taskId 来自 randomAssignPostsForUnselectedStudents。"
+                    + "status：PENDING/RUNNING/SUCCESS/FAILED；percent 0~100；完成后含 details。"
+    )
+    @PostMapping(value = "/getRandomAssignPostsTaskStatus", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object getRandomAssignPostsTaskStatus(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("getRandomAssignPostsTaskStatus", requestJson);
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        String taskId = node != null ? node.getString("taskId") : requestJson.getString("taskId");
+        return BaseResponse.ok(iInternshipService.getRandomAssignPostsTaskStatus(taskId));
     }
 
     @Operation(

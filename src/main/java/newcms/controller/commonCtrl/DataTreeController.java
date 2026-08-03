@@ -120,6 +120,21 @@ public class DataTreeController extends CommonController {
         Integer nodeId = requestJson.getInteger("nodeId");
         return BaseResponse.ok(iDataTreeService.getAllChildIndex(key, nodeId));
     }
+
+    /**
+     * 判断当前部门及其所有未删除后代部门下是否存在未删除用户。
+     * body: { "departmentId": 123 }，兼容传 nodeId。
+     */
+    @PostMapping(value = "/hasUndeletedUsersInDepartmentSubtree", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object hasUndeletedUsersInDepartmentSubtree(@RequestBody JSONObject requestJson) {
+        LogUtil.loggerRecord("hasUndeletedUsersInDepartmentSubtree", requestJson);
+        Integer departmentId = requestJson.getInteger("departmentId");
+        if (departmentId == null) {
+            departmentId = requestJson.getInteger("nodeId");
+        }
+        return BaseResponse.ok(iDataTreeService.hasUndeletedUsersInDepartmentSubtree(departmentId));
+    }
+
     @PostMapping(value = "/commonSearch", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Object commonSearch(@RequestBody JSONObject requestJson) {
         LogUtil.loggerRecord("commonSearch", requestJson);
