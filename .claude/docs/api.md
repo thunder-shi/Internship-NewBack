@@ -98,6 +98,15 @@ readAllTreeNodes, editOneNode, delOneNode, delManyNode, changeTwoNodes, getAllPa
 | /internshipPost/StuSelPostBatch | POST | 学生批量报名岗位（StudentId + internshipPostIds 均为密文数组，单条失败不阻断） |
 | /main-sign/submit-audit | POST | 提交打卡审核（幂等） node: {signId} |
 | /main-leave/submit-audit | POST | 提交请假审核（幂等，仅按 verifyFirstRoleId 解析审核人，解析不到则系统自动通过） node: {leaveId, processId?, processTypeCode?} |
+| /notice/my-internships | POST | 当前老师可发通知的实习项目列表 |
+| /notice/bound-students | POST | 当前老师在指定项目下绑定的学生 node: {internshipId} |
+| /notice/publish | POST | 发布通知 node: {internshipId, title, content, studentIds?}；附件 tableName=MainNotice |
+| /notice/my-published | POST | 老师已发列表（分页） node: {internshipId?, page?, size?} |
+| /notice/my-inbox | POST | 学生收件箱（分页） node: {internshipId?, isRead?, page?, size?} |
+| /notice/mark-read | POST | 标记已读 node: {noticeId?} 或 {noticeIds:[]} |
+| /notice/unread-count | POST | 未读数 node: {internshipId?} → {count} |
+| /notice/detail | POST | 通知详情 node: {noticeId} |
+| /notice/delete | POST | 软删通知（仅发布人） node: {noticeId} |
 | /importAndExport/importExcel | POST | 导入 Excel |
 | /importAndExport/exportExcel | POST | 导出 Excel |
 | /importAndExport/downloadTemplate | GET | 下载导入模板 |

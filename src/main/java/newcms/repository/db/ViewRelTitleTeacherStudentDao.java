@@ -12,4 +12,5 @@ public interface ViewRelTitleTeacherStudentDao extends BaseDao<ViewRelTitleTeach
     List<ViewRelTitleTeacherStudent> findByStuIdAndIsDeletedFalse(Integer stuId);
     List<ViewRelTitleTeacherStudent> findByRelTitleStudentIdAndIsDeletedFalse(Integer relTitleStudentId);
     List<ViewRelTitleTeacherStudent> findByInternshipIdAndIsDeletedFalse(Integer internshipId);
+    List<ViewRelTitleTeacherStudent> findByTeacherIdAndIsDeletedFalse(Integer teacherId);
 }
