@@ -44,6 +44,8 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | MainDiaryPeriod          | main_diary_period           | internshipId, periodIndex, beginTime, endTime, name                                                       |
 | MainSign                 | main_sign                   | stuInternshipId, address, signType, imgId, verifyFirstRoleId~verifyFifthRoleId                            |
 | MainLeave                | main_leave                  | stuInternshipId, startTime, endTime, remarks, currentVerifyTypeId, verifyFirstRoleId~verifyFifthRoleId（表22，BaseInfo+VerifyConfigInfo）    |
+| MainNotice               | main_notice                 | title, content, internshipId, publisherId, publishTime（指导老师发布的实习通知） |
+| RelNoticeReceiver        | rel_notice_receiver         | noticeId, studentId, isRead, readTime（通知接收人/已读状态） |
 | RelProcessInternship     | rel_process_internship      | internshipId, processTypeId, verifyFirstRoleId~verifyFifthRoleId, startTime, endTime, currentVerifyTypeId |
 | RelProcessInternshipType | rel_process_internship_type | internshipTypeId, processTypeId, 多级审核角色                                                             |
 | RelTeacherStudent        | rel_teacher_student         | teacherId, studentId, relInternshipId                                                                     |
@@ -128,4 +130,6 @@ currentVerifyTypeId（含此组的表记录当前审核进度）
 | ViewExternalInternshipCollegeStatsId       | view_external_internship_college_stats_id         | 校外实习学院统计辅助（ID列）                                                        |
 | ViewLeaveUniversalDetails                  | view_leave_universal_details                      | 请假业务全量视图（抹平校内/校外差异，含 studentAccount、internshipMode、relationTable） |
 | ViewLeaveAuditFlow                         | view_leave_audit_flow                             | 请假审核流向视图（MainVerifyProcess + BaseVerifyType 聚合，含 verifyTypeOrder、nextVerifyLevel） |
+| ViewMainNotice                             | （@Subselect）                                    | 老师已发通知列表（含 publisherName、internshipName、receiverCount、readCount） |
+| ViewRelNoticeReceiver                      | （@Subselect）                                    | 学生收件箱（接收人 + 通知摘要 + isRead） |
 | ViewAuditorTodoList                        | view_auditor_todo_list                            | 导师/审核员待办视图（MainLeave 当前待审记录，含 studentAccount、teacherName）       |
