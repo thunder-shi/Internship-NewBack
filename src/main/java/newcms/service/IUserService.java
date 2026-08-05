@@ -39,6 +39,15 @@ public interface IUserService {
      */
     void editPassword(String userId, String oldPassword, String password, boolean reset);
 
+    /**
+     * 判断指定用户当前密码是否仍为初始密码（明文规则：SLSDsx# + 学工号后四位，不足四位左补 0；
+     * 与库中密码比较时使用与登录相同的 Shiro MD5 加盐摘要）。
+     *
+     * @param userId 用户 id
+     * @return {@code { userId, isInitialPassword, hasWorkId }}
+     */
+    Object isInitialPassword(Integer userId);
+
 
     /**
      * 查询所有用户

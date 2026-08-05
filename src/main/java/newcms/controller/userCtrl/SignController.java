@@ -76,6 +76,28 @@ public class SignController extends CommonController {
         return BaseResponse.ok;
     }
 
+    /**
+     * 判断账号是否仍为初始密码。
+     * <p>初始密码明文：{@code SLSDsx#} + 学工号（workId）后四位（不足四位左补 0），与库中摘要比对方式同登录。</p>
+     * body 示例：{@code { "userId": 123 }} 或 {@code { "node": { "userId": 123 } }}
+     */
+    @PostMapping(value = "/isInitialPassword", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Object isInitialPassword(@RequestBody JSONObject requestJson) {
+        if (requestJson == null) {
+            throw BaseResponse.parameterInvalid.error("请求参数不能为空");
+        }
+        JSONObject node = requestJson.getJSONObject("node");
+        Integer userId = node != null ? node.getInteger("userId") : requestJson.getInteger("userId");
+        if (userId == null && requestJson.getString("userId") != null) {
+            try {
+                userId = Integer.parseInt(requestJson.getString("userId").trim());
+            } catch (NumberFormatException e) {
+                throw BaseResponse.parameterInvalid.error("userId 无效");
+            }
+        }
+        return BaseResponse.ok(iUserService.isInitialPassword(userId));
+    }
+
     private static boolean parseResetFlag(JSONObject requestJson) {
         Object reset = requestJson.get("reset");
         if (reset instanceof Boolean) {

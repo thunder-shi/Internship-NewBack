@@ -388,6 +388,34 @@ public Object getLoginUser(Date date, String userAgent) {
         }
     }
 
+    @Override
+    public Object isInitialPassword(Integer userId) {
+        if (userId == null) {
+            throw BaseResponse.parameterInvalid.error("userId 不能为空");
+        }
+        BaseUser user = tblUserInfoDao.getByIdAndIsDeletedFalse(userId);
+        if (user == null) {
+            throw BaseResponse.moreInfoError.error("用户不存在");
+        }
+        JSONObject result = new JSONObject();
+        result.put("userId", userId);
+        String workId = user.getWorkId();
+        boolean hasWorkId = StringUtils.hasText(workId);
+        result.put("hasWorkId", hasWorkId);
+        if (!hasWorkId) {
+            result.put("isInitialPassword", false);
+            return result;
+        }
+        String storedPassword = user.getPassword();
+        if (!StringUtils.hasText(storedPassword)) {
+            result.put("isInitialPassword", false);
+            return result;
+        }
+        String plainInitial = EncodeUtil.buildInitialPasswordFromWorkId(workId.trim());
+        String encryptedInitial = EncodeUtil.pwdShiro(plainInitial, String.valueOf(userId));
+        result.put("isInitialPassword", encryptedInitial.equals(storedPassword));
+        return result;
+    }
 
     @Override
     public Object userList() {
