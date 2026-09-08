@@ -302,30 +302,42 @@ public class CommonController extends Base {
     }
 
     /**
-     * 获取文件预览链接（presigned URL，有效期 10 分钟，不含 Content-Disposition 覆写参数）。
-     * 供 kkFileView 等预览服务调用，避免 MinIO 因签名不匹配返回 400。
+     * 文件内联预览（后端代理流出，不暴露 MinIO 地址）。
      * GET /common/minio/preview/{id}
      */
     @GetMapping(value = "/minio/preview/{id}")
-    public Object previewUrl(@PathVariable Integer id) {
+    public void previewUrl(@PathVariable Integer id, HttpServletResponse response) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
+        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
+                ossFile.getFileName(), true, response);
+    }
+
+    /**
+     * 文件下载（后端代理流出，不暴露 MinIO 地址）。
+     * GET /common/minio/download/{id}
+     */
+    @GetMapping(value = "/minio/download/{id}")
+    public void downloadFile(@PathVariable Integer id, HttpServletResponse response) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
+        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
+                ossFile.getFileName(), false, response);
+    }
+
+    /**
+     * 给 kkFileView 用的 MinIO 预签名 GET 地址（有效期 10 分钟）。
+     * 仅已登录前端可换取；返回的 URL 由 kkFileView 服务端直接 GET，浏览器不要打开。
+     * GET /common/minio/presignedPreview/{id}
+     */
+    @GetMapping(value = "/minio/presignedPreview/{id}")
+    public Object presignedPreviewUrl(@PathVariable Integer id) {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
         checkFileReadAccess(ossFile);
         String url = minIOUtils.presignedPreviewUrl(ossFile.getBucketName(), ossFile.getOssPath(), 600);
-        return BaseResponse.ok(url);
-    }
-
-    /**
-     * 获取文件下载链接（presigned URL，有效期 10 分钟）。
-     * GET /common/minio/download/{id}
-     */
-    @GetMapping(value = "/minio/download/{id}")
-    public Object downloadFile(@PathVariable Integer id) {
-        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
-        checkFileReadAccess(ossFile);
-        String url = minIOUtils.presignedUrl(ossFile.getBucketName(), ossFile.getOssPath(),
-                ossFile.getFileName(), 600);
         return BaseResponse.ok(url);
     }
 
