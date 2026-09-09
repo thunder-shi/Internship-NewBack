@@ -291,45 +291,36 @@ public class CommonController extends Base {
     /**
      * 文件内联预览（图片、PDF 等），可作为 <img src> 或 <embed src> 的地址。
      * GET /common/minio/file/{id}
+     * 直接输出对象字节，不包 JSON。
      */
     @GetMapping(value = "/minio/file/{id}")
     public void previewFile(@PathVariable Integer id, HttpServletResponse response) {
-        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
-        checkFileReadAccess(ossFile);
-        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
-                ossFile.getFileName(), true, response);
+        streamOssFile(id, true, response);
     }
 
     /**
      * 文件内联预览（后端代理流出，不暴露 MinIO 地址）。
      * GET /common/minio/preview/{id}
+     * 直接输出对象字节，不包 JSON。
      */
     @GetMapping(value = "/minio/preview/{id}")
     public void previewUrl(@PathVariable Integer id, HttpServletResponse response) {
-        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
-        checkFileReadAccess(ossFile);
-        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
-                ossFile.getFileName(), true, response);
+        streamOssFile(id, true, response);
     }
 
     /**
      * 文件下载（后端代理流出，不暴露 MinIO 地址）。
      * GET /common/minio/download/{id}
+     * 直接输出对象字节，不包 JSON。
      */
     @GetMapping(value = "/minio/download/{id}")
     public void downloadFile(@PathVariable Integer id, HttpServletResponse response) {
-        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
-        checkFileReadAccess(ossFile);
-        minIOUtils.stream(ossFile.getBucketName(), ossFile.getOssPath(),
-                ossFile.getFileName(), false, response);
+        streamOssFile(id, false, response);
     }
 
     /**
-     * 给 kkFileView 用的 MinIO 预签名 GET 地址（有效期 10 分钟）。
-     * 仅已登录前端可换取；返回的 URL 由 kkFileView 服务端直接 GET，浏览器不要打开。
+     * 给 kkFileView 用的下载地址（有效期 10 分钟）。
+     * 仅已登录前端可换取；返回的 URL 由 kkFileView 服务端 GET，浏览器不要直接打开。
      * GET /common/minio/presignedPreview/{id}
      */
     @GetMapping(value = "/minio/presignedPreview/{id}")
@@ -337,8 +328,15 @@ public class CommonController extends Base {
         SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
         checkFileReadAccess(ossFile);
-        String url = minIOUtils.presignedPreviewUrl(ossFile.getBucketName(), ossFile.getOssPath(), 600);
-        return BaseResponse.ok(url);
+        return BaseResponse.ok(minIOUtils.presignedKkFileViewUrl(
+                ossFile.getBucketName(), ossFile.getOssPath(), 600));
+    }
+
+    private void streamOssFile(Integer id, boolean inline, HttpServletResponse response) {
+        SysOssFile ossFile = sysOssFileDao.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> BaseResponse.parameterInvalid.error("文件不存在"));
+        checkFileReadAccess(ossFile);
+        minIOUtils.stream(ossFile, inline, response);
     }
 
     /**

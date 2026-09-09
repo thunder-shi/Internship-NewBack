@@ -3,19 +3,18 @@ package newcms.utils;
 import com.alibaba.fastjson.JSONObject;
 import io.minio.*;
 import io.minio.messages.DeleteObject;
-import jakarta.servlet.http.HttpServletResponse;
 import newcms.base.BaseResponse;
 import newcms.entity.db.SysOssFile;
 import newcms.repository.db.SysOssFileDao;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ContentDisposition;
 import org.springframework.stereotype.Component;
-// endpoint 字段已移除，MinIO URL 不对外暴露，文件访问统一走后端代理
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -32,6 +31,54 @@ public class MinIOUtils {
 
     @Value("${minio.bucketName}")
     private String defaultBucket;
+
+    @Value("${minio.accessKey}")
+    private String accessKey;
+
+    @Value("${minio.secretKey}")
+    private String secretKey;
+
+    /** kkFileView 拉取文件时使用的 MinIO 地址；开发和 Docker 生产环境分别配置。 */
+    @Value("${minio.kkfileview-endpoint:${minio.endpoint}}")
+    private String kkFileViewEndpoint;
+
+    private static final Map<String, String> MIME_BY_EXT = Map.ofEntries(
+            Map.entry("pdf", "application/pdf"),
+            Map.entry("jpg", "image/jpeg"),
+            Map.entry("jpeg", "image/jpeg"),
+            Map.entry("png", "image/png"),
+            Map.entry("gif", "image/gif"),
+            Map.entry("bmp", "image/bmp"),
+            Map.entry("webp", "image/webp"),
+            Map.entry("tif", "image/tiff"),
+            Map.entry("tiff", "image/tiff"),
+            Map.entry("doc", "application/msword"),
+            Map.entry("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            Map.entry("xls", "application/vnd.ms-excel"),
+            Map.entry("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            Map.entry("ppt", "application/vnd.ms-powerpoint"),
+            Map.entry("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            Map.entry("wps", "application/vnd.ms-works"),
+            Map.entry("wpt", "application/vnd.ms-works"),
+            Map.entry("et", "application/vnd.ms-excel"),
+            Map.entry("ett", "application/vnd.ms-excel"),
+            Map.entry("dps", "application/vnd.ms-powerpoint"),
+            Map.entry("dpt", "application/vnd.ms-powerpoint"),
+            Map.entry("rmvb", "application/vnd.rn-realmedia-vbr"),
+            Map.entry("zip", "application/zip"),
+            Map.entry("rar", "application/vnd.rar"),
+            Map.entry("7z", "application/x-7z-compressed"),
+            Map.entry("tar", "application/x-tar"),
+            Map.entry("gz", "application/gzip"),
+            Map.entry("mp4", "video/mp4"),
+            Map.entry("avi", "video/x-msvideo"),
+            Map.entry("mov", "video/quicktime"),
+            Map.entry("mkv", "video/x-matroska"),
+            Map.entry("wmv", "video/x-ms-wmv"),
+            Map.entry("flv", "video/x-flv"),
+            Map.entry("webm", "video/webm"),
+            Map.entry("m4v", "video/x-m4v")
+    );
 
     private static final Set<String> ALLOWED_SUFFIXES = Set.of(
             "doc", "docx", "xls", "xlsx", "ppt", "pptx", "wps", "et", "dps", "wpt", "ett", "dpt",
@@ -132,9 +179,8 @@ public class MinIOUtils {
     }
 
     /**
-     * 生成 presigned 预览链接（供 kkFileView 等预览服务调用），有效期 expireSeconds 秒。
-     * 不附加 response-content-disposition / response-content-type 覆写参数，
-     * 避免 MinIO 因签名不匹配返回 400。
+     * 用后端自己的 MinIO endpoint 签 GET URL（Coze 等外网调用）。
+     * 不要拿去给 kkFileView：生产 kkFileView 只能访问 docker 内网 minio:9000。
      */
     public String presignedPreviewUrl(String bucketName, String ossPath, int expireSeconds) {
         try {
@@ -145,6 +191,29 @@ public class MinIOUtils {
                             .object(ossPath)
                             .expiry(expireSeconds, java.util.concurrent.TimeUnit.SECONDS)
                             .build());
+        } catch (Exception e) {
+            throw new RuntimeException("生成预览链接失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 生成 kkFileView 拉取文件所需的预签名 GET 地址。
+     * 开发环境签公网 MinIO 地址，Docker 生产环境签容器网络内的 MinIO 地址。
+     */
+    public String presignedKkFileViewUrl(String bucketName, String ossPath, int expireSeconds) {
+        try {
+            return MinioClient.builder()
+                    .endpoint(kkFileViewEndpoint.trim())
+                    .credentials(accessKey, secretKey)
+                    .region("us-east-1")
+                    .build()
+                    .getPresignedObjectUrl(
+                            GetPresignedObjectUrlArgs.builder()
+                                    .method(io.minio.http.Method.GET)
+                                    .bucket(bucketName)
+                                    .object(ossPath)
+                                    .expiry(expireSeconds, java.util.concurrent.TimeUnit.SECONDS)
+                                    .build());
         } catch (Exception e) {
             throw new RuntimeException("生成预览链接失败: " + e.getMessage(), e);
         }
@@ -163,31 +232,106 @@ public class MinIOUtils {
     }
 
     /**
-     * 将 MinIO 文件流式输出到 HTTP 响应。
+     * 将 MinIO 文件流式输出到 HTTP 响应（不包 JSON）。
      *
-     * @param bucketName MinIO bucket
-     * @param ossPath    文件在 MinIO 中的路径
-     * @param fileName   原始文件名（用于 Content-Disposition）
-     * @param inline     true=内联预览（img/pdf），false=强制下载
+     * @param ossFile  文件元信息（扩展名决定 MIME，不使用 octet-stream）
+     * @param inline   true=预览（Content-Disposition: inline），false=下载（attachment）
+     * @param response HTTP 响应
      */
-    public void stream(String bucketName, String ossPath,
-                       String fileName, boolean inline,
-                       HttpServletResponse response) {
+    public void stream(SysOssFile ossFile, boolean inline, HttpServletResponse response) {
+        String mime = resolveMime(ossFile.getFileName(), ossFile.getSuffix(), ossFile.getOssPath());
+        String disposition = contentDisposition(inline, ossFile.getFileName());
         try (InputStream in = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucketName).object(ossPath).build());
-             OutputStream out = response.getOutputStream()) {
-            String encoded = URLEncoder.encode(fileName != null ? fileName : "file",
-                    StandardCharsets.UTF_8);
-            String disposition = inline
-                    ? "inline;filename=" + encoded
-                    : "attachment;filename=" + encoded;
-            response.setHeader("Content-Disposition", disposition);
-            if (!inline) {
-                response.setContentType("application/octet-stream");
-            }
+                GetObjectArgs.builder().bucket(ossFile.getBucketName()).object(ossFile.getOssPath()).build())) {
+            applyBinaryHeaders(response, mime, disposition, ossFile.getFileSize());
+            OutputStream out = response.getOutputStream();
             in.transferTo(out);
+            out.flush();
         } catch (Exception e) {
             throw new RuntimeException("文件读取失败: " + e.getMessage(), e);
+        }
+    }
+
+    static void applyBinaryHeaders(HttpServletResponse response, String mime,
+                                   String disposition, String fileSize) {
+        // 先清掉 Spring/Tomcat 默认的 UTF-8，否则 Content-Type 会变成 application/pdf;charset=UTF-8
+        response.setCharacterEncoding((String) null);
+        response.setHeader("Content-Type", mime);
+        if (response.getContentType() != null && response.getContentType().toLowerCase(Locale.ROOT).contains("charset")) {
+            response.setCharacterEncoding((String) null);
+            response.setHeader("Content-Type", mime);
+        }
+        response.setHeader("Content-Disposition", disposition);
+        Long size = parseFileSize(fileSize);
+        if (size != null) {
+            response.setContentLengthLong(size);
+        }
+    }
+
+    static String resolveMime(String fileName, String suffix, String ossPath) {
+        String ext = firstExt(suffix, fileName, ossPath);
+        String mime = MIME_BY_EXT.get(ext);
+        if (mime == null || mime.isBlank()) {
+            throw BaseResponse.parameterInvalid.error("无法识别文件类型，无法预览/下载");
+        }
+        return mime;
+    }
+
+    static String contentDisposition(boolean inline, String fileName) {
+        String raw = (fileName == null || fileName.isBlank()) ? "file" : fileName;
+        String sanitized = raw.replace("\"", "").replace("\r", "").replace("\n", "");
+        ContentDisposition.Builder builder = inline
+                ? ContentDisposition.inline()
+                : ContentDisposition.attachment();
+        return builder.filename(sanitized, StandardCharsets.UTF_8).build().toString();
+    }
+
+    private static String firstExt(String suffix, String fileName, String ossPath) {
+        if (suffix != null && !suffix.isBlank()) {
+            String ext = suffix.trim().toLowerCase(Locale.ROOT);
+            if (ext.startsWith(".")) {
+                ext = ext.substring(1);
+            }
+            if (!ext.isEmpty() && ext.indexOf('/') < 0 && ext.indexOf('\\') < 0 && ext.indexOf('.') < 0) {
+                return ext;
+            }
+        }
+        String fromName = dottedExtension(fileName);
+        if (!fromName.isEmpty()) {
+            return fromName;
+        }
+        return dottedExtension(ossPath);
+    }
+
+    private static String dottedExtension(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String name = value;
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        int query = name.indexOf('?');
+        if (query >= 0) {
+            name = name.substring(0, query);
+        }
+        int dot = name.lastIndexOf('.');
+        if (dot < 0 || dot == name.length() - 1) {
+            return "";
+        }
+        return name.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private static Long parseFileSize(String fileSize) {
+        if (fileSize == null || fileSize.isBlank()) {
+            return null;
+        }
+        try {
+            long size = Long.parseLong(fileSize.trim());
+            return size >= 0 ? size : null;
+        } catch (NumberFormatException ignored) {
+            return null;
         }
     }
 
